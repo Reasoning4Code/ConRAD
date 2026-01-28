@@ -1,0 +1,184 @@
+{
+  "instance_id": "django__django-15252",
+  "repo": "django/django",
+  "created_at": "2021-12-28T15:51:06Z",
+  "problem_statement": "MigrationRecorder does not obey db_router allow_migrate rules\nDescription\n\t\nHi,\nWe have a multi-db setup. We have one connection that is for the django project, and several connections that talk to other dbs for information (ie models with managed = False). Django should only create tables in the first connection, never in any of the other connections. We have a simple router that does the following: \nclass Router(object):\n\tdef allow_migrate(self, db, model):\n\t\tif db == 'default':\n\t\t\treturn True\n\t\treturn False\nCurrent Behaviour\nWe run our functional tests and the migrate command is called against each connection when the test databases are created (see django/test/runner.py, setup_databases, line 300-ish, which calls django/db/backends/creation.py, create_test_db, line 377-ish)\nWhen this migrate runs, it tries to apply our migrations, which tries to record that a migration has been applied (see django/db/migrations/executor.py, apply_migration, which has several calls to self.recorder.record_applied). \nThe first thing that record_applied does is a call to self.ensure_schema() (see django/db/migrations/recorder.py, record_applied, lien 66-ish). \nensure_schema checks to see if the Migration model is in the tables in the connection. If it does not find the table then it tries to create the table. \nI believe that this is incorrect behaviour when a db_router has been provided. If using the router above, my expectation would be that the table is not created on any connection other than the 'default' connection. Looking at the other methods on the MigrationRecorder, I would expect that there will be similar issues with applied_migrations and record_unapplied.\n",
+  "patch": "diff --git a/django/db/migrations/executor.py b/django/db/migrations/executor.py\n--- a/django/db/migrations/executor.py\n+++ b/django/db/migrations/executor.py\n@@ -96,8 +96,12 @@ def migrate(self, targets, plan=None, state=None, fake=False, fake_initial=False\n         (un)applied and in a second step run all the database operations.\n         \"\"\"\n         # The django_migrations table must be present to record applied\n-        # migrations.\n-        self.recorder.ensure_schema()\n+        # migrations, but don't create it if there are no migrations to apply.\n+        if plan == []:\n+            if not self.recorder.has_table():\n+                return self._create_project_state(with_applied_migrations=False)\n+        else:\n+            self.recorder.ensure_schema()\n \n         if plan is None:\n             plan = self.migration_plan(targets)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10468,
+      "pr_title": "Fixed #29827 -- Fixed reuse of existing test DBs with --keepdb on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/29827",
+      "issue_id": 29827,
+      "issue_title": "cloned DBs are not reused during tests on MySQL",
+      "issue_body": "When I'm using\ntests/runtests.py --parallel=8 -k\n, I expect following runs to be faster than the prior one, because test DBs are created once and are reused in the following runs. On MySQL they take the same time. I see\nmysqldump\nin processes every time I run tests.\nIt seems that this regression was introduced in\ne1253bc26facfa1d0fca161f43925e99c2591ced\n.",
+      "issue_closed_at": "2018-10-25T18:38:15",
+      "base_commit": "76b3367035889d87ffef7a52cd44d70e30537f6f",
+      "changes": [
+        {
+          "file": "django/db/backends/mysql/creation.py",
+          "type": "function",
+          "name": "sql_table_creation_suffix",
+          "class_name": "DatabaseCreation",
+          "code": "def sql_table_creation_suffix(self):\n        suffix = []\n        test_settings = self.connection.settings_dict['TEST']\n        if test_settings['CHARSET']:\n            suffix.append('CHARACTER SET %s' % test_settings['CHARSET'])\n        if test_settings['COLLATION']:\n            suffix.append('COLLATE %s' % test_settings['COLLATION'])\n        return ' '.join(suffix)"
+        },
+        {
+          "file": "django/db/backends/mysql/creation.py",
+          "type": "function",
+          "name": "_clone_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _clone_test_db(self, suffix, verbosity, keepdb=False):\n        source_database_name = self.connection.settings_dict['NAME']\n        target_database_name = self.get_test_db_clone_settings(suffix)['NAME']\n        test_db_params = {\n            'dbname': self.connection.ops.quote_name(target_database_name),\n            'suffix': self.sql_table_creation_suffix(),\n        }\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                self._execute_create_test_db(cursor, test_db_params, keepdb)\n            except Exception:\n                try:\n                    if verbosity >= 1:\n                        self.log('Destroying old test database for alias %s…' % (\n                            self._get_database_display_str(verbosity, target_database_name),\n                        ))\n                    cursor.execute('DROP DATABASE %(dbname)s' % test_db_params)\n                    self._execute_create_test_db(cursor, test_db_params, keepdb)\n                except Exception as e:\n                    self.log('Got an error recreating the test database: %s' % e)\n                    sys.exit(2)\n\n        dump_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        dump_cmd[0] = 'mysqldump'\n        dump_cmd[-1] = source_database_name\n        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        load_cmd[-1] = target_database_name\n\n        with subprocess.Popen(dump_cmd, stdout=subprocess.PIPE) as dump_proc:\n            with subprocess.Popen(load_cmd, stdin=dump_proc.stdout, stdout=subprocess.DEVNULL):\n                # Allow dump_proc to receive a SIGPIPE if the load process exits.\n                dump_proc.stdout.close()"
+        },
+        {
+          "file": "django/db/backends/mysql/creation.py",
+          "type": "function",
+          "name": "_clone_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _clone_test_db(self, suffix, verbosity, keepdb=False):\n        source_database_name = self.connection.settings_dict['NAME']\n        target_database_name = self.get_test_db_clone_settings(suffix)['NAME']\n        test_db_params = {\n            'dbname': self.connection.ops.quote_name(target_database_name),\n            'suffix': self.sql_table_creation_suffix(),\n        }\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                self._execute_create_test_db(cursor, test_db_params, keepdb)\n            except Exception:\n                try:\n                    if verbosity >= 1:\n                        self.log('Destroying old test database for alias %s…' % (\n                            self._get_database_display_str(verbosity, target_database_name),\n                        ))\n                    cursor.execute('DROP DATABASE %(dbname)s' % test_db_params)\n                    self._execute_create_test_db(cursor, test_db_params, keepdb)\n                except Exception as e:\n                    self.log('Got an error recreating the test database: %s' % e)\n                    sys.exit(2)\n\n        dump_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        dump_cmd[0] = 'mysqldump'\n        dump_cmd[-1] = source_database_name\n        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        load_cmd[-1] = target_database_name\n\n        with subprocess.Popen(dump_cmd, stdout=subprocess.PIPE) as dump_proc:\n            with subprocess.Popen(load_cmd, stdin=dump_proc.stdout, stdout=subprocess.DEVNULL):\n                # Allow dump_proc to receive a SIGPIPE if the load process exits.\n                dump_proc.stdout.close()"
+        }
+      ]
+    },
+    {
+      "pr_number": 4660,
+      "pr_title": "Fixed #24791 -- Added fallback when 'postgres' database isn't available",
+      "pr_body": "",
+      "issue_id": 24791,
+      "issue_title": "Cannot run tests without access to postgres database",
+      "issue_body": "The change for ticket\n#16969\nprevents Django from being able to run tests on Heroku,\nhere you are not allowed to connect to the \"postgres\" database, at least with the free tier.\nWould it be an option to use an explicitly configured\nDATABASES['default']['TEST']['NAME']\nsetting, instead of 'postgres' here?\nOr could there be a new setting, like\nDATABASES['default']['TEST']['CONNECT_NAME']\n?\nThe traceback, for reference (Django 1.8.1):\n.heroku/python/lib/python2.7/site-packages/pytest_django/fixtures.py:53: \n>           db_cfg = setup_databases(verbosity=0, interactive=False)\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n.heroku/python/lib/python2.7/site-packages/django/test/runner.py:370: in setup_databases\n    serialize=connection.settings_dict.get(\"TEST\", {}).get(\"SERIALIZE\", True),\n.heroku/python/lib/python2.7/site-packages/django/db/backends/base/creation.py:354: in create_test_db\n    self._create_test_db(verbosity, autoclobber, keepdb)\n.heroku/python/lib/python2.7/site-packages/django/db/backends/base/creation.py:447: in _create_test_db\n    with self._nodb_connection.cursor() as cursor:\n.heroku/python/lib/python2.7/site-packages/django/db/backends/base/base.py:164: in cursor\n    cursor = self.make_cursor(self._cursor())\n.heroku/python/lib/python2.7/site-packages/django/db/backends/base/base.py:135: in _cursor\n    self.ensure_connection()\n.heroku/python/lib/python2.7/site-packages/django/db/backends/base/base.py:130: in ensure_connection\n    self.connect()\n.heroku/python/lib/python2.7/site-packages/django/db/utils.py:97: in __exit__\n    six.reraise(dj_exc_type, dj_exc_value, traceback)\n.heroku/python/lib/python2.7/site-packages/django/db/backends/base/base.py:130: in ensure_connection\n    self.connect()\n.heroku/python/lib/python2.7/site-packages/django/db/backends/base/base.py:119: in connect\n    self.connection = self.get_new_connection(conn_params)\n.heroku/python/lib/python2.7/site-packages/django/db/backends/postgresql_psycopg2/base.py:172: in get_new_connection\n    connection = Database.connect(**conn_params)\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\n    ...\n\n        if dsn is None:\n            if not items:\n                raise TypeError('missing dsn and no parameters')\n            else:\n                dsn = \" \".join([\"%s=%s\" % (k, _param_escape(str(v)))\n                    for (k, v) in items])\n\n>       conn = _connect(dsn, connection_factory=connection_factory, async=async)\nE       OperationalError: FATAL:  permission denied for database \"postgres\"\nE       DETAIL:  User does not have CONNECT privilege.\n\n.heroku/python/lib/python2.7/site-packages/psycopg2/__init__.py:164: OperationalError",
+      "issue_closed_at": "2015-05-15T11:43:40",
+      "base_commit": "2dee853ed4def42b7ef1b3b472b395055543cc00",
+      "changes": [
+        {
+          "file": "django/db/backends/base/creation.py",
+          "type": "function",
+          "name": "_destroy_test_db",
+          "class_name": "BaseDatabaseCreation",
+          "code": "def _destroy_test_db(self, test_database_name, verbosity):\n        \"\"\"\n        Internal implementation - remove the test db tables.\n        \"\"\"\n        # Remove the test database to clean up after\n        # ourselves. Connect to the previous database (not the test database)\n        # to do so, because it's not allowed to delete a database while being\n        # connected to it.\n        with self._nodb_connection.cursor() as cursor:\n            # Wait to avoid \"database is being accessed by other users\" errors.\n            time.sleep(1)\n            cursor.execute(\"DROP DATABASE %s\"\n                           % self.connection.ops.quote_name(test_database_name))"
+        },
+        {
+          "file": "django/db/backends/postgresql_psycopg2/base.py",
+          "type": "line",
+          "name": "line 4",
+          "code": "Requires psycopg 2: http://initd.org/projects/psycopg2\n\"\"\"\n\nfrom django.conf import settings\nfrom django.core.exceptions import ImproperlyConfigured\nfrom django.db.backends.base.base import BaseDatabaseWrapper\nfrom django.db.backends.base.validation import BaseDatabaseValidation\nfrom django.utils.encoding import force_str\nfrom django.utils.functional import cached_property\nfrom django.utils.safestring import SafeBytes, SafeText"
+        },
+        {
+          "file": "django/db/backends/postgresql_psycopg2/base.py",
+          "type": "function",
+          "name": "is_usable",
+          "class_name": "DatabaseWrapper",
+          "code": "def is_usable(self):\n        try:\n            # Use a psycopg cursor directly, bypassing Django's utilities.\n            self.connection.cursor().execute(\"SELECT 1\")\n        except Database.Error:\n            return False\n        else:\n            return True"
+        }
+      ]
+    },
+    {
+      "pr_number": 10260,
+      "pr_title": "Fixed #29613 -- Fixed --keepdb on PostgreSQL if the database exists and the user can't create databases.",
+      "pr_body": "Ticket [29613](https://code.djangoproject.com/ticket/29613).",
+      "issue_id": 29613,
+      "issue_title": "Allow --keepdb to work on PostgreSQL if the database exists but the user can't create databases",
+      "issue_body": "The popular Web Faction hosting service uses a shared database server. Users can create databases using the web UI or XML RPC calls, but not using the SQL CREATE syntax.\nRunning tests throws a ProgrammingError, with the message 'permission denied to create database', even if the test database has been previously created manually.\nThe error code for this error is '42501', which appears to correspond to errorcodes.INSUFFICIENT_PRIVILEGE.\ndjango/db/backends/postgresql/creation.py only handles the error errorcodes.DUPLICATE_DATABASE in _execute_create_test_db(), line 35. Because the error code does not match the program exits with a log message. But it would be fine to proceed with the error code '42501' also, making use of the --keepdb mechanism.\nThis appears to be a regression, as I did not experience this issue either using postgresql_psycopg2 driver or using Django 1.11",
+      "issue_closed_at": "2018-08-03T03:32:30",
+      "base_commit": "d8e2be459f97f1773c7edf7d37de180139146176",
+      "changes": [
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "from psycopg2 import errorcodes\n\nfrom django.db.backends.base.creation import BaseDatabaseCreation\n\n\nclass DatabaseCreation(BaseDatabaseCreation):"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "sql_table_creation_suffix",
+          "class_name": "DatabaseCreation",
+          "code": "def sql_table_creation_suffix(self):\n        test_settings = self.connection.settings_dict['TEST']\n        assert test_settings['COLLATION'] is None, (\n            \"PostgreSQL does not support collation setting at database creation time.\"\n        )\n        return self._get_database_create_suffix(\n            encoding=test_settings['CHARSET'],\n            template=test_settings.get('TEMPLATE'),\n        )"
+        }
+      ]
+    },
+    {
+      "pr_number": 9421,
+      "pr_title": "Fixed #28884 -- Fixed crash in renames of fields of tables referenced by m2ms on SQlite.",
+      "pr_body": "https://code.djangoproject.com/ticket/28884\r\n\r\nIntrospected database constraints instead of relying on `_meta.related_objects` to determine whether or not a table or a column is referenced on rename operations.\r\n\r\nThis has the side effect of ignoring both ``db_constraint=False`` and virtual fields such as ``GenericRelation`` which are not backend by database level constraints and thus shouldn't prevent the rename operations from being performed in a transaction.\r\n\r\nThis also highlighted false negatives in the existing schema and migrations tests where `_meta.related_objects` was not appropriately populated.",
+      "issue_id": 28884,
+      "issue_title": "RenameField crashes with AttributeError when renaming a ManyToManyField (sqlite3)",
+      "issue_body": "Original issue:\n​\nhttps://groups.google.com/forum/#!topic/django-users/O7s658gIHTE\nWith Django 2.0, a\nRenameField\non a model which has a reverse many to many relationship raises an exception:\nAttributeError: 'ManyToManyRel' object has no attribute 'field_name'\n.\nThis is a regression in Django 2.0: the same migration with Django 1.11 terminates successfully\nBelow the code and the commands to reproduce the problem:\n# myapp/models.py\n\nfrom django.db import models\n\n\nclass ModelA(models.Model):\n    new_name = models.IntegerField()\n\n\nclass ModelB(models.Model):\n    model_as = models.ManyToManyField('ModelA')\n\n# myapp/migrations/0001_initial.py\n\nfrom django.db import migrations, models\n\n\nclass Migration(migrations.Migration):\n\n    initial = True\n\n    dependencies = [\n    ]\n\n    operations = [\n        migrations.CreateModel(\n            name='ModelA',\n            fields=[\n                ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),\n                ('old_name', models.IntegerField()),\n            ],\n        ),\n        migrations.CreateModel(\n            name='ModelB',\n            fields=[\n                ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),\n                ('model_as', models.ManyToManyField(to='myapp.ModelA')),\n            ],\n        ),\n    ]\n\n# myapp/migrations/0002_auto_20171204_1012.py\n\nfrom django.db import migrations\n\n\nclass Migration(migrations.Migration):\n\n    dependencies = [\n        ('myapp', '0001_initial'),\n    ]\n\n    operations = [\n        migrations.RenameField(\n            model_name='modela',\n            old_name='old_name',\n            new_name='new_name',\n        ),\n    ]\n\n$ ./manage.py migrate\nOperations to perform:\n  Apply all migrations: admin, auth, contenttypes, myapp, sessions\nRunning migrations:\n  Applying contenttypes.0001_initial... OK\n  Applying auth.0001_initial... OK\n  Applying admin.0001_initial... OK\n  Applying admin.0002_logentry_remove_auto_add... OK\n  Applying contenttypes.0002_remove_content_type_name... OK\n  Applying auth.0002_alter_permission_name_max_length... OK\n  Applying auth.0003_alter_user_email_max_length... OK\n  Applying auth.0004_alter_user_username_opts... OK\n  Applying auth.0005_alter_user_last_login_null... OK\n  Applying auth.0006_require_contenttypes_0002... OK\n  Applying auth.0007_alter_validators_add_error_messages... OK\n  Applying auth.0008_alter_user_username_max_length... OK\n  Applying auth.0009_alter_user_last_name_max_length... OK\n  Applying myapp.0001_initial... OK\n  Applying myapp.0002_auto_20171204_1012...Traceback (most recent call last):\n  File \"./manage.py\", line 15, in <module>\n    execute_from_command_line(sys.argv)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/__init__.py\", line 371, in execute_from_command_line\n    utility.execute()\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/__init__.py\", line 365, in execute\n    self.fetch_command(subcommand).run_from_argv(self.argv)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/base.py\", line 288, in run_from_argv\n    self.execute(*args, **cmd_options)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/base.py\", line 335, in execute\n    output = self.handle(*args, **options)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/commands/migrate.py\", line 200, in handle\n    fake_initial=fake_initial,\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/executor.py\", line 117, in migrate\n    state = self._migrate_all_forwards(state, plan, full_plan, fake=fake, fake_initial=fake_initial)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/executor.py\", line 147, in _migrate_all_forwards\n    state = self.apply_migration(state, migration, fake=fake, fake_initial=fake_initial)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/executor.py\", line 244, in apply_migration\n    state = migration.apply(state, schema_editor)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/migration.py\", line 122, in apply\n    operation.database_forwards(self.app_label, schema_editor, old_state, project_state)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/operations/fields.py\", line 304, in database_forwards\n    to_model._meta.get_field(self.new_name),\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/backends/sqlite3/schema.py\", line 81, in alter_field\n    any(r.field_name == old_field.name for r in model._meta.related_objects)):\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/backends/sqlite3/schema.py\", line 81, in <genexpr>\n    any(r.field_name == old_field.name for r in model._meta.related_objects)):\nAttributeError: 'ManyToManyRel' object has no attribute 'field_name'\n\n$ pip freeze\nDjango==2.0\npytz==2017.3",
+      "issue_closed_at": "2017-12-22T15:09:50",
+      "base_commit": "f3a98224e6dd5f8846008512f281e452dc3b1909",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "_table_info",
+          "class_name": "DatabaseIntrospection",
+          "code": "def _table_info(self, cursor, name):\n        cursor.execute('PRAGMA table_info(%s)' % self.connection.ops.quote_name(name))\n        # cid, name, type, notnull, default_value, pk\n        return [{\n            'name': field[1],\n            'type': field[2],\n            'size': get_field_size(field[2]),\n            'null_ok': not field[3],\n            'default': field[4],\n            'pk': field[5],  # undocumented\n        } for field in cursor.fetchall()]"
+        },
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "get_constraints",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_constraints(self, cursor, table_name):\n        \"\"\"\n        Retrieve any constraints or keys (unique, pk, fk, check, index) across\n        one or more columns.\n        \"\"\"\n        constraints = {}\n        # Get the index info\n        cursor.execute(\"PRAGMA index_list(%s)\" % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Sqlite3 3.8.9+ has 5 columns, however older versions only give 3\n            # columns. Discard last 2 columns if there.\n            number, index, unique = row[:3]\n            # Get the index info for that index\n            cursor.execute('PRAGMA index_info(%s)' % self.connection.ops.quote_name(index))\n            for index_rank, column_rank, column in cursor.fetchall():\n                if index not in constraints:\n                    constraints[index] = {\n                        \"columns\": [],\n                        \"primary_key\": False,\n                        \"unique\": bool(unique),\n                        \"foreign_key\": False,\n                        \"check\": False,\n                        \"index\": True,\n                    }\n                constraints[index]['columns'].append(column)\n            # Add type and column orders for indexes\n            if constraints[index]['index'] and not constraints[index]['unique']:\n                # SQLite doesn't support any index type other than b-tree\n                constraints[index]['type'] = Index.suffix\n                cursor.execute(\n                    \"SELECT sql FROM sqlite_master \"\n                    \"WHERE type='index' AND name=%s\" % self.connection.ops.quote_name(index)\n                )\n                orders = []\n                # There would be only 1 row to loop over\n                for sql, in cursor.fetchall():\n                    order_info = sql.split('(')[-1].split(')')[0].split(',')\n                    orders = ['DESC' if info.endswith('DESC') else 'ASC' for info in order_info]\n                constraints[index]['orders'] = orders\n        # Get the PK\n        pk_column = self.get_primary_key_column(cursor, table_name)\n        if pk_column:\n            # SQLite doesn't actually give a name to the PK constraint,\n            # so we invent one. This is fine, as the SQLite backend never\n            # deletes PK constraints by name, as you can't delete constraints\n            # in SQLite; we remake the table with a new PK instead.\n            constraints[\"__primary__\"] = {\n                \"columns\": [pk_column],\n                \"primary_key\": True,\n                \"unique\": False,  # It's not actually a unique constraint.\n                \"foreign_key\": False,\n                \"check\": False,\n                \"index\": False,\n            }\n        # Get foreign keys\n        cursor.execute('PRAGMA foreign_key_list(%s)' % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Remaining on_update/on_delete/match values are of no interest here\n            id_, seq, table, from_, to = row[:5]\n            constraints['fk_%d' % id_] = {\n                'columns': [from_],\n                'primary_key': False,\n                'unique': False,\n                'foreign_key': (table, to),\n                'check': False,\n                'index': False,\n            }\n        return constraints"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "quote_value",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def quote_value(self, value):\n        # The backend \"mostly works\" without this function and there are use\n        # cases for compiling Python without the sqlite3 libraries (e.g.\n        # security hardening).\n        try:\n            import sqlite3\n            value = sqlite3.adapt(value)\n        except ImportError:\n            pass\n        except sqlite3.ProgrammingError:\n            pass\n        # Manual emulation of SQLite parameter quoting\n        if isinstance(value, bool):\n            return str(int(value))\n        elif isinstance(value, (Decimal, float, int)):\n            return str(value)\n        elif isinstance(value, str):\n            return \"'%s'\" % value.replace(\"\\'\", \"\\'\\'\")\n        elif value is None:\n            return \"NULL\"\n        elif isinstance(value, (bytes, bytearray, memoryview)):\n            # Bytes are only allowed for BLOB fields, encoded as string\n            # literals containing hexadecimal data and preceded by a single \"X\"\n            # character.\n            return \"X'%s'\" % value.hex()\n        else:\n            raise ValueError(\"Cannot quote parameter value %r of type %s\" % (value, type(value)))"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_db_table",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_db_table(self, model, old_db_table, new_db_table, disable_constraints=True):\n        if model._meta.related_objects and disable_constraints:\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r table while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % old_db_table)\n            self.connection.enable_constraint_checking()\n            super().alter_db_table(model, old_db_table, new_db_table)\n            self.connection.disable_constraint_checking()\n        else:\n            super().alter_db_table(model, old_db_table, new_db_table)"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_field(self, model, old_field, new_field, strict=False):\n        old_field_name = old_field.name\n        if (new_field.name != old_field_name and\n                any(r.field_name == old_field.name for r in model._meta.related_objects)):\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r.%r column while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % (model._meta.db_table, old_field_name))\n            with atomic(self.connection.alias):\n                super().alter_field(model, old_field, new_field, strict=strict)\n                # Follow SQLite's documented procedure for performing changes\n                # that don't affect the on-disk content.\n                # https://sqlite.org/lang_altertable.html#otheralter\n                with self.connection.cursor() as cursor:\n                    schema_version = cursor.execute('PRAGMA schema_version').fetchone()[0]\n                    cursor.execute('PRAGMA writable_schema = 1')\n                    table_name = model._meta.db_table\n                    references_template = ' REFERENCES \"%s\" (\"%%s\") ' % table_name\n                    old_column_name = old_field.get_attname_column()[1]\n                    new_column_name = new_field.get_attname_column()[1]\n                    search = references_template % old_column_name\n                    replacement = references_template % new_column_name\n                    cursor.execute('UPDATE sqlite_master SET sql = replace(sql, %s, %s)', (search, replacement))\n                    cursor.execute('PRAGMA schema_version = %d' % (schema_version + 1))\n                    cursor.execute('PRAGMA writable_schema = 0')\n                    # The integrity check will raise an exception and rollback\n                    # the transaction if the sqlite_master updates corrupt the\n                    # database.\n                    cursor.execute('PRAGMA integrity_check')\n            # Perform a VACUUM to refresh the database representation from\n            # the sqlite_master table.\n            with self.connection.cursor() as cursor:\n                cursor.execute('VACUUM')\n        else:\n            super().alter_field(model, old_field, new_field, strict=strict)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9345,
+      "pr_title": "Fixed #28792 -- Fixed index name truncation of namespaced tables.",
+      "pr_body": "Refs #27458, #27843.",
+      "issue_id": 28792,
+      "issue_title": "Index names can be incorrectly truncated when using a namespaced table name",
+      "issue_body": "When using a namespaced\n_meta.db_table\n(e.g. Oracle's\n'schema\".\"table'\n) it's possible that\n_create_index_name\nreturns an index name truncating the namespace resulting in an invalid identifier or one that isn't namespaced anymore and thus created in the user's namespace.\nFor example, given the following model:\nclass\nFoo\n(\nmodels\n.\nModel\n):\nfield\n=\nmodels\n.\nIntegerField\n(\nindex\n=\nTrue\n)\nclass\nMeta\n:\ndb_table\n=\n'long_name\".\"table_name'\nThe resulting index name will be\n'long_name\"_field_d21c9e0a'\nwhich is invalid SQL even when quoted to\n'\"long_name\"_field_d21c9e0a\"'\n.\nMarking as a release blocker because this is a regression which I believe was introduced by\n#27458\nand wasn't addressed by\n#27843\n. I confirm that this uses to work on Django 1.10 but was broken on 1.11 as I stumbled upon the issue when upgrading a Django 1.8 LTS codebase to 1.11 LTS on the 1.10 -> 1.11 step.\nThe tests added by\n#27458\njust happened to work because the index name truncation cut the string the in a way that both double quotes are stripped. It should be possible to tweak the table names to trigger the errors but I felt like directly testing\n_create_index_name\nwas more appropriate.",
+      "issue_closed_at": "2017-11-14T20:53:46",
+      "base_commit": "532a4f22ad94db320cb0fd66f4c7ee57d17ac65a",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "line",
+          "name": "line 5",
+          "code": "from django.db.backends.ddl_references import (\n    Columns, ForeignKeyName, IndexName, Statement, Table,\n)\nfrom django.db.backends.utils import strip_quotes\nfrom django.db.models import Index\nfrom django.db.transaction import TransactionManagementError, atomic\nfrom django.utils import timezone"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_create_index_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _create_index_name(self, table_name, column_names, suffix=\"\"):\n        \"\"\"\n        Generate a unique name for an index/unique constraint.\n\n        The name is divided into 3 parts: the table name, the column names,\n        and a unique digest and suffix.\n        \"\"\"\n        table_name = strip_quotes(table_name)\n        hash_data = [table_name] + list(column_names)\n        hash_suffix_part = '%s%s' % (self._digest(*hash_data), suffix)\n        max_length = self.connection.ops.max_name_length() or 200\n        # If everything fits into max_length, use that name.\n        index_name = '%s_%s_%s' % (table_name, '_'.join(column_names), hash_suffix_part)\n        if len(index_name) <= max_length:\n            return index_name\n        # Shorten a long suffix.\n        if len(hash_suffix_part) > max_length / 3:\n            hash_suffix_part = hash_suffix_part[:max_length // 3]\n        other_length = (max_length - len(hash_suffix_part)) // 2 - 1\n        index_name = '%s_%s_%s' % (\n            table_name[:other_length],\n            '_'.join(column_names)[:other_length],\n            hash_suffix_part,\n        )\n        # Prepend D if needed to prevent the name from starting with an\n        # underscore or a number (not permitted on Oracle).\n        if index_name[0] == \"_\" or index_name[0].isdigit():\n            index_name = \"D%s\" % index_name[:-1]\n        return index_name"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "import functools\nimport hashlib\nimport logging\nimport re\nfrom time import time\n\nfrom django.conf import settings"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "function",
+          "name": "rev_typecast_decimal",
+          "class_name": null,
+          "code": "def rev_typecast_decimal(d):\n    if d is None:\n        return None\n    return str(d)"
+        }
+      ]
+    }
+  ]
+}

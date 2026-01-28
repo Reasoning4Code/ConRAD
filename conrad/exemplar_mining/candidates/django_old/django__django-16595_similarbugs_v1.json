@@ -1,0 +1,146 @@
+{
+  "instance_id": "django__django-16595",
+  "repo": "django/django",
+  "created_at": "2023-02-24T10:30:35Z",
+  "problem_statement": "Migration optimizer does not reduce multiple AlterField\nDescription\n\t\nLet's consider the following operations: \noperations = [\n\tmigrations.AddField(\n\t\tmodel_name=\"book\",\n\t\tname=\"title\",\n\t\tfield=models.CharField(max_length=256, null=True),\n\t),\n\tmigrations.AlterField(\n\t\tmodel_name=\"book\",\n\t\tname=\"title\",\n\t\tfield=models.CharField(max_length=128, null=True),\n\t),\n\tmigrations.AlterField(\n\t\tmodel_name=\"book\",\n\t\tname=\"title\",\n\t\tfield=models.CharField(max_length=128, null=True, help_text=\"help\"),\n\t),\n\tmigrations.AlterField(\n\t\tmodel_name=\"book\",\n\t\tname=\"title\",\n\t\tfield=models.CharField(max_length=128, null=True, help_text=\"help\", default=None),\n\t),\n]\nIf I run the optimizer, I get only the AddField, as we could expect. However, if the AddField model is separated from the AlterField (e.g. because of a non-elidable migration, or inside a non-squashed migration), none of the AlterField are reduced:\noptimizer.optimize(operations[1:], \"books\") \n[<AlterField model_name='book', name='title', field=<django.db.models.fields.CharField>>,\n <AlterField model_name='book', name='title', field=<django.db.models.fields.CharField>>,\n <AlterField model_name='book', name='title', field=<django.db.models.fields.CharField>>]\nIndeed, the AlterField.reduce does not consider the the case where operation is also an AlterField. \nIs this behaviour intended? If so, could it be documented? \nOtherwise, would it make sense to add something like\n\t\tif isinstance(operation, AlterField) and self.is_same_field_operation(\n\t\t\toperation\n\t\t):\n\t\t\treturn [operation]\n",
+  "patch": "diff --git a/django/db/migrations/operations/fields.py b/django/db/migrations/operations/fields.py\n--- a/django/db/migrations/operations/fields.py\n+++ b/django/db/migrations/operations/fields.py\n@@ -247,9 +247,9 @@ def migration_name_fragment(self):\n         return \"alter_%s_%s\" % (self.model_name_lower, self.name_lower)\n \n     def reduce(self, operation, app_label):\n-        if isinstance(operation, RemoveField) and self.is_same_field_operation(\n-            operation\n-        ):\n+        if isinstance(\n+            operation, (AlterField, RemoveField)\n+        ) and self.is_same_field_operation(operation):\n             return [operation]\n         elif (\n             isinstance(operation, RenameField)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 16509,
+      "pr_title": "Fixed #34304 -- Made MySQL's SchemaEditor.remove_constraint() don't create foreign key index when unique constraint is ignored.",
+      "pr_body": "Fixes ticket-34304.",
+      "issue_id": 34304,
+      "issue_title": "Adding and removing a conditional UniqueConstraint to ForeignKey multiple times crashes on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2023-01-31T04:52:54",
+      "base_commit": "40217d1a82b0c16cddba377325d12b2c253f402a",
+      "changes": [
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super().add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute(\n                \"UPDATE %(table)s SET %(column)s = %%s\"\n                % {\n                    \"table\": self.quote_name(model._meta.db_table),\n                    \"column\": self.quote_name(field.column),\n                },\n                [effective_default],\n            )"
+        }
+      ]
+    },
+    {
+      "pr_number": 9421,
+      "pr_title": "Fixed #28884 -- Fixed crash in renames of fields of tables referenced by m2ms on SQlite.",
+      "pr_body": "https://code.djangoproject.com/ticket/28884\r\n\r\nIntrospected database constraints instead of relying on `_meta.related_objects` to determine whether or not a table or a column is referenced on rename operations.\r\n\r\nThis has the side effect of ignoring both ``db_constraint=False`` and virtual fields such as ``GenericRelation`` which are not backend by database level constraints and thus shouldn't prevent the rename operations from being performed in a transaction.\r\n\r\nThis also highlighted false negatives in the existing schema and migrations tests where `_meta.related_objects` was not appropriately populated.",
+      "issue_id": 28884,
+      "issue_title": "RenameField crashes with AttributeError when renaming a ManyToManyField (sqlite3)",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-22T15:09:50",
+      "base_commit": "f3a98224e6dd5f8846008512f281e452dc3b1909",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "_table_info",
+          "class_name": "DatabaseIntrospection",
+          "code": "def _table_info(self, cursor, name):\n        cursor.execute('PRAGMA table_info(%s)' % self.connection.ops.quote_name(name))\n        # cid, name, type, notnull, default_value, pk\n        return [{\n            'name': field[1],\n            'type': field[2],\n            'size': get_field_size(field[2]),\n            'null_ok': not field[3],\n            'default': field[4],\n            'pk': field[5],  # undocumented\n        } for field in cursor.fetchall()]"
+        },
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "get_constraints",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_constraints(self, cursor, table_name):\n        \"\"\"\n        Retrieve any constraints or keys (unique, pk, fk, check, index) across\n        one or more columns.\n        \"\"\"\n        constraints = {}\n        # Get the index info\n        cursor.execute(\"PRAGMA index_list(%s)\" % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Sqlite3 3.8.9+ has 5 columns, however older versions only give 3\n            # columns. Discard last 2 columns if there.\n            number, index, unique = row[:3]\n            # Get the index info for that index\n            cursor.execute('PRAGMA index_info(%s)' % self.connection.ops.quote_name(index))\n            for index_rank, column_rank, column in cursor.fetchall():\n                if index not in constraints:\n                    constraints[index] = {\n                        \"columns\": [],\n                        \"primary_key\": False,\n                        \"unique\": bool(unique),\n                        \"foreign_key\": False,\n                        \"check\": False,\n                        \"index\": True,\n                    }\n                constraints[index]['columns'].append(column)\n            # Add type and column orders for indexes\n            if constraints[index]['index'] and not constraints[index]['unique']:\n                # SQLite doesn't support any index type other than b-tree\n                constraints[index]['type'] = Index.suffix\n                cursor.execute(\n                    \"SELECT sql FROM sqlite_master \"\n                    \"WHERE type='index' AND name=%s\" % self.connection.ops.quote_name(index)\n                )\n                orders = []\n                # There would be only 1 row to loop over\n                for sql, in cursor.fetchall():\n                    order_info = sql.split('(')[-1].split(')')[0].split(',')\n                    orders = ['DESC' if info.endswith('DESC') else 'ASC' for info in order_info]\n                constraints[index]['orders'] = orders\n        # Get the PK\n        pk_column = self.get_primary_key_column(cursor, table_name)\n        if pk_column:\n            # SQLite doesn't actually give a name to the PK constraint,\n            # so we invent one. This is fine, as the SQLite backend never\n            # deletes PK constraints by name, as you can't delete constraints\n            # in SQLite; we remake the table with a new PK instead.\n            constraints[\"__primary__\"] = {\n                \"columns\": [pk_column],\n                \"primary_key\": True,\n                \"unique\": False,  # It's not actually a unique constraint.\n                \"foreign_key\": False,\n                \"check\": False,\n                \"index\": False,\n            }\n        # Get foreign keys\n        cursor.execute('PRAGMA foreign_key_list(%s)' % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Remaining on_update/on_delete/match values are of no interest here\n            id_, seq, table, from_, to = row[:5]\n            constraints['fk_%d' % id_] = {\n                'columns': [from_],\n                'primary_key': False,\n                'unique': False,\n                'foreign_key': (table, to),\n                'check': False,\n                'index': False,\n            }\n        return constraints"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "quote_value",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def quote_value(self, value):\n        # The backend \"mostly works\" without this function and there are use\n        # cases for compiling Python without the sqlite3 libraries (e.g.\n        # security hardening).\n        try:\n            import sqlite3\n            value = sqlite3.adapt(value)\n        except ImportError:\n            pass\n        except sqlite3.ProgrammingError:\n            pass\n        # Manual emulation of SQLite parameter quoting\n        if isinstance(value, bool):\n            return str(int(value))\n        elif isinstance(value, (Decimal, float, int)):\n            return str(value)\n        elif isinstance(value, str):\n            return \"'%s'\" % value.replace(\"\\'\", \"\\'\\'\")\n        elif value is None:\n            return \"NULL\"\n        elif isinstance(value, (bytes, bytearray, memoryview)):\n            # Bytes are only allowed for BLOB fields, encoded as string\n            # literals containing hexadecimal data and preceded by a single \"X\"\n            # character.\n            return \"X'%s'\" % value.hex()\n        else:\n            raise ValueError(\"Cannot quote parameter value %r of type %s\" % (value, type(value)))"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_db_table",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_db_table(self, model, old_db_table, new_db_table, disable_constraints=True):\n        if model._meta.related_objects and disable_constraints:\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r table while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % old_db_table)\n            self.connection.enable_constraint_checking()\n            super().alter_db_table(model, old_db_table, new_db_table)\n            self.connection.disable_constraint_checking()\n        else:\n            super().alter_db_table(model, old_db_table, new_db_table)"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_field(self, model, old_field, new_field, strict=False):\n        old_field_name = old_field.name\n        if (new_field.name != old_field_name and\n                any(r.field_name == old_field.name for r in model._meta.related_objects)):\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r.%r column while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % (model._meta.db_table, old_field_name))\n            with atomic(self.connection.alias):\n                super().alter_field(model, old_field, new_field, strict=strict)\n                # Follow SQLite's documented procedure for performing changes\n                # that don't affect the on-disk content.\n                # https://sqlite.org/lang_altertable.html#otheralter\n                with self.connection.cursor() as cursor:\n                    schema_version = cursor.execute('PRAGMA schema_version').fetchone()[0]\n                    cursor.execute('PRAGMA writable_schema = 1')\n                    table_name = model._meta.db_table\n                    references_template = ' REFERENCES \"%s\" (\"%%s\") ' % table_name\n                    old_column_name = old_field.get_attname_column()[1]\n                    new_column_name = new_field.get_attname_column()[1]\n                    search = references_template % old_column_name\n                    replacement = references_template % new_column_name\n                    cursor.execute('UPDATE sqlite_master SET sql = replace(sql, %s, %s)', (search, replacement))\n                    cursor.execute('PRAGMA schema_version = %d' % (schema_version + 1))\n                    cursor.execute('PRAGMA writable_schema = 0')\n                    # The integrity check will raise an exception and rollback\n                    # the transaction if the sqlite_master updates corrupt the\n                    # database.\n                    cursor.execute('PRAGMA integrity_check')\n            # Perform a VACUUM to refresh the database representation from\n            # the sqlite_master table.\n            with self.connection.cursor() as cursor:\n                cursor.execute('VACUUM')\n        else:\n            super().alter_field(model, old_field, new_field, strict=strict)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 16532,
+      "pr_title": "Fixed #34250 -- Fixed renaming model with m2m relation to a model with the same name.",
+      "pr_body": "[Ticket #34250](https://code.djangoproject.com/ticket/34250)",
+      "issue_id": 34250,
+      "issue_title": "Duplicate model names in M2M relationship causes RenameModel migration failure",
+      "issue_body": "",
+      "issue_closed_at": "2023-02-14T07:35:22",
+      "base_commit": "ce8189eea007882bbe6db22f86b0965e718bd341",
+      "changes": [
+        {
+          "file": "django/db/migrations/operations/models.py",
+          "type": "function",
+          "name": "database_forwards",
+          "class_name": "RemoveConstraint",
+          "code": "def database_forwards(self, app_label, schema_editor, from_state, to_state):\n        model = to_state.apps.get_model(app_label, self.model_name)\n        if self.allow_migrate_model(schema_editor.connection.alias, model):\n            from_model_state = from_state.models[app_label, self.model_name_lower]\n            constraint = from_model_state.get_constraint_by_name(self.name)\n            schema_editor.remove_constraint(model, constraint)"
+        }
+      ]
+    },
+    {
+      "pr_number": 15925,
+      "pr_title": "Fixed #33899 -- Fixed migration crash when removing indexed field on SQLite 3.35.5+.",
+      "pr_body": "Ticket Reference: https://code.djangoproject.com/ticket/33899#no1\r\n\r\nWrote regression tests for the bug and found first bad commit as below:\r\n\r\n`3702819227fd0cdd9b581cd99e11d1561d51cbeb is the first bad commit\r\ncommit 3702819227fd0cdd9b581cd99e11d1561d51cbeb\r\nAuthor: Mariusz Felisiak <felisiak.mariusz@gmail.com>\r\nDate:   Fri Feb 11 22:21:58 2022 +0100\r\n\r\n    Refs #32502 -- Avoided table rebuild when removing fields on SQLite 3.35.5+.\r\n\r\n    ALTER TABLE ... DROP COLUMN was introduced in SQLite 3.35+ however\r\n    a data corruption issue was fixed in SQLite 3.35.5.\r\n\r\n django/db/backends/sqlite3/features.py |  2 ++\r\n django/db/backends/sqlite3/schema.py   | 10 ++++++++++\r\n tests/schema/tests.py                  | 18 ++++++++++++++++++\r\n 3 files changed, 30 insertions(+)\r\nbisect found first bad commit\r\n`\r\n\r\nBug Fix in progress. Once the bug is fixed, the test case should pass.\r\n\r\n",
+      "issue_id": 33899,
+      "issue_title": "RemoveField on indexed fields crashes on SQLite 3.35.5+",
+      "issue_body": "",
+      "issue_closed_at": "2022-08-08T00:26:35",
+      "base_commit": "fd93db97c7228b16a4f92f97ef05b0d72418d952",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "remove_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def remove_field(self, model, field):\n        \"\"\"\n        Remove a field from a model. Usually involves deleting a column,\n        but for M2Ms may involve deleting a table.\n        \"\"\"\n        # M2M fields are a special case\n        if field.many_to_many:\n            # For implicit M2M tables, delete the auto-created table\n            if field.remote_field.through._meta.auto_created:\n                self.delete_model(field.remote_field.through)\n            # For explicit \"through\" M2M fields, do nothing\n        elif (\n            self.connection.features.can_alter_table_drop_column\n            # Primary keys, unique fields, and foreign keys are not\n            # supported in ALTER TABLE DROP COLUMN.\n            and not field.primary_key\n            and not field.unique\n            and not (field.remote_field and field.db_constraint)\n        ):\n            super().remove_field(model, field)\n        # For everything else, remake.\n        else:\n            # It might not actually have a column behind it\n            if field.db_parameters(connection=self.connection)[\"type\"] is None:\n                return\n            self._remake_table(model, delete_field=field)"
+        }
+      ]
+    }
+  ]
+}

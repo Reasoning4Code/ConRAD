@@ -1,0 +1,125 @@
+{
+  "instance_id": "sympy__sympy-16988",
+  "repo": "sympy/sympy",
+  "created_at": "2019-06-07T12:00:00Z",
+  "problem_statement": "Intersection should remove duplicates\n```python\r\n>>> Intersection({1},{1},{x})\r\nEmptySet()\r\n>>> Intersection({1},{x})\r\n{1}\r\n```\r\nThe answer should be `Piecewise(({1}, Eq(x, 1)), (S.EmptySet, True))` or remain unevaluated.\r\n\r\nThe routine should give the same answer if duplicates are present; my initial guess is that duplicates should just be removed at the outset of instantiation. Ordering them will produce canonical processing.\n",
+  "patch": "diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py\n--- a/sympy/sets/sets.py\n+++ b/sympy/sets/sets.py\n@@ -1260,7 +1260,7 @@ def __new__(cls, *args, **kwargs):\n         evaluate = kwargs.get('evaluate', global_evaluate[0])\n \n         # flatten inputs to merge intersections and iterables\n-        args = _sympify(args)\n+        args = list(ordered(set(_sympify(args))))\n \n         # Reduce sets using known rules\n         if evaluate:\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8707,
+      "pr_title": "Fix real assumption for gamma function.",
+      "pr_body": "- [x] Updated code as suggested by Sergey.\n\n@pelegm @skirpichev \n",
+      "issue_id": 8657,
+      "issue_title": "gamma(x) is assumed (wrongly) to be real when x is real",
+      "issue_body": "It may be that `x` is -1, for example, where `gamma` is not defined (or rather is `zoo`). So, unless it is known that `x` is not a nonpositive integer, `gamma(x).is_real` should return `None` (currently it returns `True`).\n",
+      "issue_closed_at": "2014-12-31T11:14:57Z",
+      "base_commit": "ed054cc55f714dab9e809036151f0ca136397604",
+      "changes": [
+        {
+          "file": "sympy/functions/special/gamma_functions.py",
+          "type": "function",
+          "name": "_eval_conjugate",
+          "class_name": "loggamma",
+          "code": "def _eval_conjugate(self):\n        z = self.args[0]\n        if not z in (S.Zero, S.NegativeInfinity):\n            return self.func(z.conjugate())"
+        }
+      ]
+    },
+    {
+      "pr_number": 12952,
+      "pr_title": "Fix addition of a quantity and a number",
+      "pr_body": "closes #12918\r\n\r\ncc @schymans ",
+      "issue_id": 12918,
+      "issue_title": "Addition of a quantity and a number does not raise an error",
+      "issue_body": "If I add two quantities with inconsistent units, sympy rightly returns an error:\r\n```\r\n>>> from sympy.physics.units import kilogram, kelvin\r\n>>> try: print kilogram + kelvin\r\n>>> except Exception, error: print error\r\nsummation of quantities of incompatible dimensions\r\n```\r\nHowever, if one of the terms is a number, no error is raised:\r\n```\r\n>>> try: print kilogram + 1.1\r\n>>> except Exception, error: print error\r\nkilogram + 1.1\r\n```\r\n\r\nIf I add two quantities, one of which does not have a dimension, an error is raised:\r\n```\r\n>>> from sympy.physics.units import Quantity, mass\r\n>>> try: print Quantity('x', mass, kilogram) + Quantity('y', S.One, 1.1)\r\n>>> except Exception, error: print error\r\nsummation of quantities of incompatible dimensions\r\n```\r\n\r\nIf I add a quantity and a number, no error is raised:\r\n```\r\n>>> try: print Quantity('x', mass, kilogram) + Number(1.1)\r\n>>> except Exception, error: print error\r\nx + 1.1\r\n```\r\nI believe that this is a bug, as numbers should be treated like dimensionless quantities whenever they are used alongside with quantities.\r\n",
+      "issue_closed_at": "2017-07-12T20:13:26Z",
+      "base_commit": "195061bd91f2e888e6449ec05f2caca140067fb2",
+      "changes": [
+        {
+          "file": "sympy/core/power.py",
+          "type": "function",
+          "name": "_eval_is_rational",
+          "class_name": "Pow",
+          "code": "def _eval_is_rational(self):\n        p = self.func(*self.as_base_exp())  # in case it's unevaluated\n        if not p.is_Pow:\n            return p.is_rational\n        b, e = p.as_base_exp()\n        if e.is_Rational and b.is_Rational:\n            # we didn't check that e is not an Integer\n            # because Rational**Integer autosimplifies\n            return False\n        if e.is_integer:\n            if b.is_rational:\n                if fuzzy_not(b.is_zero) or e.is_nonnegative:\n                    return True\n                if b == e:  # always rational, even for 0**0\n                    return True\n            elif b.is_irrational:\n                return e.is_zero"
+        },
+        {
+          "file": "sympy/core/power.py",
+          "type": "function",
+          "name": "_eval_is_algebraic",
+          "class_name": "Pow",
+          "code": "def _eval_is_algebraic(self):\n        if self.base.is_zero or (self.base - 1).is_zero:\n            return True\n        elif self.exp.is_rational:\n            if self.base.is_algebraic is False:\n                return self.exp.is_nonzero\n            return self.base.is_algebraic\n        elif self.base.is_algebraic and self.exp.is_algebraic:\n            if ((fuzzy_not(self.base.is_zero)\n                and fuzzy_not((self.base - 1).is_zero))\n                or self.base.is_integer is False\n                or self.base.is_irrational):\n                return self.exp.is_rational"
+        },
+        {
+          "file": "sympy/physics/units/quantities.py",
+          "type": "function",
+          "name": "_Quantity_constructor_postprocessor_Add",
+          "class_name": null,
+          "code": "def _Quantity_constructor_postprocessor_Add(expr):\n    # Construction postprocessor for the addition,\n    # checks for dimension mismatches of the addends, thus preventing\n    # expressions like `meter + second` to be created.\n\n    deset = {\n        tuple(sorted(Dimension(\n            Quantity.get_dimensional_expr(i)\n        ).get_dimensional_dependencies().items()))\n        for i in expr.args\n        if i.free_symbols == set()  # do not raise if there are symbols\n                    # (free symbols could contain the units corrections)\n        and not i.is_number\n    }\n    # If `deset` has more than one element, then some dimensions do not\n    # match in the sum:\n    if len(deset) > 1:\n        raise ValueError(\"summation of quantities of incompatible dimensions\")\n    return expr"
+        }
+      ]
+    },
+    {
+      "pr_number": 11149,
+      "pr_title": "Intersection of null Range and an Interval returns EmptySet",
+      "pr_body": "A null `Range` is a set with no elements. It is an empty `Range` object.\nHowever, the current implementation doesn't demonstrate this fact in the `intersection` operation.\n\nThis PR is an attempt to reflect this behavior of a null `Range` object. \nCloses #11147 \n\n**Current Implementation**\n\n``` python\nIn []: Intersection(Range(0), Interval(0, 10))\n# results in a NotImplementedError\nIn []: Intersection(S.Integers, Interval(0.2, 0.8))\n# results in a NotImplementedError\n```\n\n **New Implementation**\n\n``` python\nIn []: Intersection(Range(0), FiniteSet(0, 10))\nOut[]: EmptySet()\n\nIn []: Intersection(S.Integers, Interval(0.2, 0.8))\nOut[]: EmptySet()\n```\n\nPing @asmeurer @smichr @hargup @aktech \n",
+      "issue_id": 11147,
+      "issue_title": "Incorrect result for Intersection of S.Integers( and S.Naturals) with Interval",
+      "issue_body": "``` python\nIn []: Intersection(S.Integers, Interval(0.2, 0.8)) # results in a NotImplementedError\n\nIn []: Intersection(S.Naturals, Interval(0.2, 0.8)) # results in a NotImplementedError\n```\n\nThe correct intersection should be an `EmptySet`.\n",
+      "issue_closed_at": "2016-05-23T23:43:17Z",
+      "base_commit": "db73ed37b955474ad9f1b3d2c5c762e32ce2cbfe",
+      "changes": [
+        {
+          "file": "sympy/sets/fancysets.py",
+          "type": "function",
+          "name": "_intersect",
+          "class_name": "ComplexRegion",
+          "code": "def _intersect(self, other):\n\n        if other.is_ComplexRegion:\n            # self in rectangular form\n            if (not self.polar) and (not other.polar):\n                return ComplexRegion(Intersection(self.sets, other.sets))\n\n            # self in polar form\n            elif self.polar and other.polar:\n                r1, theta1 = self.a_interval, self.b_interval\n                r2, theta2 = other.a_interval, other.b_interval\n                new_r_interval = Intersection(r1, r2)\n                new_theta_interval = Intersection(theta1, theta2)\n\n                # 0 and 2*Pi means the same\n                if ((2*S.Pi in theta1 and S.Zero in theta2) or\n                   (2*S.Pi in theta2 and S.Zero in theta1)):\n                    new_theta_interval = Union(new_theta_interval,\n                                               FiniteSet(0))\n                return ComplexRegion(new_r_interval*new_theta_interval,\n                                    polar=True)\n\n        if other is S.Reals:\n            return other\n\n        if other.is_subset(S.Reals):\n            new_interval = []\n\n            # self in rectangular form\n            if not self.polar:\n                for element in self.psets:\n                    if S.Zero in element.args[0]:\n                        new_interval.append(element.args[0])\n                new_interval = Union(*new_interval)\n                return Intersection(new_interval, other)\n\n            # self in polar form\n            elif self.polar:\n                for element in self.psets:\n                    if (0 in element.args[1]) or (S.Pi in element.args[1]):\n                        new_interval.append(element.args[0])\n                new_interval = Union(*new_interval)\n                return Intersection(new_interval, other)"
+        }
+      ]
+    },
+    {
+      "pr_number": 15519,
+      "pr_title": "Exit _eval_derivative_n_times when None is obtained",
+      "pr_body": "#### References to other Issues or PRs\r\n\r\nFixes #15518 \r\n\r\n#### Brief description of what is fixed or changed\r\n\r\nThe method `_eval_derivative_n_times` contains a loop that involves calling `_eval_derivative`. The latter may return None when evaluation is not implemented. In such a case the loop should be aborted (returning None) instead of trying to differentiate None.\r\n\r\n#### Release Notes\r\n\r\n<!-- Write the release notes for this release below. See\r\nhttps://github.com/sympy/sympy/wiki/Writing-Release-Notes for more information\r\non how to write release notes. The bot will check your release notes\r\nautomatically to see if they are formatted correctly. -->\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\n* core\r\n  * Fixed a bug in the creation of higher order derivatives that cannot be evaluated.  \r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 15518,
+      "issue_title": "Higher order derivatives that cannot be evaluated, like re(x).diff(x, 2), raise an exception",
+      "issue_body": "This issue arose in a [comment on another issue]( https://github.com/sympy/sympy/issues/15457#issuecomment-436453327) but since it's actually unrelated, is posted here separately. \r\n```\r\n>>> re(x).diff(x, 2)\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"/home/ubuntu/sympy/sympy/core/expr.py\", line 3047, in diff\r\n    return Derivative(self, *symbols, **assumptions)\r\n  File \"/home/ubuntu/sympy/sympy/core/function.py\", line 1370, in __new__\r\n    obj = expr._eval_derivative_n_times(v, count)\r\n  File \"/home/ubuntu/sympy/sympy/core/basic.py\", line 1688, in _eval_derivative_n_times\r\n    obj2 = obj._accept_eval_derivative(s)\r\nAttributeError: 'NoneType' object has no attribute '_accept_eval_derivative'\r\n```\r\nThis happens whenever a higher-order derivative is requested for a function that does not have an explicit derivative. The expected output is \r\n```\r\nDerivative(re(x), (x, 2))\r\n```\r\nA PR is forthcoming. \r\n",
+      "issue_closed_at": "2018-11-24T11:36:42Z",
+      "base_commit": "61e5c20c02328815270ddda385f0108a2b40d24d",
+      "changes": [
+        {
+          "file": "sympy/core/basic.py",
+          "type": "function",
+          "name": "_eval_derivative_n_times",
+          "class_name": "Basic",
+          "code": "def _eval_derivative_n_times(self, s, n):\n        # This is the default evaluator for derivatives (as called by `diff`\n        # and `Derivative`), it will attempt a loop to derive the expression\n        # `n` times by calling the corresponding `_eval_derivative` method,\n        # while leaving the derivative unevaluated if `n` is symbolic.  This\n        # method should be overridden if the object has a closed form for its\n        # symbolic n-th derivative.\n        from sympy import Integer\n        if isinstance(n, (int, Integer)):\n            obj = self\n            for i in range(n):\n                obj2 = obj._accept_eval_derivative(s)\n                if obj == obj2:\n                    break\n                obj = obj2\n            return obj\n        else:\n            return None"
+        }
+      ]
+    },
+    {
+      "pr_number": 10889,
+      "pr_title": "Fixed bug in Latex printing",
+      "pr_body": "This should fix #10821; the Latex _print_Mul function was inserting a negative sign at the beginning of a negative expression without worrying about parenthesis.\n",
+      "issue_id": 10821,
+      "issue_title": "latex bug for commutator output",
+      "issue_body": "There is a latex bug in the output of the function sympy.physics.quantum.commutator.doit that gives incorrect result if there is overall negative sign involved. For example, the following code does not give the correct expression for the latex output.\n\n``` python\nfrom sympy.physics.quantum import Commutator, Operator\nimport sympy\nA = Operator('A')\nB = Operator('B')\ncomm = Commutator(B, A)\nprint comm.doit()\nsympy.latex(comm.doit())\n```\n",
+      "issue_closed_at": "2016-03-23T20:40:37Z",
+      "base_commit": "f7a8dbec25b04767a3a6996c11a03781184d45d7",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Float",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Float(self, expr):\n        # Based off of that in StrPrinter\n        dps = prec_to_dps(expr._prec)\n        str_real = mlib.to_str(expr._mpf_, dps, strip_zeros=True)\n\n        # Must always have a mul symbol (as 2.5 10^{20} just looks odd)\n        # thus we use the number separator\n        separator = self._settings['mul_symbol_latex_numbers']\n\n        if 'e' in str_real:\n            (mant, exp) = str_real.split('e')\n\n            if exp[0] == '+':\n                exp = exp[1:]\n\n            return r\"%s%s10^{%s}\" % (mant, separator, exp)\n        elif str_real == \"+inf\":\n            return r\"\\infty\"\n        elif str_real == \"-inf\":\n            return r\"- \\infty\"\n        else:\n            return str_real"
+        },
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "convert",
+          "class_name": "LatexPrinter",
+          "code": "def convert(expr):\n            if not expr.is_Mul:\n                return str(self._print(expr))\n            else:\n                _tex = last_term_tex = \"\"\n\n                if self.order not in ('old', 'none'):\n                    args = expr.as_ordered_factors()\n                else:\n                    args = expr.args\n\n                for i, term in enumerate(args):\n                    term_tex = self._print(term)\n\n                    if self._needs_mul_brackets(term, first=(i == 0),\n                                                last=(i == len(args) - 1)):\n                        term_tex = r\"\\left(%s\\right)\" % term_tex\n\n                    if re.search(\"[0-9][} ]*$\", last_term_tex) and \\\n                            re.match(\"[{ ]*[-+0-9]\", term_tex):\n                        # between two numbers\n                        _tex += numbersep\n                    elif _tex:\n                        _tex += separator\n\n                    _tex += term_tex\n                    last_term_tex = term_tex\n                return _tex"
+        }
+      ]
+    }
+  ]
+}

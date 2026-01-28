@@ -1,0 +1,158 @@
+{
+  "instance_id": "django__django-13925",
+  "repo": "django/django",
+  "created_at": "2021-01-21T08:08:55Z",
+  "problem_statement": "models.W042 is raised on inherited manually specified primary key.\nDescription\n\t\nI have models which inherit from other models, and they should inherit the primary key. This works fine with Django 3.1. However, if I install Django 3.2 alpha, when I run make_migrations I get the following error messages:\nSystem check identified some issues:\nWARNINGS:\naccounts.ReservedUsername: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the SpeedyCoreAccountsConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\naccounts.User: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the SpeedyCoreAccountsConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\nblocks.Block: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the AppConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\ncontact_by_form.Feedback: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the SpeedyCoreContactByFormConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\ncore_messages.ReadMark: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the SpeedyCoreMessagesConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\nfriendship.Block: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the AppConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\nfriendship.Follow: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the AppConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\nfriendship.Friend: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the AppConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\nfriendship.FriendshipRequest: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the AppConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\nlikes.UserLike: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the AppConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\nuploads.Image: (models.W042) Auto-created primary key used when not defining a primary key type, by default 'django.db.models.AutoField'.\n\t\tHINT: Configure the DEFAULT_AUTO_FIELD setting or the AppConfig.default_auto_field attribute to point to a subclass of AutoField, e.g. 'django.db.models.BigAutoField'.\nThese models should not use auto-created primary keys! I already defined the primary key in the ancestor of the model. For example class Entity which class User inherits from. It looks to me like a bug in Django 3.2 alpha.\n",
+  "patch": "diff --git a/django/db/models/base.py b/django/db/models/base.py\n--- a/django/db/models/base.py\n+++ b/django/db/models/base.py\n@@ -1299,6 +1299,11 @@ def check(cls, **kwargs):\n     def _check_default_pk(cls):\n         if (\n             cls._meta.pk.auto_created and\n+            # Inherited PKs are checked in parents models.\n+            not (\n+                isinstance(cls._meta.pk, OneToOneField) and\n+                cls._meta.pk.remote_field.parent_link\n+            ) and\n             not settings.is_overridden('DEFAULT_AUTO_FIELD') and\n             not cls._meta.app_config._is_default_auto_field_overridden\n         ):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 12472,
+      "pr_title": "Fixed #31286 -- Made database specific fields checks databases aware.",
+      "pr_body": "Further tests required(or not?).\r\nCurrent test cases don't cover the case when the user provides multiple databases, e.g.:\r\n```python manage.py check --database dba --database dbb```\r\n",
+      "issue_id": 31286,
+      "issue_title": "Database specific fields checks should be databases aware.",
+      "issue_body": "In an attempt to trigger the check Error mentioned in Tickets:\n#31144\n, I found that the check for database backend doesn't check against the backend specified, e.g. --database mysql, rather, it always checks against the 'default' backend.\nAfter diving into the source code, I found the following method defined in django/db/models/fields/\ninit\n.py\ndef _check_backend_specific_checks(self, **kwargs):\n        app_label = self.model._meta.app_label\n        for db in connections:\n            if router.allow_migrate(db, app_label, model_name=self.model._meta.model_name):\n                return connections[db].validation.check_field(self, **kwargs)\n        return []\nIt checks the first db defined in connections rather those provided by users.\nA proposed change would be:\ndef _check_backend_specific_checks(self, **kwargs):\n        app_label = self.model._meta.app_label\n        errors = []\n        for db in kwargs['databases'] or ['default']:\n            if router.allow_migrate(db, app_label, model_name=self.model._meta.model_name):\n                errors.extend(connections[db].validation.check_field(self, **kwargs))\n        return errors\nIt worked as intended on my local machine.\nI would happily provide a patch for this one.",
+      "issue_closed_at": "2020-02-24T10:38:01",
+      "base_commit": "94d4bd3a091dd9ac265e14619576b1ee568653b1",
+      "changes": [
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_null_allowed_for_primary_keys",
+          "class_name": "Field",
+          "code": "def _check_null_allowed_for_primary_keys(self):\n        if (self.primary_key and self.null and\n                not connection.features.interprets_empty_strings_as_nulls):\n            # We cannot reliably check this for backends like Oracle which\n            # consider NULL and '' to be equal (and thus set up\n            # character-based fields a little differently).\n            return [\n                checks.Error(\n                    'Primary keys must not have null=True.',\n                    hint=('Set null=False on the field, or '\n                          'remove primary_key=True argument.'),\n                    obj=self,\n                    id='fields.E007',\n                )\n            ]\n        else:\n            return []"
+        }
+      ]
+    },
+    {
+      "pr_number": 8213,
+      "pr_title": "Refs #27935 -- Fixed BrinIndex.max_name_length if a project's default database isn't PostgreSQL.",
+      "pr_body": "",
+      "issue_id": 27935,
+      "issue_title": "BrinIndex crashes if name  > 30 characters",
+      "issue_body": "BrinIndex.suffix ( django.contrib.postgres.indexes) longer 3 char, but Index.set_name_with_model method allowed 3 char in suffix\nAssertionError: Index too long for multiple database support. Is self.suffix longer than 3 characters?",
+      "issue_closed_at": "2017-03-20T10:30:05",
+      "base_commit": "6cb0a3ac2836c044987f7a0cca0d1e99d52e002e",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from django.db import connection\nfrom django.db.models import Index\nfrom django.utils.functional import cached_property\n\n__all__ = ['BrinIndex', 'GinIndex']\n\n\nclass BrinIndex(Index):\n    suffix = 'brin'\n\n    def __init__(self, fields=[], name=None, pages_per_range=None):\n        if pages_per_range is not None and pages_per_range <= 0:"
+        },
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "function",
+          "name": "get_sql_create_template_values",
+          "class_name": "BrinIndex",
+          "code": "def get_sql_create_template_values(self, model, schema_editor, using):\n        parameters = super().get_sql_create_template_values(model, schema_editor, using=' USING brin')\n        if self.pages_per_range is not None:\n            parameters['extra'] = ' WITH (pages_per_range={})'.format(\n                schema_editor.quote_value(self.pages_per_range)) + parameters['extra']\n        return parameters"
+        }
+      ]
+    },
+    {
+      "pr_number": 7097,
+      "pr_title": "Fixed #27068 -- Unified form field initial data retrieval.",
+      "pr_body": "https://code.djangoproject.com/ticket/27068\n",
+      "issue_id": 27068,
+      "issue_title": "Acquire form's initial data more consistently",
+      "issue_body": "In\nBoundField\n, sometimes initial data\n​\nhandles callables\n. While other times,\n​\nit doesn't\n. This can lead to a theoretical bug when the initial data is a callable, but the field is disabled.\nOther times, the initial callable is handled, but microseconds are\n​\nnot chopped\nleading to theoretical false positives that data has changed.\nInitial data should be handled more consistently across all cases.\nMarking as a bug due to the theoretical edge cases that can produce unexpected results. Noticed these inconsistencies while working on\n#27037\n.",
+      "issue_closed_at": "2016-08-18T19:51:32",
+      "base_commit": "13857b45ca54a519a58361238442af84262c0d23",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "value",
+          "class_name": "BoundField",
+          "code": "def value(self):\n        \"\"\"\n        Returns the value for this BoundField, using the initial value if\n        the form is not bound or the data otherwise.\n        \"\"\"\n        if not self.form.is_bound:\n            data = self.initial\n        else:\n            data = self.field.bound_data(\n                self.data, self.form.initial.get(self.name, self.field.initial)\n            )\n        return self.field.prepare_value(data)"
+        },
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "id_for_label",
+          "class_name": "BoundField",
+          "code": "def id_for_label(self):\n        \"\"\"\n        Wrapper around the field widget's `id_for_label` method.\n        Useful, for example, for focusing on this field regardless of whether\n        it has a single widget or a MultiWidget.\n        \"\"\"\n        widget = self.field.widget\n        id_ = widget.attrs.get('id') or self.auto_id\n        return widget.id_for_label(id_)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "_clean_fields",
+          "class_name": "BaseForm",
+          "code": "def _clean_fields(self):\n        for name, field in self.fields.items():\n            # value_from_datadict() gets the data from the data dictionaries.\n            # Each widget type knows how to retrieve its own data, because some\n            # widgets split data over several HTML fields.\n            if field.disabled:\n                value = self.initial.get(name, field.initial)\n            else:\n                value = field.widget.value_from_datadict(self.data, self.files, self.add_prefix(name))\n            try:\n                if isinstance(field, FileField):\n                    initial = self.initial.get(name, field.initial)\n                    value = field.clean(value, initial)\n                else:\n                    value = field.clean(value)\n                self.cleaned_data[name] = value\n                if hasattr(self, 'clean_%s' % name):\n                    value = getattr(self, 'clean_%s' % name)()\n                    self.cleaned_data[name] = value\n            except ValidationError as e:\n                self.add_error(name, e)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "changed_data",
+          "class_name": "BaseForm",
+          "code": "def changed_data(self):\n        data = []\n        for name, field in self.fields.items():\n            prefixed_name = self.add_prefix(name)\n            data_value = field.widget.value_from_datadict(self.data, self.files, prefixed_name)\n            if not field.show_hidden_initial:\n                initial_value = self.initial.get(name, field.initial)\n                if callable(initial_value):\n                    initial_value = initial_value()\n            else:\n                initial_prefixed_name = self.add_initial_prefix(name)\n                hidden_widget = field.hidden_widget()\n                try:\n                    initial_value = field.to_python(hidden_widget.value_from_datadict(\n                        self.data, self.files, initial_prefixed_name))\n                except ValidationError:\n                    # Always assume data has changed if validation fails.\n                    data.append(name)\n                    continue\n            if field.has_changed(initial_value, data_value):\n                data.append(name)\n        return data"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "visible_fields",
+          "class_name": "BaseForm",
+          "code": "def visible_fields(self):\n        \"\"\"\n        Returns a list of BoundField objects that aren't hidden fields.\n        The opposite of the hidden_fields() method.\n        \"\"\"\n        return [field for field in self if not field.is_hidden]"
+        }
+      ]
+    },
+    {
+      "pr_number": 6178,
+      "pr_title": "Fixed #26186 -- Documented how app relative relationships of abstract models behave.",
+      "pr_body": "This partially reverts commit bc7d201bdbaeac14a49f51a9ef292d6312b4c45e.\n\nRefs #25858.\n",
+      "issue_id": 26186,
+      "issue_title": "When extending from abstract model, ForeignKey points to wrong application",
+      "issue_body": "This might be related to\nhttps://code.djangoproject.com/ticket/25858\nI have following code:\napp_A/abstract.py:\nclass AbstractModel1(Model):\n    class Meta:\n        abstract = True\n\n\nclass AbstractModel2(Model):\n    model1 = ForeignKey('Model1')\n\n    class Meta:\n          abstract = True\napp_A/models.py:\nfrom .abstract import AbstractModel1, AbstractModel12\n\nclass Model1(AbstractModel1):\n    pass\n\nclass Model2(AbstractModel12):\n    pass\napp_B/models.py:\nfrom app_A.abstract import AbstractModel1, AbstractModel2\n\nclass Model1(AbstractModel1):\n    pass\n\nclass Model2(AbstractModel12):\n    pass\nin Django 1.8, the\napp_B.Model2.model1\nwould point to\napp_B.Model1\n, but in Django 1.9.2 it points to\napp_A.Model1\nso my code no longer works.\nTest case can be found:\n​\nhttps://github.com/skyjur/django-ticketing/tree/master/ticket_26186",
+      "issue_closed_at": "2016-02-29T21:07:53",
+      "base_commit": "eac1423f9ebcf432dc5be95d605d124a05ab2686",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "line",
+          "name": "line 35",
+          "code": "RECURSIVE_RELATIONSHIP_CONSTANT = 'self'\n\n\ndef resolve_relation(scope_model, relation, resolve_recursive_relationship=True):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model."
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_relation",
+          "class_name": null,
+          "code": "def resolve_relation(scope_model, relation, resolve_recursive_relationship=True):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model.\n\n    The relation argument can be:\n      * RECURSIVE_RELATIONSHIP_CONSTANT, i.e. the string \"self\", in which case\n        the model argument will be returned.\n      * A bare model name without an app_label, in which case scope_model's\n        app_label will be prepended.\n      * An \"app_label.ModelName\" string.\n      * A model class, which will be returned unchanged.\n    \"\"\"\n    # Check for recursive relations\n    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:\n        if resolve_recursive_relationship:\n            relation = scope_model\n    # Look for an \"app.Model\" relation\n    elif isinstance(relation, six.string_types) and '.' not in relation:\n        relation = \"%s.%s\" % (scope_model._meta.app_label, relation)\n\n    return relation"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_related_class",
+          "class_name": "RelatedField",
+          "code": "def resolve_related_class(model, related, field):\n                field.remote_field.model = related\n                field.do_related_class(related, model)"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_through_model",
+          "class_name": "ManyToManyField",
+          "code": "def resolve_through_model(_, model, field):\n                    field.remote_field.through = model"
+        }
+      ]
+    },
+    {
+      "pr_number": 7131,
+      "pr_title": "Fixed #27096 -- Fixed primary key introspection for sqlite3 backend",
+      "pr_body": "",
+      "issue_id": 27096,
+      "issue_title": "SQLite fails finding a table primary key when it's also a foreign key",
+      "issue_body": "When the primary key of a table is also a foreign key, the\nget_primary_key_column\nintrospection function of the SQLite backend cannot detect the primary key (deficient regex).",
+      "issue_closed_at": "2016-08-20T08:53:46",
+      "base_commit": "9f27735612fc775380d7801c68af0ea1c97cf5a3",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "get_primary_key_column",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_primary_key_column(self, cursor, table_name):\n        \"\"\"\n        Get the column name of the primary key for the given table.\n        \"\"\"\n        # Don't use PRAGMA because that causes issues with some transactions\n        cursor.execute(\"SELECT sql FROM sqlite_master WHERE tbl_name = %s AND type = %s\", [table_name, \"table\"])\n        row = cursor.fetchone()\n        if row is None:\n            raise ValueError(\"Table %s does not exist\" % table_name)\n        results = row[0].strip()\n        results = results[results.index('(') + 1:results.rindex(')')]\n        for field_desc in results.split(','):\n            field_desc = field_desc.strip()\n            m = re.search('\"(.*)\".*PRIMARY KEY( AUTOINCREMENT)?$', field_desc)\n            if m:\n                return m.groups()[0]\n        return None"
+        }
+      ]
+    }
+  ]
+}

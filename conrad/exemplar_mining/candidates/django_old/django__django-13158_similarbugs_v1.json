@@ -1,0 +1,139 @@
+{
+  "instance_id": "django__django-13158",
+  "repo": "django/django",
+  "created_at": "2020-07-06T19:18:11Z",
+  "problem_statement": "QuerySet.none() on combined queries returns all results.\nDescription\n\t\nI came across this issue on Stack Overflow. I'm not 100% sure it's a bug, but it does seem strange. With this code (excuse the bizarre example filtering):\nclass Publication(models.Model):\n\tpass\nclass Article(models.Model):\n\tpublications = models.ManyToManyField(to=Publication, blank=True, null=True)\nclass ArticleForm(forms.ModelForm):\n\tpublications = forms.ModelMultipleChoiceField(\n\t\tPublication.objects.filter(id__lt=2) | Publication.objects.filter(id__gt=5),\n\t\trequired=False,\n\t)\n\tclass Meta:\n\t\tmodel = Article\n\t\tfields = [\"publications\"]\nclass ArticleAdmin(admin.ModelAdmin):\n\tform = ArticleForm\nThis works well. However, changing the ModelMultipleChoiceField queryset to use union() breaks things.\npublications = forms.ModelMultipleChoiceField(\n\tPublication.objects.filter(id__lt=2).union(\n\t\tPublication.objects.filter(id__gt=5)\n\t),\n\trequired=False,\n)\nThe form correctly shows only the matching objects. However, if you submit this form while empty (i.e. you didn't select any publications), ALL objects matching the queryset will be added. Using the OR query, NO objects are added, as I'd expect.\n",
+  "patch": "diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py\n--- a/django/db/models/sql/query.py\n+++ b/django/db/models/sql/query.py\n@@ -305,6 +305,7 @@ def clone(self):\n             obj.annotation_select_mask = None\n         else:\n             obj.annotation_select_mask = self.annotation_select_mask.copy()\n+        obj.combined_queries = tuple(query.clone() for query in self.combined_queries)\n         # _annotation_select_cache cannot be copied, as doing so breaks the\n         # (necessary) state in which both annotations and\n         # _annotation_select_cache point to the same underlying objects.\n@@ -1777,6 +1778,8 @@ def split_exclude(self, filter_expr, can_reuse, names_with_path):\n \n     def set_empty(self):\n         self.where.add(NothingNode(), AND)\n+        for query in self.combined_queries:\n+            query.set_empty()\n \n     def is_empty(self):\n         return any(isinstance(c, NothingNode) for c in self.where.children)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8629,
+      "pr_title": "Fixed #28293 -- Fixed union(), intersection(), and difference() when combining with an EmptyQuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/28293",
+      "issue_id": 28293,
+      "issue_title": "QuerySet.union(QuerySet.none()) results in an empty queryset, should be the original queryset",
+      "issue_body": "",
+      "issue_closed_at": "2017-06-13T01:16:29",
+      "base_commit": "9dc83c356d363c090f3351c908cad6f823aeb7bf",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_combinator_query",
+          "class_name": "QuerySet",
+          "code": "def _combinator_query(self, combinator, *other_qs, all=False):\n        # Clone the query to inherit the select list and everything\n        clone = self._clone()\n        # Clear limits and ordering so they can be reapplied\n        clone.query.clear_ordering(True)\n        clone.query.clear_limits()\n        clone.query.combined_queries = (self.query,) + tuple(qs.query for qs in other_qs)\n        clone.query.combinator = combinator\n        clone.query.combinator_all = all\n        return clone"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = (compiler.as_sql() for compiler in compilers)\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 12263,
+      "pr_title": "Fixed #31166 -- Used \"raise from\" when raising ImproperlyConfigured exceptions in django.urls.resolvers.",
+      "pr_body": "This will make it have a text of \"this exception is the direct result of\" instead of \"During handling of the above exception, another exception occurred\" \r\n\r\nThis is more accurate for the case of this exception.",
+      "issue_id": 31166,
+      "issue_title": "Provide context for ImproperlyConfigured exceptions in URL resolver.",
+      "issue_body": "",
+      "issue_closed_at": "2020-01-17T05:21:04",
+      "base_commit": "73563183c2ea92e9ef1d3a1f790a503acc14ade2",
+      "changes": [
+        {
+          "file": "django/urls/resolvers.py",
+          "type": "function",
+          "name": "_compile",
+          "class_name": "RoutePattern",
+          "code": "def _compile(self, route):\n        return re.compile(_route_to_regex(route, self._is_endpoint)[0])"
+        },
+        {
+          "file": "django/urls/resolvers.py",
+          "type": "function",
+          "name": "_route_to_regex",
+          "class_name": null,
+          "code": "def _route_to_regex(route, is_endpoint=False):\n    \"\"\"\n    Convert a path pattern into a regular expression. Return the regular\n    expression and a dictionary mapping the capture names to the converters.\n    For example, 'foo/<int:pk>' returns '^foo\\\\/(?P<pk>[0-9]+)'\n    and {'pk': <django.urls.converters.IntConverter>}.\n    \"\"\"\n    if not set(route).isdisjoint(string.whitespace):\n        raise ImproperlyConfigured(\"URL route '%s' cannot contain whitespace.\" % route)\n    original_route = route\n    parts = ['^']\n    converters = {}\n    while True:\n        match = _PATH_PARAMETER_COMPONENT_RE.search(route)\n        if not match:\n            parts.append(re.escape(route))\n            break\n        parts.append(re.escape(route[:match.start()]))\n        route = route[match.end():]\n        parameter = match.group('parameter')\n        if not parameter.isidentifier():\n            raise ImproperlyConfigured(\n                \"URL route '%s' uses parameter name %r which isn't a valid \"\n                \"Python identifier.\" % (original_route, parameter)\n            )\n        raw_converter = match.group('converter')\n        if raw_converter is None:\n            # If a converter isn't specified, the default is `str`.\n            raw_converter = 'str'\n        try:\n            converter = get_converter(raw_converter)\n        except KeyError as e:\n            raise ImproperlyConfigured(\n                \"URL route '%s' uses invalid converter %s.\" % (original_route, e)\n            )\n        converters[parameter] = converter\n        parts.append('(?P<' + parameter + '>' + converter.regex + ')')\n    if is_endpoint:\n        parts.append('$')\n    return ''.join(parts), converters"
+        },
+        {
+          "file": "django/urls/resolvers.py",
+          "type": "function",
+          "name": "url_patterns",
+          "class_name": "URLResolver",
+          "code": "def url_patterns(self):\n        # urlconf_module might be a valid set of patterns, so we default to it\n        patterns = getattr(self.urlconf_module, \"urlpatterns\", self.urlconf_module)\n        try:\n            iter(patterns)\n        except TypeError:\n            msg = (\n                \"The included URLconf '{name}' does not appear to have any \"\n                \"patterns in it. If you see valid patterns in the file then \"\n                \"the issue is probably caused by a circular import.\"\n            )\n            raise ImproperlyConfigured(msg.format(name=self.urlconf_name))\n        return patterns"
+        }
+      ]
+    },
+    {
+      "pr_number": 9406,
+      "pr_title": "Fixed #28871 -- Fixed initialization of autocomplete widgets in \"Add another\" inlines.",
+      "pr_body": "https://code.djangoproject.com/ticket/28871",
+      "issue_id": 28871,
+      "issue_title": "Autocomplete select for new lines in inline model do not open",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-01T21:42:03",
+      "base_commit": "095c1aaa898bed40568009db836aa8434f1b983d",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "formfield_for_foreignkey",
+          "class_name": "BaseModelAdmin",
+          "code": "def formfield_for_foreignkey(self, db_field, request, **kwargs):\n        \"\"\"\n        Get a form Field for a ForeignKey.\n        \"\"\"\n        db = kwargs.get('using')\n\n        if db_field.name in self.get_autocomplete_fields(request):\n            kwargs['widget'] = AutocompleteSelect(db_field.remote_field, using=db)\n        elif db_field.name in self.raw_id_fields:\n            kwargs['widget'] = widgets.ForeignKeyRawIdWidget(db_field.remote_field, self.admin_site, using=db)\n        elif db_field.name in self.radio_fields:\n            kwargs['widget'] = widgets.AdminRadioSelect(attrs={\n                'class': get_ul_class(self.radio_fields[db_field.name]),\n            })\n            kwargs['empty_label'] = _('None') if db_field.blank else None\n\n        if 'queryset' not in kwargs:\n            queryset = self.get_field_queryset(db, db_field, request)\n            if queryset is not None:\n                kwargs['queryset'] = queryset\n\n        return db_field.formfield(**kwargs)"
+        },
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "formfield_for_manytomany",
+          "class_name": "BaseModelAdmin",
+          "code": "def formfield_for_manytomany(self, db_field, request, **kwargs):\n        \"\"\"\n        Get a form Field for a ManyToManyField.\n        \"\"\"\n        # If it uses an intermediary model that isn't auto created, don't show\n        # a field in admin.\n        if not db_field.remote_field.through._meta.auto_created:\n            return None\n        db = kwargs.get('using')\n\n        autocomplete_fields = self.get_autocomplete_fields(request)\n        if db_field.name in autocomplete_fields:\n            kwargs['widget'] = AutocompleteSelectMultiple(db_field.remote_field, using=db)\n        elif db_field.name in self.raw_id_fields:\n            kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.remote_field, self.admin_site, using=db)\n        elif db_field.name in list(self.filter_vertical) + list(self.filter_horizontal):\n            kwargs['widget'] = widgets.FilteredSelectMultiple(\n                db_field.verbose_name,\n                db_field.name in self.filter_vertical\n            )\n\n        if 'queryset' not in kwargs:\n            queryset = self.get_field_queryset(db, db_field, request)\n            if queryset is not None:\n                kwargs['queryset'] = queryset\n\n        form_field = db_field.formfield(**kwargs)\n        if (isinstance(form_field.widget, SelectMultiple) and\n                not isinstance(form_field.widget, (CheckboxSelectMultiple, AutocompleteSelectMultiple))):\n            msg = _('Hold down \"Control\", or \"Command\" on a Mac, to select more than one.')\n            help_text = form_field.help_text\n            form_field.help_text = format_lazy('{} {}', help_text, msg) if help_text else msg\n        return form_field"
+        },
+        {
+          "file": "django/contrib/admin/widgets.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "AutocompleteMixin",
+          "code": "def __init__(self, rel, attrs=None, choices=(), using=None):\n        self.rel = rel\n        self.db = using\n        self.choices = choices\n        if attrs is not None:\n            self.attrs = attrs.copy()\n        else:\n            self.attrs = {}"
+        }
+      ]
+    },
+    {
+      "pr_number": 8905,
+      "pr_title": "Fixed #28375 -- Fixed KeyError raised on reverse prefetch of a model with OneToOne primary key to non-pk field",
+      "pr_body": "https://code.djangoproject.com/ticket/28375",
+      "issue_id": 28375,
+      "issue_title": "QuerySet.prefetch_related() crashes with KeyError if model uses to_field and string primary key",
+      "issue_body": "",
+      "issue_closed_at": "2017-08-21T15:47:49",
+      "base_commit": "b5ad5c628a0327c2208d76e5cacb3cb6f48750b5",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related_descriptors.py",
+          "type": "function",
+          "name": "get_prefetch_queryset",
+          "class_name": "ManyRelatedManager",
+          "code": "def get_prefetch_queryset(self, instances, queryset=None):\n            if queryset is None:\n                queryset = super().get_queryset()\n\n            queryset._add_hints(instance=instances[0])\n            queryset = queryset.using(queryset._db or self._db)\n\n            query = {'%s__in' % self.query_field_name: instances}\n            queryset = queryset._next_is_sticky().filter(**query)\n\n            # M2M: need to annotate the query in order to get the primary model\n            # that the secondary model was actually related to. We know that\n            # there will already be a join on the join table, so we can just add\n            # the select.\n\n            # For non-autocreated 'through' models, can't assume we are\n            # dealing with PK values.\n            fk = self.through._meta.get_field(self.source_field_name)\n            join_table = fk.model._meta.db_table\n            connection = connections[queryset.db]\n            qn = connection.ops.quote_name\n            queryset = queryset.extra(select={\n                '_prefetch_related_val_%s' % f.attname:\n                '%s.%s' % (qn(join_table), qn(f.column)) for f in fk.local_related_fields})\n            return (\n                queryset,\n                lambda result: tuple(\n                    getattr(result, '_prefetch_related_val_%s' % f.attname)\n                    for f in fk.local_related_fields\n                ),\n                lambda inst: tuple(\n                    f.get_db_prep_value(getattr(inst, f.attname), connection)\n                    for f in fk.foreign_related_fields\n                ),\n                False,\n                self.prefetch_cache_name,\n                False,\n            )"
+        }
+      ]
+    },
+    {
+      "pr_number": 5826,
+      "pr_title": "Fixed #25882 -- Prevented fast deletes matching no rows from crashing on MySQL.",
+      "pr_body": "",
+      "issue_id": 25882,
+      "issue_title": "Deletion on ForeignKey raises TypeError",
+      "issue_body": "",
+      "issue_closed_at": "2015-12-14T12:12:22",
+      "base_commit": "5233b70070f8979f41ca1da2c1b1d78c8e30944e",
+      "changes": [
+        {
+          "file": "django/db/models/sql/subqueries.py",
+          "type": "function",
+          "name": "delete_qs",
+          "class_name": "DeleteQuery",
+          "code": "def delete_qs(self, query, using):\n        \"\"\"\n        Delete the queryset in one SQL query (if possible). For simple queries\n        this is done by copying the query.query.where to self.query, for\n        complex queries by using subquery.\n        \"\"\"\n        innerq = query.query\n        # Make sure the inner query has at least one table in use.\n        innerq.get_initial_alias()\n        # The same for our new query.\n        self.get_initial_alias()\n        innerq_used_tables = [t for t in innerq.tables\n                              if innerq.alias_refcount[t]]\n        if not innerq_used_tables or innerq_used_tables == self.tables:\n            # There is only the base table in use in the query.\n            self.where = innerq.where\n        else:\n            pk = query.model._meta.pk\n            if not connections[using].features.update_can_self_select:\n                # We can't do the delete using subquery.\n                values = list(query.values_list('pk', flat=True))\n                if not values:\n                    return\n                return self.delete_batch(values, using)\n            else:\n                innerq.clear_select_clause()\n                innerq.select = [\n                    pk.get_col(self.get_initial_alias())\n                ]\n                values = innerq\n            self.where = self.where_class()\n            self.add_q(Q(pk__in=values))\n        cursor = self.get_compiler(using).execute_sql(CURSOR)\n        return cursor.rowcount if cursor else 0"
+        }
+      ]
+    }
+  ]
+}

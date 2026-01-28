@@ -1,0 +1,188 @@
+{
+  "instance_id": "scikit-learn__scikit-learn-10508",
+  "repo": "scikit-learn/scikit-learn",
+  "created_at": "2018-01-19T18:00:29Z",
+  "problem_statement": "LabelEncoder transform fails for empty lists (for certain inputs)\nPython 3.6.3, scikit_learn 0.19.1\r\n\r\nDepending on which datatypes were used to fit the LabelEncoder, transforming empty lists works or not. Expected behavior would be that empty arrays are returned in both cases.\r\n\r\n```python\r\n>>> from sklearn.preprocessing import LabelEncoder\r\n>>> le = LabelEncoder()\r\n>>> le.fit([1,2])\r\nLabelEncoder()\r\n>>> le.transform([])\r\narray([], dtype=int64)\r\n>>> le.fit([\"a\",\"b\"])\r\nLabelEncoder()\r\n>>> le.transform([])\r\nTraceback (most recent call last):\r\n  File \"[...]\\Python36\\lib\\site-packages\\numpy\\core\\fromnumeric.py\", line 57, in _wrapfunc\r\n    return getattr(obj, method)(*args, **kwds)\r\nTypeError: Cannot cast array data from dtype('float64') to dtype('<U32') according to the rule 'safe'\r\n\r\nDuring handling of the above exception, another exception occurred:\r\n\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"[...]\\Python36\\lib\\site-packages\\sklearn\\preprocessing\\label.py\", line 134, in transform\r\n    return np.searchsorted(self.classes_, y)\r\n  File \"[...]\\Python36\\lib\\site-packages\\numpy\\core\\fromnumeric.py\", line 1075, in searchsorted\r\n    return _wrapfunc(a, 'searchsorted', v, side=side, sorter=sorter)\r\n  File \"[...]\\Python36\\lib\\site-packages\\numpy\\core\\fromnumeric.py\", line 67, in _wrapfunc\r\n    return _wrapit(obj, method, *args, **kwds)\r\n  File \"[...]\\Python36\\lib\\site-packages\\numpy\\core\\fromnumeric.py\", line 47, in _wrapit\r\n    result = getattr(asarray(obj), method)(*args, **kwds)\r\nTypeError: Cannot cast array data from dtype('float64') to dtype('<U32') according to the rule 'safe'\r\n```\n",
+  "patch": "diff --git a/sklearn/preprocessing/label.py b/sklearn/preprocessing/label.py\n--- a/sklearn/preprocessing/label.py\n+++ b/sklearn/preprocessing/label.py\n@@ -126,6 +126,9 @@ def transform(self, y):\n         \"\"\"\n         check_is_fitted(self, 'classes_')\n         y = column_or_1d(y, warn=True)\n+        # transform of empty array is empty array\n+        if _num_samples(y) == 0:\n+            return np.array([])\n \n         classes = np.unique(y)\n         if len(np.intersect1d(classes, self.classes_)) < len(classes):\n@@ -147,6 +150,10 @@ def inverse_transform(self, y):\n         y : numpy array of shape [n_samples]\n         \"\"\"\n         check_is_fitted(self, 'classes_')\n+        y = column_or_1d(y, warn=True)\n+        # inverse transform of empty array is empty array\n+        if _num_samples(y) == 0:\n+            return np.array([])\n \n         diff = np.setdiff1d(y, np.arange(len(self.classes_)))\n         if len(diff):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 7632,
+      "pr_title": "[MRG+1] Correcting length of explained_variance_ratio_, eigen solver, final PR",
+      "pr_body": "<!--\nThanks for contributing a pull request! Please ensure you have taken a look at\nthe contribution guidelines: https://github.com/scikit-learn/scikit-learn/blob/master/CONTRIBUTING.md#Contributing-Pull-Requests\n-->\n#### Reference Issue\n\n<!-- Example: Fixes #1234 -->\n\nFix #6032 \n#### What does this implement/fix? Explain your changes.\n\nAttribute explained_variance_ratio_ from LinearDiscriminantAnalysis class will be of length n_components (eigen solver).\n#### Any other comments?\n\nThis PR follows PR 7616. I mixed up my git history, so it was easier to open a new PR.\n\n<!--\nPlease be aware that we are a loose team of volunteers so patience is\nnecessary; assistance handling other issues is very welcome. We value\nall user contributions, no matter how minor they are. If we are slow to\nreview, either the pull request needs some benchmarking, tinkering,\nconvincing, etc. or more likely the reviewers are simply busy. In either\ncase, we ask for your understanding during the review process.\nFor more information, see our FAQ on this topic:\nhttp://scikit-learn.org/dev/faq.html#why-is-my-pull-request-not-getting-any-attention.\n\nThanks for contributing!\n-->\n",
+      "issue_id": 6032,
+      "issue_title": "LDA.explained_variance_ratio_ is of the wrong size",
+      "issue_body": "The docs say that <a href=\"http://scikit-learn.org/stable/modules/generated/sklearn.discriminant_analysis.LinearDiscriminantAnalysis.html#sklearn.discriminant_analysis.LinearDiscriminantAnalysis\">LDA.explained_variance_ratio_</a> should have only `n_components_`. But it doesn't.\n\nIt looks like this bug only exists when we use the `eigen` solver, not the `svd` solver.\n\n```\n>>> import numpy as np\n>>> from sklearn.lda import LDA\n>>> from sklearn.utils.testing import assert_equal\n>>>\n>>> state = np.random.RandomState(0)\n>>> X = state.normal(loc=0, scale=100, size=(40, 20))\n>>> y = state.randint(0, 3, size=(40, 1))\n>>>\n>>> # Train the LDA classifier. Use the eigen solver\n>>> lda_eigen = LDA(solver='eigen', n_components=5)\n>>> lda_eigen.fit(X, y)\n>>> assert_equal(lda_eigen.explained_variance_ratio_.shape, (5,))\nAssertionError: Tuples differ: (20,) != (5,)\n\nFirst differing element 0:\n20\n5\n\n- (20,)\n+ (5,)\n```\n\nLooks like we fix either the docs or the code. Which one?\n\nPinging @JPFrancoia.\n\nAddresses an issue in #6031.\n",
+      "issue_closed_at": "2016-10-25T12:52:13Z",
+      "base_commit": "ee3e61754bd4bb10cea8065993e462fc7b112cb3",
+      "changes": [
+        {
+          "file": "sklearn/discriminant_analysis.py",
+          "type": "function",
+          "name": "_solve_lsqr",
+          "class_name": "LinearDiscriminantAnalysis",
+          "code": "def _solve_lsqr(self, X, y, shrinkage):\n        \"\"\"Least squares solver.\n\n        The least squares solver computes a straightforward solution of the\n        optimal decision rule based directly on the discriminant functions. It\n        can only be used for classification (with optional shrinkage), because\n        estimation of eigenvectors is not performed. Therefore, dimensionality\n        reduction with the transform is not supported.\n\n        Parameters\n        ----------\n        X : array-like, shape (n_samples, n_features)\n            Training data.\n\n        y : array-like, shape (n_samples,) or (n_samples, n_classes)\n            Target values.\n\n        shrinkage : string or float, optional\n            Shrinkage parameter, possible values:\n              - None: no shrinkage (default).\n              - 'auto': automatic shrinkage using the Ledoit-Wolf lemma.\n              - float between 0 and 1: fixed shrinkage parameter.\n\n        Notes\n        -----\n        This solver is based on [1]_, section 2.6.2, pp. 39-41.\n\n        References\n        ----------\n        .. [1] R. O. Duda, P. E. Hart, D. G. Stork. Pattern Classification\n           (Second Edition). John Wiley & Sons, Inc., New York, 2001. ISBN\n           0-471-05669-3.\n        \"\"\"\n        self.means_ = _class_means(X, y)\n        self.covariance_ = _class_cov(X, y, self.priors_, shrinkage)\n        self.coef_ = linalg.lstsq(self.covariance_, self.means_.T)[0].T\n        self.intercept_ = (-0.5 * np.diag(np.dot(self.means_, self.coef_.T))\n                           + np.log(self.priors_))"
+        },
+        {
+          "file": "sklearn/discriminant_analysis.py",
+          "type": "function",
+          "name": "_solve_svd",
+          "class_name": "LinearDiscriminantAnalysis",
+          "code": "def _solve_svd(self, X, y):\n        \"\"\"SVD solver.\n\n        Parameters\n        ----------\n        X : array-like, shape (n_samples, n_features)\n            Training data.\n\n        y : array-like, shape (n_samples,) or (n_samples, n_targets)\n            Target values.\n        \"\"\"\n        n_samples, n_features = X.shape\n        n_classes = len(self.classes_)\n\n        self.means_ = _class_means(X, y)\n        if self.store_covariance:\n            self.covariance_ = _class_cov(X, y, self.priors_)\n\n        Xc = []\n        for idx, group in enumerate(self.classes_):\n            Xg = X[y == group, :]\n            Xc.append(Xg - self.means_[idx])\n\n        self.xbar_ = np.dot(self.priors_, self.means_)\n\n        Xc = np.concatenate(Xc, axis=0)\n\n        # 1) within (univariate) scaling by with classes std-dev\n        std = Xc.std(axis=0)\n        # avoid division by zero in normalization\n        std[std == 0] = 1.\n        fac = 1. / (n_samples - n_classes)\n\n        # 2) Within variance scaling\n        X = np.sqrt(fac) * (Xc / std)\n        # SVD of centered (within)scaled data\n        U, S, V = linalg.svd(X, full_matrices=False)\n\n        rank = np.sum(S > self.tol)\n        if rank < n_features:\n            warnings.warn(\"Variables are collinear.\")\n        # Scaling of within covariance is: V' 1/S\n        scalings = (V[:rank] / std).T / S[:rank]\n\n        # 3) Between variance scaling\n        # Scale weighted centers\n        X = np.dot(((np.sqrt((n_samples * self.priors_) * fac)) *\n                    (self.means_ - self.xbar_).T).T, scalings)\n        # Centers are living in a space with n_classes-1 dim (maximum)\n        # Use SVD to find projection in the space spanned by the\n        # (n_classes) centers\n        _, S, V = linalg.svd(X, full_matrices=0)\n\n        self.explained_variance_ratio_ = (S**2 / np.sum(\n                S**2))[:self.n_components]\n        rank = np.sum(S > self.tol * S[0])\n        self.scalings_ = np.dot(scalings, V.T[:, :rank])\n        coef = np.dot(self.means_ - self.xbar_, self.scalings_)\n        self.intercept_ = (-0.5 * np.sum(coef ** 2, axis=1)\n                           + np.log(self.priors_))\n        self.coef_ = np.dot(coef, self.scalings_.T)\n        self.intercept_ -= np.dot(self.xbar_, self.coef_.T)"
+        },
+        {
+          "file": "sklearn/discriminant_analysis.py",
+          "type": "function",
+          "name": "fit",
+          "class_name": "QuadraticDiscriminantAnalysis",
+          "code": "def fit(self, X, y, store_covariances=None, tol=None):\n        \"\"\"Fit the model according to the given training data and parameters.\n\n            .. versionchanged:: 0.17\n               Deprecated *store_covariance* have been moved to main constructor.\n\n            .. versionchanged:: 0.17\n               Deprecated *tol* have been moved to main constructor.\n\n        Parameters\n        ----------\n        X : array-like, shape = [n_samples, n_features]\n            Training vector, where n_samples in the number of samples and\n            n_features is the number of features.\n\n        y : array, shape = [n_samples]\n            Target values (integers)\n        \"\"\"\n        if store_covariances:\n            warnings.warn(\"The parameter 'store_covariances' is deprecated as \"\n                          \"of version 0.17 and will be removed in 0.19. The \"\n                          \"parameter is no longer necessary because the value \"\n                          \"is set via the estimator initialisation or \"\n                          \"set_params method.\", DeprecationWarning)\n            self.store_covariances = store_covariances\n        if tol:\n            warnings.warn(\"The parameter 'tol' is deprecated as of version \"\n                          \"0.17 and will be removed in 0.19. The parameter is \"\n                          \"no longer necessary because the value is set via \"\n                          \"the estimator initialisation or set_params method.\",\n                          DeprecationWarning)\n            self.tol = tol\n        X, y = check_X_y(X, y)\n        check_classification_targets(y)\n        self.classes_, y = np.unique(y, return_inverse=True)\n        n_samples, n_features = X.shape\n        n_classes = len(self.classes_)\n        if n_classes < 2:\n            raise ValueError('y has less than 2 classes')\n        if self.priors is None:\n            self.priors_ = bincount(y) / float(n_samples)\n        else:\n            self.priors_ = self.priors\n\n        cov = None\n        if self.store_covariances:\n            cov = []\n        means = []\n        scalings = []\n        rotations = []\n        for ind in xrange(n_classes):\n            Xg = X[y == ind, :]\n            meang = Xg.mean(0)\n            means.append(meang)\n            if len(Xg) == 1:\n                raise ValueError('y has only 1 sample in class %s, covariance '\n                                 'is ill defined.' % str(self.classes_[ind]))\n            Xgc = Xg - meang\n            # Xgc = U * S * V.T\n            U, S, Vt = np.linalg.svd(Xgc, full_matrices=False)\n            rank = np.sum(S > self.tol)\n            if rank < n_features:\n                warnings.warn(\"Variables are collinear\")\n            S2 = (S ** 2) / (len(Xg) - 1)\n            S2 = ((1 - self.reg_param) * S2) + self.reg_param\n            if self.store_covariances:\n                # cov = V * (S^2 / (n-1)) * V.T\n                cov.append(np.dot(S2 * Vt.T, Vt))\n            scalings.append(S2)\n            rotations.append(Vt.T)\n        if self.store_covariances:\n            self.covariances_ = cov\n        self.means_ = np.asarray(means)\n        self.scalings_ = scalings\n        self.rotations_ = rotations\n        return self"
+        },
+        {
+          "file": "sklearn/discriminant_analysis.py",
+          "type": "function",
+          "name": "transform",
+          "class_name": "LinearDiscriminantAnalysis",
+          "code": "def transform(self, X):\n        \"\"\"Project data to maximize class separation.\n\n        Parameters\n        ----------\n        X : array-like, shape (n_samples, n_features)\n            Input data.\n\n        Returns\n        -------\n        X_new : array, shape (n_samples, n_components)\n            Transformed data.\n        \"\"\"\n        if self.solver == 'lsqr':\n            raise NotImplementedError(\"transform not implemented for 'lsqr' \"\n                                      \"solver (use 'svd' or 'eigen').\")\n        check_is_fitted(self, ['xbar_', 'scalings_'], all_or_any=any)\n\n        X = check_array(X)\n        if self.solver == 'svd':\n            X_new = np.dot(X - self.xbar_, self.scalings_)\n        elif self.solver == 'eigen':\n            X_new = np.dot(X, self.scalings_)\n        n_components = X.shape[1] if self.n_components is None \\\n            else self.n_components\n        return X_new[:, :n_components]"
+        }
+      ]
+    },
+    {
+      "pr_number": 7594,
+      "pr_title": "[MRG+1] FIX Make sure GridSearchCV and RandomizedSearchCV are pickle-able",
+      "pr_body": "Fixes #7562 \n- Subclasses the `np.ma.MaskedArray` and overrides the `__getstate__` to make obj dtyped `MaskedArray`s pickle-able.\n- Uses this fixed `utils.fixes.MaskedArray` inside `gs.cv_results_`...\n\nThis is based off of https://github.com/numpy/numpy/pull/8122\n\nPlease review @jnothman @amueller @GaelVaroquaux @davechallis\n",
+      "issue_id": 7562,
+      "issue_title": "Error unpickling RandomizedSearchCV objects in 0.18 due to masked arrays",
+      "issue_body": "#### Description\n\nIn version 0.18, loading pickles of fitted RandomizedSearchCV objects results in a `TypeError` exception (from pickle also created with version 0.18).\n\nThe error seems related to the use of masked arrays in the `RandomizedSearchCV.cv_results_` attribute - clearing this before pickling (i.e. setting to to `None`) allows pickling/unpickling to work.\n#### Steps/Code to Reproduce\n\n```\nimport pickle                                                                   \nfrom sklearn.model_selection import RandomizedSearchCV                          \nfrom sklearn.ensemble import RandomForestClassifier                             \n\nX = [[1, 0], [1, 0], [1, 0], [0, 1], [0, 1], [0, 1]]                            \ny = [1, 1, 1, 0, 0, 0]                                                          \n\nmodel = RandomizedSearchCV(RandomForestClassifier(),                            \n                           {'n_estimators': [5, 10, 20]},                       \n                           n_iter=3)                                            \nmodel.fit(X, y)                                                                 \n\nwith open('model.pkl', 'wb') as fh:                                             \n    pickle.dump(model, fh)                                                      \n\nwith open('model.pkl', 'rb') as fh:                                             \n    model = pickle.load(fh)\n\nprint(model.predict(X))\n```\n#### Expected Results\n\n```\n[1, 1, 1, 0, 0, 0]\n```\n#### Actual Results\n\n```\nTraceback (most recent call last):\n  File \"./t.py\", line 19, in <module>\n    model = pickle.load(fh)\n  File \"/Users/dsc/miniconda3/envs/p3/lib/python3.5/site-packages/numpy/ma/core.py\", line 5863, in __setstate__\n    super(MaskedArray, self).__setstate__((shp, typ, isf, raw))\nTypeError: object pickle not returning list\n```\n#### Versions\n\nPython 3.5.1 |Continuum Analytics, Inc.| (default, Dec  7 2015, 11:24:55) \n[GCC 4.2.1 (Apple Inc. build 5577)]\nNumPy 1.11.1\nSciPy 0.18.1\nScikit-Learn 0.18\n",
+      "issue_closed_at": "2016-10-10T19:33:44Z",
+      "base_commit": "33ed90dc0aa0549a5963000d7d070aa18ca389c4",
+      "changes": [
+        {
+          "file": "sklearn/model_selection/_search.py",
+          "type": "line",
+          "name": "line 30",
+          "code": "from ..utils import check_random_state\nfrom ..utils.fixes import sp_version\nfrom ..utils.fixes import rankdata\nfrom ..utils.random import sample_without_replacement\nfrom ..utils.validation import indexable, check_is_fitted\nfrom ..utils.metaestimators import if_delegate_has_method"
+        },
+        {
+          "file": "sklearn/model_selection/_search.py",
+          "type": "function",
+          "name": "_store",
+          "class_name": "BaseSearchCV",
+          "code": "def _store(key_name, array, weights=None, splits=False, rank=False):\n            \"\"\"A small helper to store the scores/times to the cv_results_\"\"\"\n            array = np.array(array, dtype=np.float64).reshape(n_candidates,\n                                                              n_splits)\n            if splits:\n                for split_i in range(n_splits):\n                    results[\"split%d_%s\"\n                            % (split_i, key_name)] = array[:, split_i]\n\n            array_means = np.average(array, axis=1, weights=weights)\n            results['mean_%s' % key_name] = array_means\n            # Weighted std is not directly available in numpy\n            array_stds = np.sqrt(np.average((array -\n                                             array_means[:, np.newaxis]) ** 2,\n                                            axis=1, weights=weights))\n            results['std_%s' % key_name] = array_stds\n\n            if rank:\n                results[\"rank_%s\" % key_name] = np.asarray(\n                    rankdata(-array_means, method='min'), dtype=np.int32)"
+        },
+        {
+          "file": "sklearn/utils/fixes.py",
+          "type": "function",
+          "name": "rankdata",
+          "class_name": null,
+          "code": "def rankdata(a, method='average'):\n        if method not in ('average', 'min', 'max', 'dense', 'ordinal'):\n            raise ValueError('unknown method \"{0}\"'.format(method))\n\n        arr = np.ravel(np.asarray(a))\n        algo = 'mergesort' if method == 'ordinal' else 'quicksort'\n        sorter = np.argsort(arr, kind=algo)\n\n        inv = np.empty(sorter.size, dtype=np.intp)\n        inv[sorter] = np.arange(sorter.size, dtype=np.intp)\n\n        if method == 'ordinal':\n            return inv + 1\n\n        arr = arr[sorter]\n        obs = np.r_[True, arr[1:] != arr[:-1]]\n        dense = obs.cumsum()[inv]\n\n        if method == 'dense':\n            return dense\n\n        # cumulative counts of each unique value\n        count = np.r_[np.nonzero(obs)[0], len(obs)]\n\n        if method == 'max':\n            return count[dense]\n\n        if method == 'min':\n            return count[dense - 1] + 1\n\n        # average method\n        return .5 * (count[dense] + count[dense - 1] + 1)"
+        }
+      ]
+    },
+    {
+      "pr_number": 4146,
+      "pr_title": "[MRG + 1] Fdr treshold bug",
+      "pr_body": "Continues #2932. Fixes #2771.\nThese are some minor fixes on top of #2932, where @bthirion already gave his +1.\nMaybe @arjoly wants to have a look as he commented there.\nThis is a good bug fix that I think we should include asap.\n\nFYI tests take .5s.\n",
+      "issue_id": 2771,
+      "issue_title": "SelectFdr has serious thresholding bug",
+      "issue_body": "The current code reads like:\n\n```\ndef _get_support_mask(self):\n    alpha = self.alpha\n    sv = np.sort(self.pvalues_)\n    threshold = sv[sv < alpha * np.arange(len(self.pvalues_))].max()\n    return self.pvalues_ <= threshold\n```\n\nBut this doesn't actually control FDR at all, the correct implementation should have:\n\n```\n    bf_alpha = alpha / len(self.pvalues_)\n    threshold = sv[sv < bf_alpha * np.arange(len(self.pvalues_))].max()\n```\n\nNote the k / m term in the equation at:\nhttp://en.wikipedia.org/wiki/False_discovery_rate#Benjamini.E2.80.93Hochberg_procedure\n",
+      "issue_closed_at": "2015-02-24T22:15:19Z",
+      "base_commit": "f6af4881a5a66fb21688379b39f9304898a11bc0",
+      "changes": [
+        {
+          "file": "sklearn/feature_selection/univariate_selection.py",
+          "type": "function",
+          "name": "_get_support_mask",
+          "class_name": "GenericUnivariateSelect",
+          "code": "def _get_support_mask(self):\n        check_is_fitted(self, 'scores_')\n\n        selector = self._make_selector()\n        selector.pvalues_ = self.pvalues_\n        selector.scores_ = self.scores_\n        return selector._get_support_mask()"
+        },
+        {
+          "file": "sklearn/feature_selection/univariate_selection.py",
+          "type": "class",
+          "name": "SelectFdr",
+          "code": "class SelectFdr(_BaseFilter):\n    \"\"\"Filter: Select the p-values for an estimated false discovery rate\n\n    This uses the Benjamini-Hochberg procedure. ``alpha`` is the target false\n    discovery rate.\n\n    Parameters\n    ----------\n    score_func : callable\n        Function taking two arrays X and y, and returning a pair of arrays\n        (scores, pvalues).\n\n    alpha : float, optional\n        The highest uncorrected p-value for features to keep.\n\n\n    Attributes\n    ----------\n    scores_ : array-like, shape=(n_features,)\n        Scores of features.\n\n    pvalues_ : array-like, shape=(n_features,)\n        p-values of feature scores.\n    \"\"\"\n\n    def __init__(self, score_func=f_classif, alpha=5e-2):\n        super(SelectFdr, self).__init__(score_func)\n        self.alpha = alpha\n\n    def _get_support_mask(self):\n        check_is_fitted(self, 'scores_')\n\n        alpha = self.alpha\n        sv = np.sort(self.pvalues_)\n        selected = sv[sv < alpha * np.arange(len(self.pvalues_))]\n        if selected.size == 0:\n            return np.zeros_like(self.pvalues_, dtype=bool)\n        return self.pvalues_ <= selected.max()"
+        },
+        {
+          "file": "sklearn/feature_selection/univariate_selection.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "GenericUnivariateSelect",
+          "code": "def __init__(self, score_func=f_classif, mode='percentile', param=1e-5):\n        super(GenericUnivariateSelect, self).__init__(score_func)\n        self.mode = mode\n        self.param = param"
+        }
+      ]
+    },
+    {
+      "pr_number": 4322,
+      "pr_title": "[MRG+2] Pass include_self=True to kneighbors_graph",
+      "pr_body": "Fixes #4235.\n",
+      "issue_id": 4235,
+      "issue_title": "Check all usages of kneighbors_graph",
+      "issue_body": "After @MechCoder fixed kneighbors_graph in #4046, we should check all uses in the code for whether we want `include_self==True` or not. I came across this in `SpectralEmbedding` where the current default makes no sense, I think.\nYou can simply `git grep` and should find a lot of occurrences.\nIf our test output wasn't so flooded with warnings, we would have probably detected that earlier :-/\n",
+      "issue_closed_at": "2015-03-20T12:05:11Z",
+      "base_commit": "4be62142aa3afed11d45c9cdcb066b3d8ba9badf",
+      "changes": [
+        {
+          "file": "examples/cluster/plot_cluster_comparison.py",
+          "type": "line",
+          "name": "line 45",
+          "code": "colors = np.array([x for x in 'bgrcmykbgrcmykbgrcmykbgrcmyk'])\ncolors = np.hstack([colors] * 20)\n\nclustering_names =  [\n    'MiniBatchKMeans', 'AffinityPropagation', 'MeanShift',\n    'SpectralClustering', 'Ward', 'AgglomerativeClustering',\n    'DBSCAN', 'Birch'\n    ]\n\nplt.figure(figsize=(len(clustering_names) * 2 + 3, 9.5))\nplt.subplots_adjust(left=.02, right=.98, bottom=.001, top=.96, wspace=.05,"
+        },
+        {
+          "file": "examples/cluster/plot_cluster_comparison.py",
+          "type": "line",
+          "name": "line 67",
+          "code": "    bandwidth = cluster.estimate_bandwidth(X, quantile=0.3)\n\n    # connectivity matrix for structured Ward\n    connectivity = kneighbors_graph(X, n_neighbors=10)\n    # make connectivity symmetric\n    connectivity = 0.5 * (connectivity + connectivity.T)\n"
+        },
+        {
+          "file": "examples/cluster/plot_cluster_comparison.py",
+          "type": "line",
+          "name": "line 83",
+          "code": "    affinity_propagation = cluster.AffinityPropagation(damping=.9,\n                                                       preference=-200)\n\n    average_linkage = cluster.AgglomerativeClustering(linkage=\"average\",\n                            affinity=\"cityblock\", n_clusters=2,\n                            connectivity=connectivity)\n\n    birch = cluster.Birch(n_clusters=2)\n    clustering_algorithms = [\n        two_means, affinity_propagation, ms, spectral, ward, average_linkage,\n        dbscan, birch\n        ]\n\n    for name, algorithm in zip(clustering_names, clustering_algorithms):\n        # predict cluster memberships"
+        },
+        {
+          "file": "examples/cluster/plot_ward_structured_vs_unstructured.py",
+          "type": "line",
+          "name": "line 65",
+          "code": "###############################################################################\n# Define the structure A of the data. Here a 10 nearest neighbors\nfrom sklearn.neighbors import kneighbors_graph\nconnectivity = kneighbors_graph(X, n_neighbors=10)\n\n###############################################################################\n# Compute clustering"
+        },
+        {
+          "file": "sklearn/manifold/spectral_embedding_.py",
+          "type": "function",
+          "name": "_get_affinity_matrix",
+          "class_name": "SpectralEmbedding",
+          "code": "def _get_affinity_matrix(self, X, Y=None):\n        \"\"\"Caclulate the affinity matrix from data\n        Parameters\n        ----------\n        X : array-like, shape (n_samples, n_features)\n            Training vector, where n_samples in the number of samples\n            and n_features is the number of features.\n\n            If affinity is \"precomputed\"\n            X : array-like, shape (n_samples, n_samples),\n            Interpret X as precomputed adjacency graph computed from\n            samples.\n\n        Returns\n        -------\n        affinity_matrix, shape (n_samples, n_samples)\n        \"\"\"\n        if self.affinity == 'precomputed':\n            self.affinity_matrix_ = X\n            return self.affinity_matrix_\n        if self.affinity == 'nearest_neighbors':\n            if sparse.issparse(X):\n                warnings.warn(\"Nearest neighbors affinity currently does \"\n                              \"not support sparse input, falling back to \"\n                              \"rbf affinity\")\n                self.affinity = \"rbf\"\n            else:\n                self.n_neighbors_ = (self.n_neighbors\n                                     if self.n_neighbors is not None\n                                     else max(int(X.shape[0] / 10), 1))\n                self.affinity_matrix_ = kneighbors_graph(X, self.n_neighbors_)\n                # currently only symmetric affinity_matrix supported\n                self.affinity_matrix_ = 0.5 * (self.affinity_matrix_ +\n                                               self.affinity_matrix_.T)\n                return self.affinity_matrix_\n        if self.affinity == 'rbf':\n            self.gamma_ = (self.gamma\n                           if self.gamma is not None else 1.0 / X.shape[1])\n            self.affinity_matrix_ = rbf_kernel(X, gamma=self.gamma_)\n            return self.affinity_matrix_\n        self.affinity_matrix_ = self.affinity(X)\n        return self.affinity_matrix_"
+        }
+      ]
+    },
+    {
+      "pr_number": 9655,
+      "pr_title": "[MRG+1] Return nan in RadiusNeighborsRegressor for empty neighbor set",
+      "pr_body": "#### Reference Issue\r\nFixes #9654 \r\n\r\n\r\n\r\n#### What does this implement/fix? Explain your changes.\r\nRadiusNeighborsRegressor is behaving differently when there are no neighbors for a sample between when weights are or aren't used. This PR fixes this inconsistency. This PR also fixes raised error when no available data points for `RadiusNeighborRegression` using non-uniform weights.",
+      "issue_id": 9654,
+      "issue_title": "RadiusNeighborRegression error",
+      "issue_body": "#### Description\r\nRadiusNeighborRegression has inconsistent output depending whether using weights that are uniform or by distance. \r\n\r\n- When using uniform weights then if no observations are available within the specified radius of an observation point then no it returns `np.nan`, \r\n\r\n- When using distance weights it raises `ZeroDivisionError: Weights sum to zero, can't be normalized` is raised from `np.average` as there are no weights to use for the observation. This is demonstrated with the following example below - copied from `RadiusNeighborsRegressor` where distance is specified and for X used for prediction is different,\r\n\r\n#### Steps/Code to Reproduce\r\n```python\r\nfrom sklearn.neighbors import RadiusNeighborsRegressor   \r\n\r\nX = [[0], [1], [2], [3]]\r\ny = [[0], [0], [1], [1]]\r\n\r\nneigh = RadiusNeighborsRegressor(radius=1.0, weights='distance')\r\nneigh.fit(X, y) \r\n\r\ny_hat = neigh.predict([[-2],[0]])\r\n```\r\n\r\n#### Expected Results\r\n```python\r\narray([[ nan],\r\n       [  0.]])\r\n```\r\n\r\n#### Actual Results\r\n```\r\n---------------------------------------------------------------------------\r\nZeroDivisionError                         Traceback (most recent call last)\r\n<ipython-input-6-c1cb420157ca> in <module>()\r\n      7 neigh.fit(X, y)\r\n      8 \r\n----> 9 y_hat = neigh.predict([[-1.5],[1]])\r\n\r\n~\\AppData\\Local\\Continuum\\Miniconda3\\lib\\site-packages\\sklearn\\neighbors\\regression.py in predict(self, X)\r\n    294             y_pred = np.array([(np.average(_y[ind, :], axis=0,\r\n    295                                            weights=weights[i]))\r\n--> 296                                for (i, ind) in enumerate(neigh_ind)])\r\n    297 \r\n    298         if self._y.ndim == 1:\r\n\r\n~\\AppData\\Local\\Continuum\\Miniconda3\\lib\\site-packages\\sklearn\\neighbors\\regression.py in <listcomp>(.0)\r\n    294             y_pred = np.array([(np.average(_y[ind, :], axis=0,\r\n    295                                            weights=weights[i]))\r\n--> 296                                for (i, ind) in enumerate(neigh_ind)])\r\n    297 \r\n    298         if self._y.ndim == 1:\r\n\r\n~\\AppData\\Local\\Continuum\\Miniconda3\\lib\\site-packages\\numpy\\lib\\function_base.py in average(a, axis, weights, returned)\r\n   1138         if np.any(scl == 0.0):\r\n   1139             raise ZeroDivisionError(\r\n-> 1140                 \"Weights sum to zero, can't be normalized\")\r\n   1141 \r\n   1142         avg = np.multiply(a, wgt, dtype=result_dtype).sum(axis)/scl\r\n\r\nZeroDivisionError: Weights sum to zero, can't be normalized\r\n```\r\n\r\n\r\n#### Versions\r\nWindows-10-10.0.15063-SP0\r\nPython 3.6.1 |Continuum Analytics, Inc.| (default, May 11 2017, 13:25:24) [MSC v.1900 64 bit (AMD64)]\r\nNumPy 1.13.1\r\nSciPy 0.19.1\r\nScikit-Learn 0.18.2\r\n\r\nI encountered the same problem on Mac OS and Linux machines.",
+      "issue_closed_at": "2017-11-21T09:07:55Z",
+      "base_commit": "bbdcd70fcaa875e78a009d89f755bba602a861be",
+      "changes": [
+        {
+          "file": "sklearn/neighbors/regression.py",
+          "type": "line",
+          "name": "line 5",
+          "code": "#          Alexandre Gramfort <alexandre.gramfort@inria.fr>\n#          Sparseness support by Lars Buitinck\n#          Multi-output support by Arnaud Joly <a.joly@ulg.ac.be>\n#\n# License: BSD 3 clause (C) INRIA, University of Amsterdam\n\nimport numpy as np\nfrom scipy.sparse import issparse"
+        },
+        {
+          "file": "sklearn/neighbors/regression.py",
+          "type": "function",
+          "name": "predict",
+          "class_name": "RadiusNeighborsRegressor",
+          "code": "def predict(self, X):\n        \"\"\"Predict the target for the provided data\n\n        Parameters\n        ----------\n        X : array-like, shape (n_query, n_features), \\\n                or (n_query, n_indexed) if metric == 'precomputed'\n            Test samples.\n\n        Returns\n        -------\n        y : array of int, shape = [n_samples] or [n_samples, n_outputs]\n            Target values\n        \"\"\"\n        X = check_array(X, accept_sparse='csr')\n\n        neigh_dist, neigh_ind = self.radius_neighbors(X)\n\n        weights = _get_weights(neigh_dist, self.weights)\n\n        _y = self._y\n        if _y.ndim == 1:\n            _y = _y.reshape((-1, 1))\n\n        if weights is None:\n            y_pred = np.array([np.mean(_y[ind, :], axis=0)\n                               for ind in neigh_ind])\n        else:\n            y_pred = np.array([(np.average(_y[ind, :], axis=0,\n                                           weights=weights[i]))\n                               for (i, ind) in enumerate(neigh_ind)])\n\n        if self._y.ndim == 1:\n            y_pred = y_pred.ravel()\n\n        return y_pred"
+        },
+        {
+          "file": "sklearn/neighbors/regression.py",
+          "type": "function",
+          "name": "predict",
+          "class_name": "RadiusNeighborsRegressor",
+          "code": "def predict(self, X):\n        \"\"\"Predict the target for the provided data\n\n        Parameters\n        ----------\n        X : array-like, shape (n_query, n_features), \\\n                or (n_query, n_indexed) if metric == 'precomputed'\n            Test samples.\n\n        Returns\n        -------\n        y : array of int, shape = [n_samples] or [n_samples, n_outputs]\n            Target values\n        \"\"\"\n        X = check_array(X, accept_sparse='csr')\n\n        neigh_dist, neigh_ind = self.radius_neighbors(X)\n\n        weights = _get_weights(neigh_dist, self.weights)\n\n        _y = self._y\n        if _y.ndim == 1:\n            _y = _y.reshape((-1, 1))\n\n        if weights is None:\n            y_pred = np.array([np.mean(_y[ind, :], axis=0)\n                               for ind in neigh_ind])\n        else:\n            y_pred = np.array([(np.average(_y[ind, :], axis=0,\n                                           weights=weights[i]))\n                               for (i, ind) in enumerate(neigh_ind)])\n\n        if self._y.ndim == 1:\n            y_pred = y_pred.ravel()\n\n        return y_pred"
+        }
+      ]
+    }
+  ]
+}

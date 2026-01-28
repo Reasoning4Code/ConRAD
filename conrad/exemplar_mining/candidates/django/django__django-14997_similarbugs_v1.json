@@ -1,0 +1,179 @@
+{
+  "instance_id": "django__django-14997",
+  "repo": "django/django",
+  "created_at": "2021-10-15T20:19:33Z",
+  "problem_statement": "Remaking table with unique constraint crashes on SQLite.\nDescription\n\t\nIn Django 4.0a1, this model:\nclass Tag(models.Model):\n\tname = models.SlugField(help_text=\"The tag key.\")\n\tvalue = models.CharField(max_length=150, help_text=\"The tag value.\")\n\tclass Meta:\n\t\tordering = [\"name\", \"value\"]\n\t\tconstraints = [\n\t\t\tmodels.UniqueConstraint(\n\t\t\t\t\"name\",\n\t\t\t\t\"value\",\n\t\t\t\tname=\"unique_name_value\",\n\t\t\t)\n\t\t]\n\tdef __str__(self):\n\t\treturn f\"{self.name}={self.value}\"\nwith these migrations, using sqlite:\nclass Migration(migrations.Migration):\n\tinitial = True\n\tdependencies = [\n\t]\n\toperations = [\n\t\tmigrations.CreateModel(\n\t\t\tname='Tag',\n\t\t\tfields=[\n\t\t\t\t('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),\n\t\t\t\t('name', models.SlugField(help_text='The tag key.')),\n\t\t\t\t('value', models.CharField(help_text='The tag value.', max_length=200)),\n\t\t\t],\n\t\t\toptions={\n\t\t\t\t'ordering': ['name', 'value'],\n\t\t\t},\n\t\t),\n\t\tmigrations.AddConstraint(\n\t\t\tmodel_name='tag',\n\t\t\tconstraint=models.UniqueConstraint(django.db.models.expressions.F('name'), django.db.models.expressions.F('value'), name='unique_name_value'),\n\t\t),\n\t]\nclass Migration(migrations.Migration):\n\tdependencies = [\n\t\t('myapp', '0001_initial'),\n\t]\n\toperations = [\n\t\tmigrations.AlterField(\n\t\t\tmodel_name='tag',\n\t\t\tname='value',\n\t\t\tfield=models.CharField(help_text='The tag value.', max_length=150),\n\t\t),\n\t]\nraises this error:\nmanage.py migrate\nOperations to perform:\n Apply all migrations: admin, auth, contenttypes, myapp, sessions\nRunning migrations:\n Applying myapp.0002_alter_tag_value...python-BaseException\nTraceback (most recent call last):\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\utils.py\", line 84, in _execute\n\treturn self.cursor.execute(sql, params)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\sqlite3\\base.py\", line 416, in execute\n\treturn Database.Cursor.execute(self, query, params)\nsqlite3.OperationalError: the \".\" operator prohibited in index expressions\nThe above exception was the direct cause of the following exception:\nTraceback (most recent call last):\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\core\\management\\base.py\", line 373, in run_from_argv\n\tself.execute(*args, **cmd_options)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\core\\management\\base.py\", line 417, in execute\n\toutput = self.handle(*args, **options)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\core\\management\\base.py\", line 90, in wrapped\n\tres = handle_func(*args, **kwargs)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\core\\management\\commands\\migrate.py\", line 253, in handle\n\tpost_migrate_state = executor.migrate(\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\migrations\\executor.py\", line 126, in migrate\n\tstate = self._migrate_all_forwards(state, plan, full_plan, fake=fake, fake_initial=fake_initial)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\migrations\\executor.py\", line 156, in _migrate_all_forwards\n\tstate = self.apply_migration(state, migration, fake=fake, fake_initial=fake_initial)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\migrations\\executor.py\", line 236, in apply_migration\n\tstate = migration.apply(state, schema_editor)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\migrations\\migration.py\", line 125, in apply\n\toperation.database_forwards(self.app_label, schema_editor, old_state, project_state)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\migrations\\operations\\fields.py\", line 225, in database_forwards\n\tschema_editor.alter_field(from_model, from_field, to_field)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\sqlite3\\schema.py\", line 140, in alter_field\n\tsuper().alter_field(model, old_field, new_field, strict=strict)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\base\\schema.py\", line 618, in alter_field\n\tself._alter_field(model, old_field, new_field, old_type, new_type,\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\sqlite3\\schema.py\", line 362, in _alter_field\n\tself._remake_table(model, alter_field=(old_field, new_field))\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\sqlite3\\schema.py\", line 303, in _remake_table\n\tself.execute(sql)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\base\\schema.py\", line 151, in execute\n\tcursor.execute(sql, params)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\utils.py\", line 98, in execute\n\treturn super().execute(sql, params)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\utils.py\", line 66, in execute\n\treturn self._execute_with_wrappers(sql, params, many=False, executor=self._execute)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\utils.py\", line 75, in _execute_with_wrappers\n\treturn executor(sql, params, many, context)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\utils.py\", line 84, in _execute\n\treturn self.cursor.execute(sql, params)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\utils.py\", line 90, in __exit__\n\traise dj_exc_value.with_traceback(traceback) from exc_value\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\utils.py\", line 84, in _execute\n\treturn self.cursor.execute(sql, params)\n File \"D:\\Projects\\Development\\sqliteerror\\.venv\\lib\\site-packages\\django\\db\\backends\\sqlite3\\base.py\", line 416, in execute\n\treturn Database.Cursor.execute(self, query, params)\ndjango.db.utils.OperationalError: the \".\" operator prohibited in index expressions\n",
+  "patch": "diff --git a/django/db/backends/ddl_references.py b/django/db/backends/ddl_references.py\n--- a/django/db/backends/ddl_references.py\n+++ b/django/db/backends/ddl_references.py\n@@ -212,11 +212,7 @@ def __init__(self, table, expressions, compiler, quote_value):\n     def rename_table_references(self, old_table, new_table):\n         if self.table != old_table:\n             return\n-        expressions = deepcopy(self.expressions)\n-        self.columns = []\n-        for col in self.compiler.query._gen_cols([expressions]):\n-            col.alias = new_table\n-        self.expressions = expressions\n+        self.expressions = self.expressions.relabeled_clone({old_table: new_table})\n         super().rename_table_references(old_table, new_table)\n \n     def rename_column_references(self, table, old_column, new_column):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 6178,
+      "pr_title": "Fixed #26186 -- Documented how app relative relationships of abstract models behave.",
+      "pr_body": "This partially reverts commit bc7d201bdbaeac14a49f51a9ef292d6312b4c45e.\n\nRefs #25858.\n",
+      "issue_id": 26186,
+      "issue_title": "When extending from abstract model, ForeignKey points to wrong application",
+      "issue_body": "This might be related to\nhttps://code.djangoproject.com/ticket/25858\nI have following code:\napp_A/abstract.py:\nclass AbstractModel1(Model):\n    class Meta:\n        abstract = True\n\n\nclass AbstractModel2(Model):\n    model1 = ForeignKey('Model1')\n\n    class Meta:\n          abstract = True\napp_A/models.py:\nfrom .abstract import AbstractModel1, AbstractModel12\n\nclass Model1(AbstractModel1):\n    pass\n\nclass Model2(AbstractModel12):\n    pass\napp_B/models.py:\nfrom app_A.abstract import AbstractModel1, AbstractModel2\n\nclass Model1(AbstractModel1):\n    pass\n\nclass Model2(AbstractModel12):\n    pass\nin Django 1.8, the\napp_B.Model2.model1\nwould point to\napp_B.Model1\n, but in Django 1.9.2 it points to\napp_A.Model1\nso my code no longer works.\nTest case can be found:\n​\nhttps://github.com/skyjur/django-ticketing/tree/master/ticket_26186",
+      "issue_closed_at": "2016-02-29T21:07:53",
+      "base_commit": "eac1423f9ebcf432dc5be95d605d124a05ab2686",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "line",
+          "name": "line 35",
+          "code": "RECURSIVE_RELATIONSHIP_CONSTANT = 'self'\n\n\ndef resolve_relation(scope_model, relation, resolve_recursive_relationship=True):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model."
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_relation",
+          "class_name": null,
+          "code": "def resolve_relation(scope_model, relation, resolve_recursive_relationship=True):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model.\n\n    The relation argument can be:\n      * RECURSIVE_RELATIONSHIP_CONSTANT, i.e. the string \"self\", in which case\n        the model argument will be returned.\n      * A bare model name without an app_label, in which case scope_model's\n        app_label will be prepended.\n      * An \"app_label.ModelName\" string.\n      * A model class, which will be returned unchanged.\n    \"\"\"\n    # Check for recursive relations\n    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:\n        if resolve_recursive_relationship:\n            relation = scope_model\n    # Look for an \"app.Model\" relation\n    elif isinstance(relation, six.string_types) and '.' not in relation:\n        relation = \"%s.%s\" % (scope_model._meta.app_label, relation)\n\n    return relation"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_related_class",
+          "class_name": "RelatedField",
+          "code": "def resolve_related_class(model, related, field):\n                field.remote_field.model = related\n                field.do_related_class(related, model)"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_through_model",
+          "class_name": "ManyToManyField",
+          "code": "def resolve_through_model(_, model, field):\n                    field.remote_field.through = model"
+        }
+      ]
+    },
+    {
+      "pr_number": 14536,
+      "pr_title": "Fixed #32858 -- Fixed ExclusionConstraint crash with index transforms in expressions.",
+      "pr_body": "Trying to add a PostgreSQL exclusion constraint on a single field of an array (`field__0`, which becomes `\"field\"[1]` in SQL) caused a syntax error to occur:\r\n\r\n```\r\ndjango.db.utils.ProgrammingError: syntax error at or near \"WITH\"\r\nLINE 1: ...\" ADD CONSTRAINT \"foo\" EXCLUDE USING GIST (\"field\"[1] WITH =)\r\n                                                                 ^\r\n```\r\n\r\n[The Postgres docs](https://www.postgresql.org/docs/current/sql-altertable.html) imply that column names can be specified as they are, but expressions need to be wrapped in parentheses in exclusion constraints. This adds those parentheses anytime an expression is not just a column.",
+      "issue_id": 32858,
+      "issue_title": "Syntax error when using an index transform on an ArrayField in an ExclusionConstraint",
+      "issue_body": "I am trying to create a GIST exclusion constraint on a PostgreSQL 12 database. One of the fields is an ArrayField, and I want to apply the constraint on its first item using\nmy_array__0\n. When doing so, I get a syntax error from Postgres.\nfrom\ndjango.db\nimport\nmodels\nfrom\ndjango.contrib.postgres.constraints\nimport\nExclusionConstraint\nfrom\ndjango.contrib.postgres.fields\nimport\nArrayField\n,\nRangeOperators\nclass\nMyModel\n(\nmodels\n.\nModel\n):\nmy_array\n=\nArrayField\n()\nclass\nMeta\n:\nconstraints\n=\n(\nExclusionConstraint\n(\nname\n=\n'foo'\n,\nexpressions\n=\n[\n(\n'my_array__0'\n,\nRangeOperators\n.\nEQUAL\n),\n]\n)\n)\ndjango.db.utils.ProgrammingError: syntax error at or near \"WITH\"\nLINE 1: ...\" ADD CONSTRAINT \"foo\" EXCLUDE USING GIST (\"my_array\"[1] WITH =)\n                                                                    ^\nIt seems a similar issue had occurred with casts (\n#32392\n). The\n​\ndocs for ALTER TABLE\nmention this syntax for expressions in an EXCLUDE constraint:\nexclude_element in an EXCLUDE constraint is:\n\n{ column_name | ( expression ) } [ opclass ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]\nThis implies that parentheses around anything that is not a column name are mandatory. Maybe a more generic fix could be made to detect if something is only a column name, or just to add parentheses all the time?\nEXCLUDE USING GIST ((\"my_array\"[1]) WITH =)\nworks without any trouble.",
+      "issue_closed_at": "2021-06-22T00:09:18",
+      "base_commit": "501a3714114b9c72e7dc4d8add76663bb8c83e3a",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/constraints.py",
+          "type": "line",
+          "name": "line 2",
+          "code": "from django.db.backends.ddl_references import Statement, Table\nfrom django.db.models import Deferrable, F, Q\nfrom django.db.models.constraints import BaseConstraint\nfrom django.db.models.sql import Query\n\n__all__ = ['ExclusionConstraint']"
+        },
+        {
+          "file": "django/contrib/postgres/constraints.py",
+          "type": "function",
+          "name": "_get_expression_sql",
+          "class_name": "ExclusionConstraint",
+          "code": "def _get_expression_sql(self, compiler, schema_editor, query):\n        expressions = []\n        for idx, (expression, operator) in enumerate(self.expressions):\n            if isinstance(expression, str):\n                expression = F(expression)\n            expression = expression.resolve_expression(query=query)\n            sql, params = compiler.compile(expression)\n            try:\n                opclass = self.opclasses[idx]\n                if opclass:\n                    sql = '%s %s' % (sql, opclass)\n            except IndexError:\n                pass\n            sql = sql % tuple(schema_editor.quote_value(p) for p in params)\n            expressions.append('%s WITH %s' % (sql, operator))\n        return expressions"
+        },
+        {
+          "file": "django/db/models/functions/comparison.py",
+          "type": "function",
+          "name": "as_mysql",
+          "class_name": "Cast",
+          "code": "def as_mysql(self, compiler, connection, **extra_context):\n        template = None\n        output_type = self.output_field.get_internal_type()\n        # MySQL doesn't support explicit cast to float.\n        if output_type == 'FloatField':\n            template = '(%(expressions)s + 0.0)'\n        # MariaDB doesn't support explicit cast to JSON.\n        elif output_type == 'JSONField' and connection.mysql_is_mariadb:\n            template = \"JSON_EXTRACT(%(expressions)s, '$')\"\n        return self.as_sql(compiler, connection, template=template, **extra_context)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6642,
+      "pr_title": "Fixed #26647 -- Included the state of all applied migrations when migrating forward.",
+      "pr_body": "Thanks Jasper Maes for the detailed report.\n",
+      "issue_id": 26647,
+      "issue_title": "Post migrate signal old content type model",
+      "issue_body": "Since the post migrate signal has the apps argument and the update_contenttypes and create_permissions listeners use this apps argument to detect the ContentType model, there can be a bug when unapplying a migration and then applying it again. The listeners will use an old model with ContentType.name still present because this in the apps of the state that the migration executor returned.\nI made a\n​\ntestproject\nwere the error is replicated.\nThe tests for the first app will fail, but not for the second app. I tracked this down to the migration executor were in the crashing app the migrations are in front of the migration that removes the ContentType.name field in the full_plan variable, so the executor returns a state not including this ContentType model change.\nIf someone can push me in the right direction I am willing to make a patch for this issue.",
+      "issue_closed_at": "2016-05-26T12:29:12",
+      "base_commit": "30d110ef43d8a3c50ea8ec4e4fe49bd2bb859530",
+      "changes": [
+        {
+          "file": "django/db/migrations/executor.py",
+          "type": "function",
+          "name": "_migrate_all_forwards",
+          "class_name": "MigrationExecutor",
+          "code": "def _migrate_all_forwards(self, plan, full_plan, fake, fake_initial):\n        \"\"\"\n        Take a list of 2-tuples of the form (migration instance, False) and\n        apply them in the order they occur in the full_plan.\n        \"\"\"\n        migrations_to_run = {m[0] for m in plan}\n        state = self._create_project_state()\n        applied_migrations = {\n            self.loader.graph.nodes[key] for key in self.loader.applied_migrations\n            if key in self.loader.graph.nodes\n        }\n        for migration, _ in full_plan:\n            if not migrations_to_run:\n                # We remove every migration that we applied from this set so\n                # that we can bail out once the last migration has been applied\n                # and don't always run until the very end of the migration\n                # process.\n                break\n            if migration in migrations_to_run:\n                if 'apps' not in state.__dict__:\n                    if self.progress_callback:\n                        self.progress_callback(\"render_start\")\n                    state.apps  # Render all -- performance critical\n                    if self.progress_callback:\n                        self.progress_callback(\"render_success\")\n                state = self.apply_migration(state, migration, fake=fake, fake_initial=fake_initial)\n                migrations_to_run.remove(migration)\n            elif migration in applied_migrations:\n                # Only mutate the state if the migration is actually applied\n                # to make sure the resulting state doesn't include changes\n                # from unrelated migrations.\n                migration.mutate_state(state, preserve=False)\n\n        return state"
+        },
+        {
+          "file": "django/db/migrations/executor.py",
+          "type": "function",
+          "name": "_migrate_all_forwards",
+          "class_name": "MigrationExecutor",
+          "code": "def _migrate_all_forwards(self, plan, full_plan, fake, fake_initial):\n        \"\"\"\n        Take a list of 2-tuples of the form (migration instance, False) and\n        apply them in the order they occur in the full_plan.\n        \"\"\"\n        migrations_to_run = {m[0] for m in plan}\n        state = self._create_project_state()\n        applied_migrations = {\n            self.loader.graph.nodes[key] for key in self.loader.applied_migrations\n            if key in self.loader.graph.nodes\n        }\n        for migration, _ in full_plan:\n            if not migrations_to_run:\n                # We remove every migration that we applied from this set so\n                # that we can bail out once the last migration has been applied\n                # and don't always run until the very end of the migration\n                # process.\n                break\n            if migration in migrations_to_run:\n                if 'apps' not in state.__dict__:\n                    if self.progress_callback:\n                        self.progress_callback(\"render_start\")\n                    state.apps  # Render all -- performance critical\n                    if self.progress_callback:\n                        self.progress_callback(\"render_success\")\n                state = self.apply_migration(state, migration, fake=fake, fake_initial=fake_initial)\n                migrations_to_run.remove(migration)\n            elif migration in applied_migrations:\n                # Only mutate the state if the migration is actually applied\n                # to make sure the resulting state doesn't include changes\n                # from unrelated migrations.\n                migration.mutate_state(state, preserve=False)\n\n        return state"
+        }
+      ]
+    },
+    {
+      "pr_number": 9964,
+      "pr_title": "Fixed #29413 -- Prevented evaluation of QuerySet.get_or_create()/update_or_create() defaults unless needed.",
+      "pr_body": "https://code.djangoproject.com/ticket/29413",
+      "issue_id": 29413,
+      "issue_title": "QuerySet.get_or_create()/update_or_create() shouldn't evaluate lazy defaults unless they are needed",
+      "issue_body": "I wish to have ability to write something like this:\nfrom django.utils.functional import lazy\n\nobj, created = model.objects.get_or_create(\n     key=jwt,\n     defaults=lazy(self.get_defaults_for_model, dict)(jwt) \n)\nBut at the moment\n_extract_model_params\nprepare defaults before it's realy needed.\nI think\n_extract_model_params\nshould be separated to\n_prepare_model_lookup\nand\n_prepare_model_params\n.\nSo it will be possible to call\n_prepare_model_params\nwhen\nmodel.DoesNotExist\nor even inside\n_create_object_from_params\n.",
+      "issue_closed_at": "2018-07-16T21:09:12",
+      "base_commit": "4d48ddd8f93800a80330ec1dee7b7d4afe6ea95a",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "get_or_create",
+          "class_name": "QuerySet",
+          "code": "def get_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, creating one if necessary.\n        Return a tuple of (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        # The get() needs to be targeted at the write database in order\n        # to avoid potential transaction consistency problems.\n        self._for_write = True\n        try:\n            return self.get(**lookup), False\n        except self.model.DoesNotExist:\n            return self._create_object_from_params(lookup, params)"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "update_or_create",
+          "class_name": "QuerySet",
+          "code": "def update_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, updating one with defaults\n        if it exists, otherwise create a new one.\n        Return a tuple (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        defaults = defaults or {}\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        self._for_write = True\n        with transaction.atomic(using=self.db):\n            try:\n                obj = self.select_for_update().get(**lookup)\n            except self.model.DoesNotExist:\n                obj, created = self._create_object_from_params(lookup, params)\n                if created:\n                    return obj, created\n            for k, v in defaults.items():\n                setattr(obj, k, v() if callable(v) else v)\n            obj.save(using=self.db)\n        return obj, False"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_create_object_from_params",
+          "class_name": "QuerySet",
+          "code": "def _create_object_from_params(self, lookup, params):\n        \"\"\"\n        Try to create an object using passed params. Used by get_or_create()\n        and update_or_create().\n        \"\"\"\n        try:\n            with transaction.atomic(using=self.db):\n                params = {k: v() if callable(v) else v for k, v in params.items()}\n                obj = self.create(**params)\n            return obj, True\n        except IntegrityError as e:\n            try:\n                return self.get(**lookup), False\n            except self.model.DoesNotExist:\n                pass\n            raise e"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_extract_model_params",
+          "class_name": "QuerySet",
+          "code": "def _extract_model_params(self, defaults, **kwargs):\n        \"\"\"\n        Prepare `lookup` (kwargs that are valid model attributes), `params`\n        (for creating a model instance) based on given kwargs; for use by\n        get_or_create() and update_or_create().\n        \"\"\"\n        defaults = defaults or {}\n        lookup = kwargs.copy()\n        for f in self.model._meta.fields:\n            if f.attname in lookup:\n                lookup[f.name] = lookup.pop(f.attname)\n        params = {k: v for k, v in kwargs.items() if LOOKUP_SEP not in k}\n        params.update(defaults)\n        property_names = self.model._meta._property_names\n        invalid_params = []\n        for param in params:\n            try:\n                self.model._meta.get_field(param)\n            except exceptions.FieldDoesNotExist:\n                # It's okay to use a model's property if it has a setter.\n                if not (param in property_names and getattr(self.model, param).fset):\n                    invalid_params.append(param)\n        if invalid_params:\n            raise exceptions.FieldError(\n                \"Invalid field name(s) for model %s: '%s'.\" % (\n                    self.model._meta.object_name,\n                    \"', '\".join(sorted(invalid_params)),\n                ))\n        return lookup, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 11886,
+      "pr_title": "Fixed #30405 -- Fixed source code mismatch crash in ExceptionReporter. ",
+      "pr_body": "[ticket 30405](https://code.djangoproject.com/ticket/30405)",
+      "issue_id": 30405,
+      "issue_title": "IndexError in _get_lines_from_file when module does not match file contents (via loader)",
+      "issue_body": "self = <django.views.debug.ExceptionReporter object at 0x7f2a7908ac18>\nfilename = '…/project/.venv/lib/python3.7/site-packages/pdb.py'\nlineno = 230\ncontext_lines = 7\nloader = <_frozen_importlib_external.SourceFileLoader object at 0x7f2a73609278>\nmodule_name = 'pdb'\n\n[23]   …/Vcs/django/django/core/handlers/exception.py(90)response_for_exception()\n-> response = handle_uncaught_exception(request, get_resolver(get_urlconf()), sys.exc_info())\n[24]   …/Vcs/django/django/core/handlers/exception.py(125)handle_uncaught_exception()\n-> return debug.technical_500_response(request, *exc_info)\n[25]   …/Vcs/django/django/views/debug.py(94)technical_500_response()\n-> html = reporter.get_traceback_html()\n[26]   …/Vcs/django/django/views/debug.py(333)get_traceback_html()\n-> c = Context(self.get_traceback_data(), use_l10n=False)\n[27]   …/Vcs/django/django/views/debug.py(264)get_traceback_data()\n-> frames = self.get_traceback_frames()\n[28]   …/Vcs/django/django/views/debug.py(427)get_traceback_frames()\n-> filename, lineno, 7, loader, module_name,\n\n 385             try:\n 386                 context_line = source[lineno]\n 387             except:\n 388                 __import__('pdb').set_trace()\n 389  ->         post_context = source[lineno + 1:upper_bound]\n 390\n 391             return lower_bound, pre_context, context_line, post_context\n(Pdb++) source\n['# this file is needed to hijack pdb without eggs', 'import os.path', \"pdb_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pdb.py')\", 'with open(pdb_path) as f:', \"    exec(compile(f.read(), pdb_path, 'exec'))\"]\nIt uses the loader (\n​\nhttps://github.com/django/django/blob/47885278c669dd7a13a4c3ff7e58e1cbe88af385/django/views/debug.py#L351\n), which picks up the\npth\n, and then the contents does not match the expected line number.\nI think it should maybe always use the given filename?!",
+      "issue_closed_at": "2019-11-12T04:53:04",
+      "base_commit": "6e2f05b2e33a6c80c7a411ce76af7b5a08acb835",
+      "changes": [
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_traceback_text",
+          "class_name": "ExceptionReporter",
+          "code": "def get_traceback_text(self):\n        \"\"\"Return plain text version of debug 500 HTTP error page.\"\"\"\n        with Path(CURRENT_DIR, 'templates', 'technical_500.txt').open(encoding='utf-8') as fh:\n            t = DEBUG_ENGINE.from_string(fh.read())\n        c = Context(self.get_traceback_data(), autoescape=False, use_l10n=False)\n        return t.render(c)"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "_get_lines_from_file",
+          "class_name": "ExceptionReporter",
+          "code": "def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):\n        \"\"\"\n        Return context_lines before and after lineno from file.\n        Return (pre_context_lineno, pre_context, context_line, post_context).\n        \"\"\"\n        source = None\n        if hasattr(loader, 'get_source'):\n            try:\n                source = loader.get_source(module_name)\n            except ImportError:\n                pass\n            if source is not None:\n                source = source.splitlines()\n        if source is None:\n            try:\n                with open(filename, 'rb') as fp:\n                    source = fp.read().splitlines()\n            except OSError:\n                pass\n        if source is None:\n            return None, [], None, []\n\n        # If we just read the source from a file, or if the loader did not\n        # apply tokenize.detect_encoding to decode the source into a\n        # string, then we should do that ourselves.\n        if isinstance(source[0], bytes):\n            encoding = 'ascii'\n            for line in source[:2]:\n                # File coding may be specified. Match pattern from PEP-263\n                # (https://www.python.org/dev/peps/pep-0263/)\n                match = re.search(br'coding[:=]\\s*([-\\w.]+)', line)\n                if match:\n                    encoding = match.group(1).decode('ascii')\n                    break\n            source = [str(sline, encoding, 'replace') for sline in source]\n\n        lower_bound = max(0, lineno - context_lines)\n        upper_bound = lineno + context_lines\n\n        pre_context = source[lower_bound:lineno]\n        context_line = source[lineno]\n        post_context = source[lineno + 1:upper_bound]\n\n        return lower_bound, pre_context, context_line, post_context"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "_get_lines_from_file",
+          "class_name": "ExceptionReporter",
+          "code": "def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):\n        \"\"\"\n        Return context_lines before and after lineno from file.\n        Return (pre_context_lineno, pre_context, context_line, post_context).\n        \"\"\"\n        source = None\n        if hasattr(loader, 'get_source'):\n            try:\n                source = loader.get_source(module_name)\n            except ImportError:\n                pass\n            if source is not None:\n                source = source.splitlines()\n        if source is None:\n            try:\n                with open(filename, 'rb') as fp:\n                    source = fp.read().splitlines()\n            except OSError:\n                pass\n        if source is None:\n            return None, [], None, []\n\n        # If we just read the source from a file, or if the loader did not\n        # apply tokenize.detect_encoding to decode the source into a\n        # string, then we should do that ourselves.\n        if isinstance(source[0], bytes):\n            encoding = 'ascii'\n            for line in source[:2]:\n                # File coding may be specified. Match pattern from PEP-263\n                # (https://www.python.org/dev/peps/pep-0263/)\n                match = re.search(br'coding[:=]\\s*([-\\w.]+)', line)\n                if match:\n                    encoding = match.group(1).decode('ascii')\n                    break\n            source = [str(sline, encoding, 'replace') for sline in source]\n\n        lower_bound = max(0, lineno - context_lines)\n        upper_bound = lineno + context_lines\n\n        pre_context = source[lower_bound:lineno]\n        context_line = source[lineno]\n        post_context = source[lineno + 1:upper_bound]\n\n        return lower_bound, pre_context, context_line, post_context"
+        }
+      ]
+    }
+  ]
+}

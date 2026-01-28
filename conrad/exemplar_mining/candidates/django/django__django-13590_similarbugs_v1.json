@@ -1,0 +1,199 @@
+{
+  "instance_id": "django__django-13590",
+  "repo": "django/django",
+  "created_at": "2020-10-23T09:34:55Z",
+  "problem_statement": "Upgrading 2.2>3.0 causes named tuples used as arguments to __range to error.\nDescription\n\t\nI noticed this while upgrading a project from 2.2 to 3.0.\nThis project passes named 2-tuples as arguments to range queryset filters. This works fine on 2.2. On 3.0 it causes the following error: TypeError: __new__() missing 1 required positional argument: 'far'.\nThis happens because django.db.models.sql.query.Query.resolve_lookup_value goes into the tuple elements to resolve lookups and then attempts to reconstitute the tuple with the resolved elements.\nWhen it attempts to construct the new tuple it preserves the type (the named tuple) but it passes a iterator to it's constructor.\nNamedTuples don't have the code path for copying an iterator, and so it errors on insufficient arguments.\nThe fix is to * expand the contents of the iterator into the constructor.\n",
+  "patch": "diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py\n--- a/django/db/models/sql/query.py\n+++ b/django/db/models/sql/query.py\n@@ -1077,10 +1077,14 @@ def resolve_lookup_value(self, value, can_reuse, allow_joins):\n         elif isinstance(value, (list, tuple)):\n             # The items of the iterable may be expressions and therefore need\n             # to be resolved independently.\n-            return type(value)(\n+            values = (\n                 self.resolve_lookup_value(sub_value, can_reuse, allow_joins)\n                 for sub_value in value\n             )\n+            type_ = type(value)\n+            if hasattr(type_, '_make'):  # namedtuple\n+                return type_(*values)\n+            return type_(values)\n         return value\n \n     def solve_lookup_type(self, lookup):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 9964,
+      "pr_title": "Fixed #29413 -- Prevented evaluation of QuerySet.get_or_create()/update_or_create() defaults unless needed.",
+      "pr_body": "https://code.djangoproject.com/ticket/29413",
+      "issue_id": 29413,
+      "issue_title": "QuerySet.get_or_create()/update_or_create() shouldn't evaluate lazy defaults unless they are needed",
+      "issue_body": "I wish to have ability to write something like this:\nfrom django.utils.functional import lazy\n\nobj, created = model.objects.get_or_create(\n     key=jwt,\n     defaults=lazy(self.get_defaults_for_model, dict)(jwt) \n)\nBut at the moment\n_extract_model_params\nprepare defaults before it's realy needed.\nI think\n_extract_model_params\nshould be separated to\n_prepare_model_lookup\nand\n_prepare_model_params\n.\nSo it will be possible to call\n_prepare_model_params\nwhen\nmodel.DoesNotExist\nor even inside\n_create_object_from_params\n.",
+      "issue_closed_at": "2018-07-16T21:09:12",
+      "base_commit": "4d48ddd8f93800a80330ec1dee7b7d4afe6ea95a",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "get_or_create",
+          "class_name": "QuerySet",
+          "code": "def get_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, creating one if necessary.\n        Return a tuple of (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        # The get() needs to be targeted at the write database in order\n        # to avoid potential transaction consistency problems.\n        self._for_write = True\n        try:\n            return self.get(**lookup), False\n        except self.model.DoesNotExist:\n            return self._create_object_from_params(lookup, params)"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "update_or_create",
+          "class_name": "QuerySet",
+          "code": "def update_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, updating one with defaults\n        if it exists, otherwise create a new one.\n        Return a tuple (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        defaults = defaults or {}\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        self._for_write = True\n        with transaction.atomic(using=self.db):\n            try:\n                obj = self.select_for_update().get(**lookup)\n            except self.model.DoesNotExist:\n                obj, created = self._create_object_from_params(lookup, params)\n                if created:\n                    return obj, created\n            for k, v in defaults.items():\n                setattr(obj, k, v() if callable(v) else v)\n            obj.save(using=self.db)\n        return obj, False"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_create_object_from_params",
+          "class_name": "QuerySet",
+          "code": "def _create_object_from_params(self, lookup, params):\n        \"\"\"\n        Try to create an object using passed params. Used by get_or_create()\n        and update_or_create().\n        \"\"\"\n        try:\n            with transaction.atomic(using=self.db):\n                params = {k: v() if callable(v) else v for k, v in params.items()}\n                obj = self.create(**params)\n            return obj, True\n        except IntegrityError as e:\n            try:\n                return self.get(**lookup), False\n            except self.model.DoesNotExist:\n                pass\n            raise e"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_extract_model_params",
+          "class_name": "QuerySet",
+          "code": "def _extract_model_params(self, defaults, **kwargs):\n        \"\"\"\n        Prepare `lookup` (kwargs that are valid model attributes), `params`\n        (for creating a model instance) based on given kwargs; for use by\n        get_or_create() and update_or_create().\n        \"\"\"\n        defaults = defaults or {}\n        lookup = kwargs.copy()\n        for f in self.model._meta.fields:\n            if f.attname in lookup:\n                lookup[f.name] = lookup.pop(f.attname)\n        params = {k: v for k, v in kwargs.items() if LOOKUP_SEP not in k}\n        params.update(defaults)\n        property_names = self.model._meta._property_names\n        invalid_params = []\n        for param in params:\n            try:\n                self.model._meta.get_field(param)\n            except exceptions.FieldDoesNotExist:\n                # It's okay to use a model's property if it has a setter.\n                if not (param in property_names and getattr(self.model, param).fset):\n                    invalid_params.append(param)\n        if invalid_params:\n            raise exceptions.FieldError(\n                \"Invalid field name(s) for model %s: '%s'.\" % (\n                    self.model._meta.object_name,\n                    \"', '\".join(sorted(invalid_params)),\n                ))\n        return lookup, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 9396,
+      "pr_title": "[1.11.x] Fixed #28856 -- Fixed an issue with caching of coerced gfk pointing to mti model.",
+      "pr_body": "https://code.djangoproject.com/ticket/28856\r\n\r\nSee #9395 for the patch against master.",
+      "issue_id": 28856,
+      "issue_title": "GenericForeignKey attributes create new instances on every access",
+      "issue_body": "Given these models:\nclass OtherSuper(models.Model):\n    pass\n\n\nclass OtherSub(OtherSuper):\n    pass\n\n\nclass Ref(models.Model):\n    obj_type = models.ForeignKey(ContentType, on_delete=models.PROTECT)\n    obj_id = models.CharField(max_length=255)\n    obj = GenericForeignKey('obj_type', 'obj_id')\nI get this behavior:\nIn [1]: ref = Ref.objects.create(obj=OtherSub.objects.create())\n\nIn [2]: id(ref.obj) == id(ref.obj)\nOut[2]: True\n\nIn [3]: ref.refresh_from_db()\n\nIn [4]: id(ref.obj) == id(ref.obj)\nOut[4]: False\nEach time\nref.obj\nis accessed, a new instance is created for its value. This is a problem, since doing something like\nref.obj.field = 1; ref.obj.save()\nwon't actually update the field in the database. This only happens when the referenced object is an instance of a model that subclasses another model. (So, it wouldn't happen if referencing\nOtherSuper\nin the models above.) The\nrefresh_from_db()\ncall is also necessary to reproduce this in a simple test like the above; it happens with any instance created from an existing DB record.\nI've written a regression test against stable/1.10.x . I'll attach a patch.\nI discovered this because I have code that does the above (changes a field on the related model and calls save). I call this a regression because it works correctly on 1.9.\nI'm not sure what the underly bug is; I looked at the diff in\ncontenttypes\nbetween 1.9 and 1.10, and there are more than a few changes. Hopefully someone who understands the\nGenericForeignKey\nimplementation can figure this out.",
+      "issue_closed_at": "2017-12-08T13:15:18",
+      "base_commit": "3545e844885608932a692d952c12cd863e2320b5",
+      "changes": [
+        {
+          "file": "django/contrib/contenttypes/fields.py",
+          "type": "function",
+          "name": "__get__",
+          "class_name": "GenericForeignKey",
+          "code": "def __get__(self, instance, cls=None):\n        if instance is None:\n            return self\n\n        # Don't use getattr(instance, self.ct_field) here because that might\n        # reload the same ContentType over and over (#5570). Instead, get the\n        # content type ID here, and later when the actual instance is needed,\n        # use ContentType.objects.get_for_id(), which has a global cache.\n        f = self.model._meta.get_field(self.ct_field)\n        ct_id = getattr(instance, f.get_attname(), None)\n        pk_val = getattr(instance, self.fk_field)\n\n        try:\n            rel_obj = getattr(instance, self.cache_attr)\n        except AttributeError:\n            rel_obj = None\n        else:\n            if rel_obj and (ct_id != self.get_content_type(obj=rel_obj, using=instance._state.db).id or\n                            rel_obj._meta.pk.to_python(pk_val) != rel_obj._get_pk_val()):\n                rel_obj = None\n\n        if rel_obj is not None:\n            return rel_obj\n\n        if ct_id is not None:\n            ct = self.get_content_type(id=ct_id, using=instance._state.db)\n            try:\n                rel_obj = ct.get_object_for_this_type(pk=pk_val)\n            except ObjectDoesNotExist:\n                pass\n        setattr(instance, self.cache_attr, rel_obj)\n        return rel_obj"
+        }
+      ]
+    },
+    {
+      "pr_number": 10027,
+      "pr_title": "Fixed #24384 -- Allowed compilemessages to continue running after nonfatal errors.",
+      "pr_body": "",
+      "issue_id": 24384,
+      "issue_title": "compilemessages shouldn't return with exit code 0 when it fails",
+      "issue_body": "When compilemessages is run on a read-only location, it displays a messages to standard error and terminates with exit code 0. It should have exit code 1.\nPatch:\ndiff --git a/django/core/management/commands/compilemessages.py b/django/core/management/commands/compilemessages.py\nindex dbadac0..75f3c57 100644\n--- a/django/core/management/commands/compilemessages.py\n+++ b/django/core/management/commands/compilemessages.py\n@@ -108,9 +108,9 @@ class Command(BaseCommand):\n \n             # Check writability on first location\n             if i == 0 and not is_writable(npath(base_path + '.mo')):\n-                self.stderr.write(\"The po files under %s are in a seemingly not writable location. \"\n-                                  \"mo files will not be updated/created.\" % dirpath)\n-                return\n+                raise CommandError(\"The po files under %s are in a seemingly \"\n+                                   \"not writable location. mo files will not \"\n+                                   \"be updated/created.\" % dirpath)\n \n             args = [self.program] + self.program_options + ['-o',\n                     npath(base_path + '.mo'), npath(base_path + '.po')]\nWith this change, the output is exactly the same, but the exit code reflects the failure and the --traceback option works.\nI don't quite have the motivation to write tests for this change :-/",
+      "issue_closed_at": "2018-06-13T14:27:08",
+      "base_commit": "b30f9b131c9489b9d9f21c311ecb46d0aea91381",
+      "changes": [
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "handle",
+          "class_name": "Command",
+          "code": "def handle(self, **options):\n        locale = options['locale']\n        exclude = options['exclude']\n        self.verbosity = options['verbosity']\n        if options['fuzzy']:\n            self.program_options = self.program_options + ['-f']\n\n        if find_command(self.program) is None:\n            raise CommandError(\"Can't find %s. Make sure you have GNU gettext \"\n                               \"tools 0.15 or newer installed.\" % self.program)\n\n        basedirs = [os.path.join('conf', 'locale'), 'locale']\n        if os.environ.get('DJANGO_SETTINGS_MODULE'):\n            from django.conf import settings\n            basedirs.extend(settings.LOCALE_PATHS)\n\n        # Walk entire tree, looking for locale directories\n        for dirpath, dirnames, filenames in os.walk('.', topdown=True):\n            for dirname in dirnames:\n                if dirname == 'locale':\n                    basedirs.append(os.path.join(dirpath, dirname))\n\n        # Gather existing directories.\n        basedirs = set(map(os.path.abspath, filter(os.path.isdir, basedirs)))\n\n        if not basedirs:\n            raise CommandError(\"This script should be run from the Django Git \"\n                               \"checkout or your project or app tree, or with \"\n                               \"the settings module specified.\")\n\n        # Build locale list\n        all_locales = []\n        for basedir in basedirs:\n            locale_dirs = filter(os.path.isdir, glob.glob('%s/*' % basedir))\n            all_locales.extend(map(os.path.basename, locale_dirs))\n\n        # Account for excluded locales\n        locales = locale or all_locales\n        locales = set(locales).difference(exclude)\n\n        for basedir in basedirs:\n            if locales:\n                dirs = [os.path.join(basedir, l, 'LC_MESSAGES') for l in locales]\n            else:\n                dirs = [basedir]\n            locations = []\n            for ldir in dirs:\n                for dirpath, dirnames, filenames in os.walk(ldir):\n                    locations.extend((dirpath, f) for f in filenames if f.endswith('.po'))\n            if locations:\n                self.compile_messages(locations)"
+        },
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "handle",
+          "class_name": "Command",
+          "code": "def handle(self, **options):\n        locale = options['locale']\n        exclude = options['exclude']\n        self.verbosity = options['verbosity']\n        if options['fuzzy']:\n            self.program_options = self.program_options + ['-f']\n\n        if find_command(self.program) is None:\n            raise CommandError(\"Can't find %s. Make sure you have GNU gettext \"\n                               \"tools 0.15 or newer installed.\" % self.program)\n\n        basedirs = [os.path.join('conf', 'locale'), 'locale']\n        if os.environ.get('DJANGO_SETTINGS_MODULE'):\n            from django.conf import settings\n            basedirs.extend(settings.LOCALE_PATHS)\n\n        # Walk entire tree, looking for locale directories\n        for dirpath, dirnames, filenames in os.walk('.', topdown=True):\n            for dirname in dirnames:\n                if dirname == 'locale':\n                    basedirs.append(os.path.join(dirpath, dirname))\n\n        # Gather existing directories.\n        basedirs = set(map(os.path.abspath, filter(os.path.isdir, basedirs)))\n\n        if not basedirs:\n            raise CommandError(\"This script should be run from the Django Git \"\n                               \"checkout or your project or app tree, or with \"\n                               \"the settings module specified.\")\n\n        # Build locale list\n        all_locales = []\n        for basedir in basedirs:\n            locale_dirs = filter(os.path.isdir, glob.glob('%s/*' % basedir))\n            all_locales.extend(map(os.path.basename, locale_dirs))\n\n        # Account for excluded locales\n        locales = locale or all_locales\n        locales = set(locales).difference(exclude)\n\n        for basedir in basedirs:\n            if locales:\n                dirs = [os.path.join(basedir, l, 'LC_MESSAGES') for l in locales]\n            else:\n                dirs = [basedir]\n            locations = []\n            for ldir in dirs:\n                for dirpath, dirnames, filenames in os.walk(ldir):\n                    locations.extend((dirpath, f) for f in filenames if f.endswith('.po'))\n            if locations:\n                self.compile_messages(locations)"
+        },
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "compile_messages",
+          "class_name": "Command",
+          "code": "def compile_messages(self, locations):\n        \"\"\"\n        Locations is a list of tuples: [(directory, file), ...]\n        \"\"\"\n        for i, (dirpath, f) in enumerate(locations):\n            if self.verbosity > 0:\n                self.stdout.write('processing file %s in %s\\n' % (f, dirpath))\n            po_path = os.path.join(dirpath, f)\n            if has_bom(po_path):\n                raise CommandError(\"The %s file has a BOM (Byte Order Mark). \"\n                                   \"Django only supports .po files encoded in \"\n                                   \"UTF-8 and without any BOM.\" % po_path)\n            base_path = os.path.splitext(po_path)[0]\n\n            # Check writability on first location\n            if i == 0 and not is_writable(base_path + '.mo'):\n                self.stderr.write(\"The po files under %s are in a seemingly not writable location. \"\n                                  \"mo files will not be updated/created.\" % dirpath)\n                return\n\n            args = [self.program] + self.program_options + [\n                '-o', base_path + '.mo', base_path + '.po'\n            ]\n            output, errors, status = popen_wrapper(args)\n            if status:\n                if errors:\n                    msg = \"Execution of %s failed: %s\" % (self.program, errors)\n                else:\n                    msg = \"Execution of %s failed\" % self.program\n                raise CommandError(msg)"
+        },
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "compile_messages",
+          "class_name": "Command",
+          "code": "def compile_messages(self, locations):\n        \"\"\"\n        Locations is a list of tuples: [(directory, file), ...]\n        \"\"\"\n        for i, (dirpath, f) in enumerate(locations):\n            if self.verbosity > 0:\n                self.stdout.write('processing file %s in %s\\n' % (f, dirpath))\n            po_path = os.path.join(dirpath, f)\n            if has_bom(po_path):\n                raise CommandError(\"The %s file has a BOM (Byte Order Mark). \"\n                                   \"Django only supports .po files encoded in \"\n                                   \"UTF-8 and without any BOM.\" % po_path)\n            base_path = os.path.splitext(po_path)[0]\n\n            # Check writability on first location\n            if i == 0 and not is_writable(base_path + '.mo'):\n                self.stderr.write(\"The po files under %s are in a seemingly not writable location. \"\n                                  \"mo files will not be updated/created.\" % dirpath)\n                return\n\n            args = [self.program] + self.program_options + [\n                '-o', base_path + '.mo', base_path + '.po'\n            ]\n            output, errors, status = popen_wrapper(args)\n            if status:\n                if errors:\n                    msg = \"Execution of %s failed: %s\" % (self.program, errors)\n                else:\n                    msg = \"Execution of %s failed\" % self.program\n                raise CommandError(msg)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9861,
+      "pr_title": "Fixed #29296 -- Fix handling of callable object views in admindocs",
+      "pr_body": "See https://code.djangoproject.com/ticket/29296\r\n\r\nI'm not sure how you normally handle backports, but a backported version of this commit can be found here:\r\nhttps://github.com/PaulSD/django/commit/b2128a2afa14c64b39a5fae1f9a63b2959c4f752",
+      "issue_id": 29296,
+      "issue_title": "admindocs ViewIndexView crashes if a syndication Feed (or something without __qualname__) is configured",
+      "issue_body": "If a Feed (\n​\nhttps://docs.djangoproject.com/en/2.0/ref/contrib/syndication/\n) is configured anywhere in the project, then /admin/doc/views/ (\n​\nhttps://docs.djangoproject.com/en/2.0/ref/contrib/admin/admindocs/\n) crashes with AttributeError:\n'GlobalFeed' object has no attribute '__qualname__'\nThe problem is that Feed is a callable object (\n​\nhttps://github.com/django/django/blob/master/django/contrib/syndication/views.py#L34\n) and the documentation uses that class directly as a View (\npath('latest/feed/', LatestEntriesFeed()),\n), but admindocs assumes that all views are functions and it does not work properly with a callable object (\n​\nhttps://github.com/django/django/blob/master/django/contrib/admindocs/views.py#L130\n).\nIn Django 1.11 and earlier, admindocs supported callable objects on Python 2 because it fell back to\nview.__class__.__name__\n, but it appears that the Python 3 code in admindocs has not supported this since it was added in\n​\nhttps://github.com/django/django/commit/ae0f55eb491255217d6df31296ec8102007224a6\n(\nhttps://code.djangoproject.com/ticket/27018\n).\nAs a work-around,\n__qualname__\ncan be manually defined on Feed objects:\nclass MyFeed(Feed):\n    def __init__(self):\n        super().__init__()\n        self.__qualname__ = self.__class__.__name__\nWithout knowing Django's opinion of the use of callable objects as views, I don't know the appropriate way to fix this: Should admindocs support callable objects as views, or should Feed not use a callable object as a view?",
+      "issue_closed_at": "2018-04-12T12:34:31",
+      "base_commit": "ee17bb8a67a9e7e688da6e6f4b3be1b3a69c09b0",
+      "changes": [
+        {
+          "file": "django/contrib/admindocs/middleware.py",
+          "type": "line",
+          "name": "line 2",
+          "code": "from django.http import HttpResponse\nfrom django.utils.deprecation import MiddlewareMixin\n\n\nclass XViewMiddleware(MiddlewareMixin):\n    \"\"\""
+        },
+        {
+          "file": "django/contrib/admindocs/middleware.py",
+          "type": "function",
+          "name": "process_view",
+          "class_name": "XViewMiddleware",
+          "code": "def process_view(self, request, view_func, view_args, view_kwargs):\n        \"\"\"\n        If the request method is HEAD and either the IP is internal or the\n        user is a logged-in staff member, return a responsewith an x-view\n        header indicating the view function. This is used to lookup the view\n        function for an arbitrary page.\n        \"\"\"\n        assert hasattr(request, 'user'), (\n            \"The XView middleware requires authentication middleware to be \"\n            \"installed. Edit your MIDDLEWARE%s setting to insert \"\n            \"'django.contrib.auth.middleware.AuthenticationMiddleware'.\" % (\n                \"_CLASSES\" if settings.MIDDLEWARE is None else \"\"\n            )\n        )\n        if request.method == 'HEAD' and (request.META.get('REMOTE_ADDR') in settings.INTERNAL_IPS or\n                                         (request.user.is_active and request.user.is_staff)):\n            response = HttpResponse()\n            response['X-View'] = \"%s.%s\" % (view_func.__module__, view_func.__name__)\n            return response"
+        },
+        {
+          "file": "django/contrib/admindocs/utils.py",
+          "type": "line",
+          "name": "line 18",
+          "code": "    docutils_is_available = True\n\n\ndef trim_docstring(docstring):\n    \"\"\"\n    Uniformly trim leading/trailing whitespace from docstrings."
+        },
+        {
+          "file": "django/contrib/admindocs/views.py",
+          "type": "line",
+          "name": "line 23",
+          "code": "from django.utils.translation import gettext as _\nfrom django.views.generic import TemplateView\n\n# Exclude methods starting with these strings from documentation\nMODEL_METHODS_EXCLUDE = ('_', 'add_', 'delete', 'save', 'set_')\n"
+        },
+        {
+          "file": "django/contrib/admindocs/views.py",
+          "type": "function",
+          "name": "get_context_data",
+          "class_name": "TemplateDetailView",
+          "code": "def get_context_data(self, **kwargs):\n        template = self.kwargs['template']\n        templates = []\n        try:\n            default_engine = Engine.get_default()\n        except ImproperlyConfigured:\n            # Non-trivial TEMPLATES settings aren't supported (#24125).\n            pass\n        else:\n            # This doesn't account for template loaders (#24128).\n            for index, directory in enumerate(default_engine.dirs):\n                template_file = os.path.join(directory, template)\n                if os.path.exists(template_file):\n                    with open(template_file) as f:\n                        template_contents = f.read()\n                else:\n                    template_contents = ''\n                templates.append({\n                    'file': template_file,\n                    'exists': os.path.exists(template_file),\n                    'contents': template_contents,\n                    'order': index,\n                })\n        return super().get_context_data(**{\n            **kwargs,\n            'name': template,\n            'templates': templates,\n        })"
+        }
+      ]
+    },
+    {
+      "pr_number": 13251,
+      "pr_title": "Fixed #31783 -- Fixed crash when filtering againts \"negate\" field.",
+      "pr_body": "https://code.djangoproject.com/ticket/31783\r\nI added a regression test for the @charettes patch.",
+      "issue_id": 31783,
+      "issue_title": "Filtering on a field named `negate` raises a TypeError",
+      "issue_body": "Filtering on a model with a field named\nnegate\nraises a\nTypeError\n.\nFor example:\nclass Foo(models.Model):\n    negate = models.BooleanField()\n\nFoo.objects.filter(negate=True)\nraises\nTypeError: _filter_or_exclude() got multiple values for argument 'negate'\nnegate\nis not documented as a reserved argument for\n.filter()\n. I'm currently using\n.filter(negate__exact=True)\nas a workaround.",
+      "issue_closed_at": "2020-07-29T02:03:33",
+      "base_commit": "b6dfdaff33f19757b1cb9b3bf1d17f28b94859d4",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "RelatedPopulator",
+          "code": "def __init__(self, klass_info, select, db):\n        self.db = db\n        # Pre-compute needed attributes. The attributes are:\n        #  - model_cls: the possibly deferred model class to instantiate\n        #  - either:\n        #    - cols_start, cols_end: usually the columns in the row are\n        #      in the same order model_cls.__init__ expects them, so we\n        #      can instantiate by model_cls(*row[cols_start:cols_end])\n        #    - reorder_for_init: When select_related descends to a child\n        #      class, then we want to reuse the already selected parent\n        #      data. However, in this case the parent data isn't necessarily\n        #      in the same order that Model.__init__ expects it to be, so\n        #      we have to reorder the parent data. The reorder_for_init\n        #      attribute contains a function used to reorder the field data\n        #      in the order __init__ expects it.\n        #  - pk_idx: the index of the primary key field in the reordered\n        #    model data. Used to check if a related object exists at all.\n        #  - init_list: the field attnames fetched from the database. For\n        #    deferred models this isn't the same as all attnames of the\n        #    model's fields.\n        #  - related_populators: a list of RelatedPopulator instances if\n        #    select_related() descends to related models from this model.\n        #  - local_setter, remote_setter: Methods to set cached values on\n        #    the object being populated and on the remote object. Usually\n        #    these are Field.set_cached_value() methods.\n        select_fields = klass_info['select_fields']\n        from_parent = klass_info['from_parent']\n        if not from_parent:\n            self.cols_start = select_fields[0]\n            self.cols_end = select_fields[-1] + 1\n            self.init_list = [\n                f[0].target.attname for f in select[self.cols_start:self.cols_end]\n            ]\n            self.reorder_for_init = None\n        else:\n            attname_indexes = {select[idx][0].target.attname: idx for idx in select_fields}\n            model_init_attnames = (f.attname for f in klass_info['model']._meta.concrete_fields)\n            self.init_list = [attname for attname in model_init_attnames if attname in attname_indexes]\n            self.reorder_for_init = operator.itemgetter(*[attname_indexes[attname] for attname in self.init_list])\n\n        self.model_cls = klass_info['model']\n        self.pk_idx = self.init_list.index(self.model_cls._meta.pk.attname)\n        self.related_populators = get_related_populators(klass_info, select, self.db)\n        self.local_setter = klass_info['local_setter']\n        self.remote_setter = klass_info['remote_setter']"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "filter",
+          "class_name": "QuerySet",
+          "code": "def filter(self, *args, **kwargs):\n        \"\"\"\n        Return a new QuerySet instance with the args ANDed to the existing\n        set.\n        \"\"\"\n        self._not_support_combined_queries('filter')\n        return self._filter_or_exclude(False, *args, **kwargs)"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "exclude",
+          "class_name": "QuerySet",
+          "code": "def exclude(self, *args, **kwargs):\n        \"\"\"\n        Return a new QuerySet instance with NOT (args) ANDed to the existing\n        set.\n        \"\"\"\n        self._not_support_combined_queries('exclude')\n        return self._filter_or_exclude(True, *args, **kwargs)"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_filter_or_exclude",
+          "class_name": "QuerySet",
+          "code": "def _filter_or_exclude(self, negate, *args, **kwargs):\n        if args or kwargs:\n            assert not self.query.is_sliced, \\\n                \"Cannot filter a query once a slice has been taken.\"\n\n        clone = self._chain()\n        if self._defer_next_filter:\n            self._defer_next_filter = False\n            clone._deferred_filter = negate, args, kwargs\n        else:\n            clone._filter_or_exclude_inplace(negate, *args, **kwargs)\n        return clone"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "complex_filter",
+          "class_name": "QuerySet",
+          "code": "def complex_filter(self, filter_obj):\n        \"\"\"\n        Return a new QuerySet instance with filter_obj added to the filters.\n\n        filter_obj can be a Q object or a dictionary of keyword lookup\n        arguments.\n\n        This exists to support framework features such as 'limit_choices_to',\n        and usually it will be more natural to use other methods.\n        \"\"\"\n        if isinstance(filter_obj, Q):\n            clone = self._chain()\n            clone.query.add_q(filter_obj)\n            return clone\n        else:\n            return self._filter_or_exclude(False, **filter_obj)"
+        }
+      ]
+    }
+  ]
+}

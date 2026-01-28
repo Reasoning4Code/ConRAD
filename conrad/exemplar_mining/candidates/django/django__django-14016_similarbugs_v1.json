@@ -1,0 +1,157 @@
+{
+  "instance_id": "django__django-14016",
+  "repo": "django/django",
+  "created_at": "2021-02-17T16:06:20Z",
+  "problem_statement": "\"TypeError: cannot pickle\" when applying | operator to a Q object\nDescription\n\t \n\t\t(last modified by Daniel Izquierdo)\n\t \nUsing a reference to a non-pickleable type of object such as dict_keys in a Q object makes the | operator fail:\n>>> from django.db.models import Q\n>>> Q(x__in={}.keys())\n<Q: (AND: ('x__in', dict_keys([])))>\n>>> Q() | Q(x__in={}.keys())\nTraceback (most recent call last):\n...\nTypeError: cannot pickle 'dict_keys' object\nEven though this particular example could be solved by doing Q() | Q(x__in={}) it still feels like using .keys() should work.\nI can work on a patch if there's agreement that this should not crash.\n",
+  "patch": "diff --git a/django/db/models/query_utils.py b/django/db/models/query_utils.py\n--- a/django/db/models/query_utils.py\n+++ b/django/db/models/query_utils.py\n@@ -5,7 +5,6 @@\n large and/or so that they can be used by other modules without getting into\n circular import difficulties.\n \"\"\"\n-import copy\n import functools\n import inspect\n from collections import namedtuple\n@@ -46,10 +45,12 @@ def _combine(self, other, conn):\n \n         # If the other Q() is empty, ignore it and just use `self`.\n         if not other:\n-            return copy.deepcopy(self)\n+            _, args, kwargs = self.deconstruct()\n+            return type(self)(*args, **kwargs)\n         # Or if this Q is empty, ignore it and just use `other`.\n         elif not self:\n-            return copy.deepcopy(other)\n+            _, args, kwargs = other.deconstruct()\n+            return type(other)(*args, **kwargs)\n \n         obj = type(self)()\n         obj.connector = conn\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8213,
+      "pr_title": "Refs #27935 -- Fixed BrinIndex.max_name_length if a project's default database isn't PostgreSQL.",
+      "pr_body": "",
+      "issue_id": 27935,
+      "issue_title": "BrinIndex crashes if name  > 30 characters",
+      "issue_body": "BrinIndex.suffix ( django.contrib.postgres.indexes) longer 3 char, but Index.set_name_with_model method allowed 3 char in suffix\nAssertionError: Index too long for multiple database support. Is self.suffix longer than 3 characters?",
+      "issue_closed_at": "2017-03-20T10:30:05",
+      "base_commit": "6cb0a3ac2836c044987f7a0cca0d1e99d52e002e",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from django.db import connection\nfrom django.db.models import Index\nfrom django.utils.functional import cached_property\n\n__all__ = ['BrinIndex', 'GinIndex']\n\n\nclass BrinIndex(Index):\n    suffix = 'brin'\n\n    def __init__(self, fields=[], name=None, pages_per_range=None):\n        if pages_per_range is not None and pages_per_range <= 0:"
+        },
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "function",
+          "name": "get_sql_create_template_values",
+          "class_name": "BrinIndex",
+          "code": "def get_sql_create_template_values(self, model, schema_editor, using):\n        parameters = super().get_sql_create_template_values(model, schema_editor, using=' USING brin')\n        if self.pages_per_range is not None:\n            parameters['extra'] = ' WITH (pages_per_range={})'.format(\n                schema_editor.quote_value(self.pages_per_range)) + parameters['extra']\n        return parameters"
+        }
+      ]
+    },
+    {
+      "pr_number": 8713,
+      "pr_title": "Fixed #28382 -- Prevented BaseExpression._output_field from being set if _resolve_output_field() fails.",
+      "pr_body": "https://code.djangoproject.com/ticket/28382",
+      "issue_id": 28382,
+      "issue_title": "BaseExpression.output_field should not be set after BaseExpression._resolve_output_field() fails",
+      "issue_body": "In [1]: from django.db.models.expressions import Value, Func\nIn [2]: from django.db.models import IntegerField, FloatField\nIn [3]: expr = Func(Value(1, output_field=IntegerField()), Value(1, output_field=FloatField()))\nIn [4]: expr.output_field # raises FieldError\nIn [5]: expr.output_field                        \nOut[5]: <django.db.models.fields.IntegerField>",
+      "issue_closed_at": "2017-07-11T07:46:42",
+      "base_commit": "306b961a4dc1fd308c6f298b406fb41906ebaf2d",
+      "changes": [
+        {
+          "file": "django/db/models/aggregates.py",
+          "type": "class",
+          "name": "Avg",
+          "code": "class Avg(Aggregate):\n    function = 'AVG'\n    name = 'Avg'\n\n    def _resolve_output_field(self):\n        source_field = self.get_source_fields()[0]\n        if isinstance(source_field, (IntegerField, DecimalField)):\n            self._output_field = FloatField()\n        super()._resolve_output_field()\n\n    def as_oracle(self, compiler, connection):\n        if self.output_field.get_internal_type() == 'DurationField':\n            expression = self.get_source_expressions()[0]\n            from django.db.backends.oracle.functions import IntervalToSeconds, SecondsToInterval\n            return compiler.compile(\n                SecondsToInterval(Avg(IntervalToSeconds(expression)))\n            )\n        return super().as_sql(compiler, connection)"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_output_field_or_none",
+          "class_name": "BaseExpression",
+          "code": "def _output_field_or_none(self):\n        \"\"\"\n        Return the output field of this expression, or None if no output type\n        can be resolved. Note that the 'output_field' property will raise\n        FieldError if no type can be resolved, but this attribute allows for\n        None values.\n        \"\"\"\n        if self._output_field is None:\n            self._resolve_output_field()\n        return self._output_field"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempt to infer the output type of the expression. If the output\n        fields of all source fields match then, simply infer the same type\n        here. This isn't always correct, but it makes sense most of the time.\n\n        Consider the difference between `2 + 2` and `2 / 3`. Inferring\n        the type here is a convenience for the common case. The user should\n        supply their own output_field with more complex computations.\n\n        If a source does not have an `_output_field` then we exclude it from\n        this check. If all sources are `None`, then an error will be thrown\n        higher up the stack in the `output_field` property.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                for source in sources:\n                    if self._output_field is None:\n                        self._output_field = source\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        }
+      ]
+    },
+    {
+      "pr_number": 6802,
+      "pr_title": "Fixed #26778 -- Fixed ModelSignal.connect() weak argument.",
+      "pr_body": "https://code.djangoproject.com/ticket/26778\n",
+      "issue_id": 26778,
+      "issue_title": "ModelSignal.connect() does not work when 'weak' is set to False and receiver is a local function",
+      "issue_body": "Since\n#26642\nthere seems to be a regression.\nModelSignal.connect\ndoesn't take into account 'weak' argument.\nQuick fix might look like this:\ndjango/db/models/signals.py\na\nb\nclass ModelSignal(Signal):\n27\n27\nreturn partial_method(sender)\n28\n28\n29\n29\ndef connect(self, receiver, sender=None, weak=True, dispatch_uid=None, apps=None):\n30\nself._lazy_method(super(ModelSignal, self).connect, apps, receiver, sender,\ndispatch_uid=dispatch_uid)\n30\nself._lazy_method(super(ModelSignal, self).connect, apps, receiver, sender,\nweak=weak,\ndispatch_uid=dispatch_uid)\n31\n31\n32\n32\ndef disconnect(self, receiver=None, sender=None, weak=None, dispatch_uid=None, apps=None):\n33\n33\nif weak is not None:",
+      "issue_closed_at": "2016-06-18T19:42:54",
+      "base_commit": "8ba44ecda024050c219e7cbc1f16c2d56fa258ac",
+      "changes": [
+        {
+          "file": "django/db/models/signals.py",
+          "type": "function",
+          "name": "_lazy_method",
+          "class_name": "ModelSignal",
+          "code": "def _lazy_method(self, method, apps, receiver, sender, **kwargs):\n        from django.db.models.options import Options\n\n        # This partial takes a single optional argument named \"sender\".\n        partial_method = partial(method, receiver, **kwargs)\n        if isinstance(sender, six.string_types):\n            apps = apps or Options.default_apps\n            apps.lazy_model_operation(partial_method, make_model_tuple(sender))\n        else:\n            return partial_method(sender)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8116,
+      "pr_title": "Fixed #25406 -- Removed exception hiding in PostgreSQL test database …",
+      "pr_body": "…creation / cloning during `--keepdb`. Ticket [25406](https://code.djangoproject.com/ticket/25406).\r\n\r\nI'm going to prepare separate PR with similar modification in the MySQL backend.",
+      "issue_id": 25406,
+      "issue_title": "_create_test_db hides errors like 'source database \"template1\" is being accessed by other users' with --keepdb",
+      "issue_body": "The _create_test_db method will hide errors like 'source database \"template1\" is being accessed by other users', and will assume that the test database exists already.\n> …/pyenv/project/lib/python3.4/site-packages/psycopg2/__init__.py(165)connect()\n    164     import ipdb; ipdb.set_trace()\n--> 165     conn = _connect(dsn, connection_factory=connection_factory, async=async)\n    166     if cursor_factory is not None:\n\nipdb> c\nsource database \"template1\" is being accessed by other users\nDETAIL:  There are 3 other sessions using the database.\n\n> …/pyenv/project/lib/python3.4/site-packages/django/db/backends/base/creation.py(458)_create_test_db()\n    457                 # just return and skip it all.\n--> 458                 if keepdb:\n    459                     return test_database_name\nSource reference:\n​\nhttps://github.com/blueyed/django/blob/9e530b08d5858d7063d081b60ec86d24173e4df5/django/db/backends/base/creation.py#L146-L165\nThis will then result in an error when trying to connect to it, because it has not been created:\npsycopg2.OperationalError: FATAL:  database \"test_project\" does not exist\nBut instead the initial error should be displayed:\nsource database \"template1\" is being accessed by other users\nDETAIL:  There are 3 other sessions using the database.\nTo reproduce this:\nconnect to the \"template1\" database\nrun Django tests\nI think the SQL could use\nCREATE DATABASE IF NOT EXISTS\n(in case\nIF NOT EXISTS\n) is supported by all backends (maybe that needs to be subclassed then), and then would not assume that an Exception can be ignored with\nkeepdb\n.\nAn even better way would be to check if it exists, instead of trying to create it.\nWith pytest-django we're using the following code:\ndef test_database_exists_from_previous_run(connection):\n    # Try to open a cursor to the test database\n    test_db_name = connection.creation._get_test_db_name()\n\n    # When using a real SQLite backend (via TEST_NAME), check if the file\n    # exists, because it gets created automatically.\n    if connection.settings_dict['ENGINE'] == 'django.db.backends.sqlite3':\n        if not os.path.exists(test_db_name):\n            return False\n\n    orig_db_name = connection.settings_dict['NAME']\n    connection.settings_dict['NAME'] = test_db_name\n\n    # With SQLite memory databases the db never exists.\n    if connection.settings_dict['NAME'] == ':memory:':\n        return False\n\n    try:\n        connection.cursor()\n        return True\n    except Exception:  # TODO: Be more discerning but still DB agnostic.\n        return False\n    finally:\n        connection.close()\n        connection.settings_dict['NAME'] = orig_db_name\n(Source:\n​\nhttps://github.com/blueyed/pytest_django/blob/93fca47feea39016dd93e657a9328450e9b6e891/pytest_django/db_reuse.py#L11-L35\n)",
+      "issue_closed_at": "2017-04-10T12:04:07",
+      "base_commit": "5d3b322dce452dd75e8602ced9f0d02f9d6a5837",
+      "changes": [
+        {
+          "file": "django/db/backends/base/creation.py",
+          "type": "function",
+          "name": "_get_test_db_name",
+          "class_name": "BaseDatabaseCreation",
+          "code": "def _get_test_db_name(self):\n        \"\"\"\n        Internal implementation - return the name of the test DB that will be\n        created. Only useful when called from create_test_db() and\n        _create_test_db() and when no external munging is done with the 'NAME'\n        settings.\n        \"\"\"\n        if self.connection.settings_dict['TEST']['NAME']:\n            return self.connection.settings_dict['TEST']['NAME']\n        return TEST_DATABASE_PREFIX + self.connection.settings_dict['NAME']"
+        },
+        {
+          "file": "django/db/backends/base/creation.py",
+          "type": "function",
+          "name": "_create_test_db",
+          "class_name": "BaseDatabaseCreation",
+          "code": "def _create_test_db(self, verbosity, autoclobber, keepdb=False):\n        \"\"\"\n        Internal implementation - create the test db tables.\n        \"\"\"\n        suffix = self.sql_table_creation_suffix()\n\n        test_database_name = self._get_test_db_name()\n\n        qn = self.connection.ops.quote_name\n\n        # Create the test database and connect to it.\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                cursor.execute(\n                    \"CREATE DATABASE %s %s\" % (qn(test_database_name), suffix))\n            except Exception as e:\n                # if we want to keep the db, then no need to do any of the below,\n                # just return and skip it all.\n                if keepdb:\n                    return test_database_name\n\n                sys.stderr.write(\n                    \"Got an error creating the test database: %s\\n\" % e)\n                if not autoclobber:\n                    confirm = input(\n                        \"Type 'yes' if you would like to try deleting the test \"\n                        \"database '%s', or 'no' to cancel: \" % test_database_name)\n                if autoclobber or confirm == 'yes':\n                    try:\n                        if verbosity >= 1:\n                            print(\"Destroying old test database for alias %s...\" % (\n                                self._get_database_display_str(verbosity, test_database_name),\n                            ))\n                        cursor.execute(\n                            \"DROP DATABASE %s\" % qn(test_database_name))\n                        cursor.execute(\n                            \"CREATE DATABASE %s %s\" % (qn(test_database_name),\n                                                       suffix))\n                    except Exception as e:\n                        sys.stderr.write(\n                            \"Got an error recreating the test database: %s\\n\" % e)\n                        sys.exit(2)\n                else:\n                    print(\"Tests cancelled.\")\n                    sys.exit(1)\n\n        return test_database_name"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "sql_table_creation_suffix",
+          "class_name": "DatabaseCreation",
+          "code": "def sql_table_creation_suffix(self):\n        test_settings = self.connection.settings_dict['TEST']\n        assert test_settings['COLLATION'] is None, (\n            \"PostgreSQL does not support collation setting at database creation time.\"\n        )\n        return self._get_database_create_suffix(\n            encoding=test_settings['CHARSET'],\n            template=test_settings.get('TEMPLATE'),\n        )"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "_clone_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _clone_test_db(self, number, verbosity, keepdb=False):\n        # CREATE DATABASE ... WITH TEMPLATE ... requires closing connections\n        # to the template database.\n        self.connection.close()\n\n        source_database_name = self.connection.settings_dict['NAME']\n        target_database_name = self.get_test_db_clone_settings(number)['NAME']\n        suffix = self._get_database_create_suffix(template=source_database_name)\n        creation_sql = \"CREATE DATABASE {} {}\".format(self._quote_name(target_database_name), suffix)\n\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                cursor.execute(creation_sql)\n            except Exception:\n                if keepdb:\n                    return\n                try:\n                    if verbosity >= 1:\n                        print(\"Destroying old test database for alias %s...\" % (\n                            self._get_database_display_str(verbosity, target_database_name),\n                        ))\n                    cursor.execute(\"DROP DATABASE %s\" % self._quote_name(target_database_name))\n                    cursor.execute(creation_sql)\n                except Exception as e:\n                    sys.stderr.write(\"Got an error cloning the test database: %s\\n\" % e)\n                    sys.exit(2)"
+        }
+      ]
+    },
+    {
+      "pr_number": 490,
+      "pr_title": "Fixed #18210 -- Escaped special characters in reverse prefixes.",
+      "pr_body": "Ensured that special characters passed in to reverse via the\nprefix argument are properly escaped so that calls to\ndjango.utils.regex_helpers.normalize and/or string formatting\noperations don't result in exceptions.\n\nThanks to toofishes for the error report.\n",
+      "issue_id": 18210,
+      "issue_title": "Regression and crash with any \"special\" prefix values passed to reverse()",
+      "issue_body": "After updating to Django 1.4, I get no fewer than 5 messages a day where the Django 404 page generation gets totally fouled up and ends up resulting in a 500 server error. The common thread here was these URLs arrived via the Apache ErrorDocument route. I'm running under mod_wsgi, and I narrowed it down the attached test cases to show the broken behavior. Applying this to the 1.3.X branch results in all 3 new tests passing, but on 1.4.X and trunk all three tests fail in related but different ways.\nThe high level reason has to to with some of the crazy PATH_INFO, SCRIPT_NAME, and SCRIPT_URL usage Django is doing, from what I can tell. In the ErrorDocument situation, the SCRIPT_URL envvar is not set to be the WSGI script; instead, it remains set to the original missing URI (something such as '/static/magazine/2010/ALM-2010-Feb/bump%20map.png'). This causes all sorts of issues because PATH_INFO is much shorter (in my case, it gets rewritten to '/404').\nI'm not sure how critical this bug is, but it is extremely trivial to cause Django to 500 under any ErrorDocument setup at the moment- if one includes a '{', ')', or '%' character in the URL they are requesting that ends up getting handled via ErrorDocument, the application will error 100% of the time as stands, from what I can tell.\nAll of the normalize(prefix) stuff in reverse() appears to be new in 1.4, and that is where all three of these failures can be traced back to.",
+      "issue_closed_at": "2012-11-17T08:49:24",
+      "base_commit": "3e98d98b69e67f2f72055e4b3204d0486eaeff50",
+      "changes": [
+        {
+          "file": "django/core/urlresolvers.py",
+          "type": "line",
+          "name": "line 16",
+          "code": "from django.utils.datastructures import MultiValueDict\nfrom django.utils.encoding import force_str, force_text, iri_to_uri\nfrom django.utils.functional import memoize, lazy\nfrom django.utils.importlib import import_module\nfrom django.utils.module_loading import module_has_submodule\nfrom django.utils.regex_helper import normalize"
+        },
+        {
+          "file": "django/core/urlresolvers.py",
+          "type": "function",
+          "name": "_reverse_with_prefix",
+          "class_name": "RegexURLResolver",
+          "code": "def _reverse_with_prefix(self, lookup_view, _prefix, *args, **kwargs):\n        if args and kwargs:\n            raise ValueError(\"Don't mix *args and **kwargs in call to reverse()!\")\n        try:\n            lookup_view = get_callable(lookup_view, True)\n        except (ImportError, AttributeError) as e:\n            raise NoReverseMatch(\"Error importing '%s': %s.\" % (lookup_view, e))\n        possibilities = self.reverse_dict.getlist(lookup_view)\n        prefix_norm, prefix_args = normalize(_prefix)[0]\n        for possibility, pattern, defaults in possibilities:\n            for result, params in possibility:\n                if args:\n                    if len(args) != len(params) + len(prefix_args):\n                        continue\n                    unicode_args = [force_text(val) for val in args]\n                    candidate =  (prefix_norm + result) % dict(zip(prefix_args + params, unicode_args))\n                else:\n                    if set(kwargs.keys()) | set(defaults.keys()) != set(params) | set(defaults.keys()) | set(prefix_args):\n                        continue\n                    matches = True\n                    for k, v in defaults.items():\n                        if kwargs.get(k, v) != v:\n                            matches = False\n                            break\n                    if not matches:\n                        continue\n                    unicode_kwargs = dict([(k, force_text(v)) for (k, v) in kwargs.items()])\n                    candidate = (prefix_norm + result) % unicode_kwargs\n                if re.search('^%s%s' % (_prefix, pattern), candidate, re.UNICODE):\n                    return candidate\n        # lookup_view can be URL label, or dotted path, or callable, Any of\n        # these can be passed in at the top, but callables are not friendly in\n        # error messages.\n        m = getattr(lookup_view, '__module__', None)\n        n = getattr(lookup_view, '__name__', None)\n        if m is not None and n is not None:\n            lookup_view_s = \"%s.%s\" % (m, n)\n        else:\n            lookup_view_s = lookup_view\n        raise NoReverseMatch(\"Reverse for '%s' with arguments '%s' and keyword \"\n                \"arguments '%s' not found.\" % (lookup_view_s, args, kwargs))"
+        },
+        {
+          "file": "django/core/urlresolvers.py",
+          "type": "function",
+          "name": "_reverse_with_prefix",
+          "class_name": "RegexURLResolver",
+          "code": "def _reverse_with_prefix(self, lookup_view, _prefix, *args, **kwargs):\n        if args and kwargs:\n            raise ValueError(\"Don't mix *args and **kwargs in call to reverse()!\")\n        try:\n            lookup_view = get_callable(lookup_view, True)\n        except (ImportError, AttributeError) as e:\n            raise NoReverseMatch(\"Error importing '%s': %s.\" % (lookup_view, e))\n        possibilities = self.reverse_dict.getlist(lookup_view)\n        prefix_norm, prefix_args = normalize(_prefix)[0]\n        for possibility, pattern, defaults in possibilities:\n            for result, params in possibility:\n                if args:\n                    if len(args) != len(params) + len(prefix_args):\n                        continue\n                    unicode_args = [force_text(val) for val in args]\n                    candidate =  (prefix_norm + result) % dict(zip(prefix_args + params, unicode_args))\n                else:\n                    if set(kwargs.keys()) | set(defaults.keys()) != set(params) | set(defaults.keys()) | set(prefix_args):\n                        continue\n                    matches = True\n                    for k, v in defaults.items():\n                        if kwargs.get(k, v) != v:\n                            matches = False\n                            break\n                    if not matches:\n                        continue\n                    unicode_kwargs = dict([(k, force_text(v)) for (k, v) in kwargs.items()])\n                    candidate = (prefix_norm + result) % unicode_kwargs\n                if re.search('^%s%s' % (_prefix, pattern), candidate, re.UNICODE):\n                    return candidate\n        # lookup_view can be URL label, or dotted path, or callable, Any of\n        # these can be passed in at the top, but callables are not friendly in\n        # error messages.\n        m = getattr(lookup_view, '__module__', None)\n        n = getattr(lookup_view, '__name__', None)\n        if m is not None and n is not None:\n            lookup_view_s = \"%s.%s\" % (m, n)\n        else:\n            lookup_view_s = lookup_view\n        raise NoReverseMatch(\"Reverse for '%s' with arguments '%s' and keyword \"\n                \"arguments '%s' not found.\" % (lookup_view_s, args, kwargs))"
+        }
+      ]
+    }
+  ]
+}

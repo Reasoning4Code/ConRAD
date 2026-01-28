@@ -1,0 +1,136 @@
+{
+  "instance_id": "django__django-12470",
+  "repo": "django/django",
+  "created_at": "2020-02-19T04:48:55Z",
+  "problem_statement": "Inherited model doesn't correctly order by \"-pk\" when specified on Parent.Meta.ordering\nDescription\n\t\nGiven the following model definition:\nfrom django.db import models\nclass Parent(models.Model):\n\tclass Meta:\n\t\tordering = [\"-pk\"]\nclass Child(Parent):\n\tpass\nQuerying the Child class results in the following:\n>>> print(Child.objects.all().query)\nSELECT \"myapp_parent\".\"id\", \"myapp_child\".\"parent_ptr_id\" FROM \"myapp_child\" INNER JOIN \"myapp_parent\" ON (\"myapp_child\".\"parent_ptr_id\" = \"myapp_parent\".\"id\") ORDER BY \"myapp_parent\".\"id\" ASC\nThe query is ordered ASC but I expect the order to be DESC.\n",
+  "patch": "diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py\n--- a/django/db/models/sql/compiler.py\n+++ b/django/db/models/sql/compiler.py\n@@ -709,9 +709,9 @@ def find_ordering_name(self, name, opts, alias=None, default_order='ASC',\n         field, targets, alias, joins, path, opts, transform_function = self._setup_joins(pieces, opts, alias)\n \n         # If we get to this point and the field is a relation to another model,\n-        # append the default ordering for that model unless the attribute name\n-        # of the field is specified.\n-        if field.is_relation and opts.ordering and getattr(field, 'attname', None) != name:\n+        # append the default ordering for that model unless it is the pk\n+        # shortcut or the attribute name of the field that is specified.\n+        if field.is_relation and opts.ordering and getattr(field, 'attname', None) != name and name != 'pk':\n             # Firstly, avoid infinite loops.\n             already_seen = already_seen or set()\n             join_tuple = tuple(getattr(self.query.alias_map[j], 'join_cols', None) for j in joins)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 9412,
+      "pr_title": "Fixed #28876 -- Fixed class-based model indexes and constraints names for models with quoted db_table.",
+      "pr_body": "https://code.djangoproject.com/ticket/28876",
+      "issue_id": 28876,
+      "issue_title": "badly formed Table Index and constraint's name when  `Meta.db_table` is set with quoted string",
+      "issue_body": "2 cases where the error occur .\nalways because it was set a\nMeta.db_table\nquoted custom name\nThe same models.Model was tested twice, with index been set with\nfield.db_index\nand\nMeta.indexes\nIt was tested with\nDjango 1.11\nPostgreSQL\nModel\nclass\nPublisher\n(\nmodels\n.\nModel\n):\nname\n=\nmodels\n.\nCharField\n(\nverbose_name\n=\n'publisher name'\n,\nmax_length\n=\n50\n,\nnull\n=\nFalse\n)\nclass\nMeta\n:\ndb_table\n=\n'\"tbl_publisher_litle_name\"'\nget_latest_by\n=\n\"name\"\nordering\n=\n[\n'name'\n,\n]\nverbose_name\n=\n'Publiser'\nverbose_name_plural\n=\n'Publishers'\nindexes\n=\n[\nmodels\n.\nIndex\n(\nfields\n=\n[\n'name'\n,\n]),\n]\nMigration traceback\nOperations\nto\nperform:\nApply\nall\nmigrations:\nadmin,\nauth,\ncontenttypes,\nsessions,\ntestapp\nRunning\nmigrations:\nApplying\ncontenttypes.0001_initial...\nOK\nApplying\nauth.0001_initial...\nOK\nApplying\nadmin.0001_initial...\nOK\nApplying\nadmin.0002_logentry_remove_auto_add...\nOK\nApplying\ncontenttypes.0002_remove_content_type_name...\nOK\nApplying\nauth.0002_alter_permission_name_max_length...\nOK\nApplying\nauth.0003_alter_user_email_max_length...\nOK\nApplying\nauth.0004_alter_user_username_opts...\nOK\nApplying\nauth.0005_alter_user_last_login_null...\nOK\nApplying\nauth.0006_require_contenttypes_0002...\nOK\nApplying\nauth.0007_alter_validators_add_error_messages...\nOK\nApplying\nauth.0008_alter_user_username_max_length...\nOK\nApplying\nsessions.0001_initial...\nOK\nApplying\ntestapp.0001_initial...Traceback\n(\nmost\nrecent\ncall\nlast\n)\n:\nFile\n\"manage.py\"\n,\nline\n22\n,\nin\n<module>\nexecute_from_command_line\n(\nsys.argv\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/__init__.py\"\n,\nline\n363\n,\nin\nexecute_from_command_line\nutility.execute\n()\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/__init__.py\"\n,\nline\n355\n,\nin\nexecute\nself.fetch_command\n(\nsubcommand\n)\n.run_from_argv\n(\nself.argv\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/base.py\"\n,\nline\n283\n,\nin\nrun_from_argv\nself.execute\n(\n*args,\n**cmd_options\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/base.py\"\n,\nline\n330\n,\nin\nexecute\noutput\n=\nself.handle\n(\n*args,\n**options\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/commands/migrate.py\"\n,\nline\n204\n,\nin\nhandle\nfake_initial\n=\nfake_initial,\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n115\n,\nin\nmigrate\nstate\n=\nself._migrate_all_forwards\n(\nstate,\nplan,\nfull_plan,\nfake\n=\nfake,\nfake_initial\n=\nfake_initial\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n145\n,\nin\n_migrate_all_forwards\nstate\n=\nself.apply_migration\n(\nstate,\nmigration,\nfake\n=\nfake,\nfake_initial\n=\nfake_initial\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n244\n,\nin\napply_migration\nstate\n=\nmigration.apply\n(\nstate,\nschema_editor\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/migration.py\"\n,\nline\n129\n,\nin\napply\noperation.database_forwards\n(\nself.app_label,\nschema_editor,\nold_state,\nproject_state\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/operations/models.py\"\n,\nline\n785\n,\nin\ndatabase_forwards\nschema_editor.add_index\n(\nmodel,\nself.index\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/base/schema.py\"\n,\nline\n330\n,\nin\nadd_index\nself.execute\n(\nindex.create_sql\n(\nmodel,\nself\n))\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/base/schema.py\"\n,\nline\n119\n,\nin\nexecute\ncursor.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n80\n,\nin\nexecute\nreturn\nsuper\n(\nCursorDebugWrapper,\nself\n)\n.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n65\n,\nin\nexecute\nreturn\nself.cursor.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/utils.py\"\n,\nline\n94\n,\nin\n__exit__\nsix.reraise\n(\ndj_exc_type,\ndj_exc_value,\ntraceback\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n65\n,\nin\nexecute\nreturn\nself.cursor.execute\n(\nsql,\nparams\n)\ndjango.db.utils.ProgrammingError:\nzero-length\ndelimited\nidentifier\nat\nor\nnear\n\"\"\"\"\nLINE\n1\n:\nCREATE\nINDEX\n\"\"\ntbl_publis_name_b0b929_idx\n\" ON \"\ntbl_publisher...\n^\n(\ndj111\n)\n20171202\n.Sat16:15:27cadu>/Volumes/p10G/prj/dj_datadictionary_testproject/testproject>\nAnd again, when db_index is set on field ...\nthe migration is OK, but the error continues.\nModel with no Meta.indexes  but field.index=True\nclass\nPublisher\n(\nmodels\n.\nModel\n):\n\"\"\"\nBook's Author - author is a Book's model supplement.\n\"\"\"\nname\n=\nmodels\n.\nCharField\n(\nverbose_name\n=\n'publisher name'\n,\nmax_length\n=\n50\n,\nnull\n=\nFalse\n,\ndb_index\n=\nTrue\n)\nclass\nMeta\n:\ndb_table\n=\n'\"tbl_publisher_litle_name\"'\nget_latest_by\n=\n\"name\"\nordering\n=\n[\n'name'\n,\n]\nverbose_name\n=\n'Publiser'\nverbose_name_plural\n=\n'Publishers'\n# indexes = [\n#     models.Index(fields=['name', ]),\n# ]\ndef\n__unicode__\n(\nself\n):\nreturn\nself\n.\nname\nMigration\nmigrations\n.\nCreateModel\n(\nname\n=\n'Publisher'\n,\nfields\n=\n[\n(\n'id'\n,\nmodels\n.\nAutoField\n(\nauto_created\n=\nTrue\n,\nprimary_key\n=\nTrue\n,\nserialize\n=\nFalse\n,\nverbose_name\n=\n'ID'\n)),\n(\n'name'\n,\nmodels\n.\nCharField\n(\ndb_index\n=\nTrue\n,\nmax_length\n=\n50\n,\nverbose_name\n=\n'publisher name'\n)),\n],\noptions\n=\n{\n'get_latest_by'\n:\n'name'\n,\n'ordering'\n:\n[\n'name'\n],\n'verbose_name_plural'\n:\n'Publishers'\n,\n'db_table'\n:\n'\"tbl_publisher_litle_name\"'\n,\n'verbose_name'\n:\n'Publiser'\n,\n},\n),\nmigrations\n.\nAddField\n(\nmodel_name\n=\n'book'\n,\nname\n=\n'publisher'\n,\nfield\n=\nmodels\n.\nForeignKey\n(\nblank\n=\nTrue\n,\nnull\n=\nTrue\n,\non_delete\n=\ndjango\n.\ndb\n.\nmodels\n.\ndeletion\n.\nCASCADE\n,\nto\n=\n'testapp.Publisher'\n),\n),\n]\nMigration \"2\" traceback\n$python\nmanage.py\nmakemigrations\nMigrations\nfor\n'testapp'\n:\ntestproject/testapp/migrations/0001_initial.py\n-\nCreate\nmodel\nAuthor\n-\nCreate\nmodel\nBook\n-\nCreate\nmodel\nBookOtherTitle\n-\nCreate\nmodel\nPublisher\n-\nAdd\nfield\npublisher\nto\nbook\n(\ndj111\n)\n20171202\n.Sat16:45:19cadu>/Volumes/p10G/prj/dj_datadictionary_testproject/testproject>\ncadu.\n[\n532\n]\n$python\nmanage.py\nmigrate\nOperations\nto\nperform:\nApply\nall\nmigrations:\nadmin,\nauth,\ncontenttypes,\nsessions,\ntestapp\nRunning\nmigrations:\nApplying\ncontenttypes.0001_initial...\nOK\nApplying\nauth.0001_initial...\nOK\nApplying\nadmin.0001_initial...\nOK\nApplying\nadmin.0002_logentry_remove_auto_add...\nOK\nApplying\ncontenttypes.0002_remove_content_type_name...\nOK\nApplying\nauth.0002_alter_permission_name_max_length...\nOK\nApplying\nauth.0003_alter_user_email_max_length...\nOK\nApplying\nauth.0004_alter_user_username_opts...\nOK\nApplying\nauth.0005_alter_user_last_login_null...\nOK\nApplying\nauth.0006_require_contenttypes_0002...\nOK\nApplying\nauth.0007_alter_validators_add_error_messages...\nOK\nApplying\nauth.0008_alter_user_username_max_length...\nOK\nApplying\nsessions.0001_initial...\nOK\nApplying\ntestapp.0001_initial...Traceback\n(\nmost\nrecent\ncall\nlast\n)\n:\nFile\n\"manage.py\"\n,\nline\n22\n,\nin\n<module>\nexecute_from_command_line\n(\nsys.argv\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/__init__.py\"\n,\nline\n363\n,\nin\nexecute_from_command_line\nutility.execute\n()\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/__init__.py\"\n,\nline\n355\n,\nin\nexecute\nself.fetch_command\n(\nsubcommand\n)\n.run_from_argv\n(\nself.argv\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/base.py\"\n,\nline\n283\n,\nin\nrun_from_argv\nself.execute\n(\n*args,\n**cmd_options\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/base.py\"\n,\nline\n330\n,\nin\nexecute\noutput\n=\nself.handle\n(\n*args,\n**options\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/commands/migrate.py\"\n,\nline\n204\n,\nin\nhandle\nfake_initial\n=\nfake_initial,\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n115\n,\nin\nmigrate\nstate\n=\nself._migrate_all_forwards\n(\nstate,\nplan,\nfull_plan,\nfake\n=\nfake,\nfake_initial\n=\nfake_initial\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n145\n,\nin\n_migrate_all_forwards\nstate\n=\nself.apply_migration\n(\nstate,\nmigration,\nfake\n=\nfake,\nfake_initial\n=\nfake_initial\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n244\n,\nin\napply_migration\nstate\n=\nmigration.apply\n(\nstate,\nschema_editor\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/base/schema.py\"\n,\nline\n92\n,\nin\n__exit__\nself.execute\n(\nsql\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/base/schema.py\"\n,\nline\n119\n,\nin\nexecute\ncursor.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n80\n,\nin\nexecute\nreturn\nsuper\n(\nCursorDebugWrapper,\nself\n)\n.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n65\n,\nin\nexecute\nreturn\nself.cursor.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/utils.py\"\n,\nline\n94\n,\nin\n__exit__\nsix.reraise\n(\ndj_exc_type,\ndj_exc_value,\ntraceback\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n65\n,\nin\nexecute\nreturn\nself.cursor.execute\n(\nsql,\nparams\n)\ndjango.db.utils.ProgrammingError:\nsyntax\nerror\nat\nor\nnear\n\"table_bo\"\nLINE\n1\n:\n...TRAINT\n\"table_book_double_qu_book_id_2cd88caf_fk_\"\ntable_bo\n\" ...\n^",
+      "issue_closed_at": "2017-12-05T16:01:30",
+      "base_commit": "f2ec89691236b59f54f9cf41bccd79a5853af36c",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_rename_field_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _rename_field_sql(self, table, old_field, new_field, new_type):\n        return self.sql_rename_column % {\n            \"table\": self.quote_name(table),\n            \"old_column\": self.quote_name(old_field.column),\n            \"new_column\": self.quote_name(new_field.column),\n            \"type\": new_type,\n        }"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "create_fk_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def create_fk_name(*args, **kwargs):\n            return self.quote_name(self._create_index_name(*args, **kwargs))"
+        },
+        {
+          "file": "django/db/models/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import hashlib\n\nfrom django.utils.encoding import force_bytes\n\n__all__ = ['Index']"
+        },
+        {
+          "file": "django/db/models/indexes.py",
+          "type": "function",
+          "name": "set_name_with_model",
+          "class_name": "Index",
+          "code": "def set_name_with_model(self, model):\n        \"\"\"\n        Generate a unique name for the index.\n\n        The name is divided into 3 parts - table name (12 chars), field name\n        (8 chars) and unique hash + suffix (10 chars). Each part is made to\n        fit its size by truncating the excess length.\n        \"\"\"\n        table_name = model._meta.db_table\n        column_names = [model._meta.get_field(field_name).column for field_name, order in self.fields_orders]\n        column_names_with_order = [\n            (('-%s' if order else '%s') % column_name)\n            for column_name, (field_name, order) in zip(column_names, self.fields_orders)\n        ]\n        # The length of the parts of the name is based on the default max\n        # length of 30 characters.\n        hash_data = [table_name] + column_names_with_order + [self.suffix]\n        self.name = '%s_%s_%s' % (\n            table_name[:11],\n            column_names[0][:7],\n            '%s_%s' % (self._hash_generator(*hash_data), self.suffix),\n        )\n        assert len(self.name) <= self.max_name_length, (\n            'Index too long for multiple database support. Is self.suffix '\n            'longer than 3 characters?'\n        )\n        self.check_name()"
+        }
+      ]
+    },
+    {
+      "pr_number": 8213,
+      "pr_title": "Refs #27935 -- Fixed BrinIndex.max_name_length if a project's default database isn't PostgreSQL.",
+      "pr_body": "",
+      "issue_id": 27935,
+      "issue_title": "BrinIndex crashes if name  > 30 characters",
+      "issue_body": "BrinIndex.suffix ( django.contrib.postgres.indexes) longer 3 char, but Index.set_name_with_model method allowed 3 char in suffix\nAssertionError: Index too long for multiple database support. Is self.suffix longer than 3 characters?",
+      "issue_closed_at": "2017-03-20T10:30:05",
+      "base_commit": "6cb0a3ac2836c044987f7a0cca0d1e99d52e002e",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from django.db import connection\nfrom django.db.models import Index\nfrom django.utils.functional import cached_property\n\n__all__ = ['BrinIndex', 'GinIndex']\n\n\nclass BrinIndex(Index):\n    suffix = 'brin'\n\n    def __init__(self, fields=[], name=None, pages_per_range=None):\n        if pages_per_range is not None and pages_per_range <= 0:"
+        },
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "function",
+          "name": "get_sql_create_template_values",
+          "class_name": "BrinIndex",
+          "code": "def get_sql_create_template_values(self, model, schema_editor, using):\n        parameters = super().get_sql_create_template_values(model, schema_editor, using=' USING brin')\n        if self.pages_per_range is not None:\n            parameters['extra'] = ' WITH (pages_per_range={})'.format(\n                schema_editor.quote_value(self.pages_per_range)) + parameters['extra']\n        return parameters"
+        }
+      ]
+    },
+    {
+      "pr_number": 11559,
+      "pr_title": "Refs #30557 -- Fixed crash of ordering by ptr fields when Meta.ordering contains F() expressions.",
+      "pr_body": "Thanks Can Sarıgöl for the report.\r\n\r\nFollow up to 8c5f9906c56ac72fc4f13218dd90bdf9bc8a248b",
+      "issue_id": 30557,
+      "issue_title": "order_by() a parent model crash when Meta.ordering contains expressions.",
+      "issue_body": "Hi friends,\nDuring testing I discovered a strange bug when using a query expression for ordering during multi-table inheritance. You can find the full write up as well as reproducible test repository\n​\nhttps://github.com/JonnyWaffles/djangoordermetabug\n. The bug occurs because the field is an OrderBy object, not a string, during get_order_dir. The linked stacktrace should make the issue obvious, but what I don't understand is why it only fails during test db setup, not during repl or script use. I wish I could help more and come up with a real solution. Hopefully, this is enough for someone wiser to find the culprit.",
+      "issue_closed_at": "2019-07-11T05:07:44",
+      "base_commit": "8c5f9906c56ac72fc4f13218dd90bdf9bc8a248b",
+      "changes": [
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "find_ordering_name",
+          "class_name": "SQLCompiler",
+          "code": "def find_ordering_name(self, name, opts, alias=None, default_order='ASC',\n                           already_seen=None):\n        \"\"\"\n        Return the table alias (the name might be ambiguous, the alias will\n        not be) and column name for ordering by the given 'name' parameter.\n        The 'name' is of the form 'field1__field2__...__fieldN'.\n        \"\"\"\n        name, order = get_order_dir(name, default_order)\n        descending = order == 'DESC'\n        pieces = name.split(LOOKUP_SEP)\n        field, targets, alias, joins, path, opts, transform_function = self._setup_joins(pieces, opts, alias)\n\n        # If we get to this point and the field is a relation to another model,\n        # append the default ordering for that model unless the attribute name\n        # of the field is specified.\n        if field.is_relation and opts.ordering and getattr(field, 'attname', None) != name:\n            # Firstly, avoid infinite loops.\n            already_seen = already_seen or set()\n            join_tuple = tuple(getattr(self.query.alias_map[j], 'join_cols', None) for j in joins)\n            if join_tuple in already_seen:\n                raise FieldError('Infinite loop caused by ordering.')\n            already_seen.add(join_tuple)\n\n            results = []\n            for item in opts.ordering:\n                if isinstance(item, OrderBy):\n                    results.append((item, False))\n                    continue\n                results.extend(self.find_ordering_name(item, opts, alias,\n                                                       order, already_seen))\n            return results\n        targets, alias, _ = self.query.trim_joins(targets, joins, path)\n        return [(OrderBy(transform_function(t, alias), descending=descending), False) for t in targets]"
+        }
+      ]
+    },
+    {
+      "pr_number": 9491,
+      "pr_title": "Fixed #28958 -- Fixed admin changelist crash when using a query expression in the page's ordering.",
+      "pr_body": "https://code.djangoproject.com/ticket/28958",
+      "issue_id": 28958,
+      "issue_title": "Admin changelist crashes when using query expression in the model's Meta.ordering or ModelAdmin.ordering",
+      "issue_body": "Using the newly introduced query-expression ordering feature in either the model's Meta.ordering or in its ModelAdmin causes errors.\nSteps to reproduce:\nFirst variant - using the model's Meta.ordering option -\n//models.py\nclass Game(models.Model):\n    score = models.IntegerField(null=True)\n\n     class Meta:\n         ordering = [F(\"score\").desc(nulls_last=True)]\n...\n// admin.py\nadmin.site.register(Game)\nAccessing the admin site will now give an\nAttributeError: 'OrderBy' object has no attribute 'startswith'\nVariant 2 - Using the ModelAdmin ordering attribute:\n//admin.py\nclass GameAdmin(models.ModelAdmin):\n    ordering = [F(\"score\").desc(nulls_last=True)]\nrunserver\nfails with error:\nTypeError: argument of type 'OrderBy' is not iterable",
+      "issue_closed_at": "2017-12-27T11:38:54",
+      "base_commit": "ef6c680f60a8e2ab45c936ec91f856fb3d7dc651",
+      "changes": [
+        {
+          "file": "django/contrib/admin/views/main.py",
+          "type": "line",
+          "name": "line 15",
+          "code": ")\nfrom django.core.paginator import InvalidPage\nfrom django.db import models\nfrom django.urls import reverse\nfrom django.utils.http import urlencode\nfrom django.utils.translation import gettext"
+        },
+        {
+          "file": "django/contrib/admin/views/main.py",
+          "type": "function",
+          "name": "get_ordering_field_columns",
+          "class_name": "ChangeList",
+          "code": "def get_ordering_field_columns(self):\n        \"\"\"\n        Return an OrderedDict of ordering field column numbers and asc/desc.\n        \"\"\"\n        # We must cope with more than one column having the same underlying sort\n        # field, so we base things on column numbers.\n        ordering = self._get_default_ordering()\n        ordering_fields = OrderedDict()\n        if ORDER_VAR not in self.params:\n            # for ordering specified on ModelAdmin or model Meta, we don't know\n            # the right column numbers absolutely, because there might be more\n            # than one column associated with that ordering, so we guess.\n            for field in ordering:\n                if field.startswith('-'):\n                    field = field[1:]\n                    order_type = 'desc'\n                else:\n                    order_type = 'asc'\n                for index, attr in enumerate(self.list_display):\n                    if self.get_ordering_field(attr) == field:\n                        ordering_fields[index] = order_type\n                        break\n        else:\n            for p in self.params[ORDER_VAR].split('.'):\n                none, pfx, idx = p.rpartition('-')\n                try:\n                    idx = int(idx)\n                except ValueError:\n                    continue  # skip it\n                ordering_fields[idx] = 'desc' if pfx == '-' else 'asc'\n        return ordering_fields"
+        }
+      ]
+    },
+    {
+      "pr_number": 4462,
+      "pr_title": "Fixed #24578 -- Fixed crash with QuerySet.update() on FK to O2O fields.",
+      "pr_body": "",
+      "issue_id": 24578,
+      "issue_title": "prepare_database_save breaks some OneToOneField's in 1.8",
+      "issue_body": "With 1.8 the following doesn't work:\n# models.py\nfrom django.db import models\n\nclass A(models.Model):\n    pass\n\nclass Aprime(models.Model):\n\n    original = models.OneToOneField(A, primary_key=True)\n\nclass B(models.Model):\n    aprime = models.ForeignKey(Aprime)\n\n# tests.py\n\nfrom django.test import TestCase\n\nfrom models import *\n\nclass TestTestCase(TestCase):\n\n    def test_ref(self):\n        a_one = A.objects.create()\n        a_two = A.objects.create()\n\n        self.assertNotEqual(a_one, a_two)\n\n        aprime = Aprime.objects.create(original=a_one)\n        aprime2 = Aprime.objects.create(original=a_two)\n\n        b = B.objects.create(aprime=aprime)\n\n        self.assertEqual(b.aprime, aprime)\n\n        B.objects.update(aprime=aprime2)\n\n        b = B.objects.get(pk=b.id)\n\n        self.assertEqual(b.aprime, aprime2)\nThis throws a\nInterfaceError: Error binding parameter 0 - probably unsupported type.\nwhen calling\nB.objects.update(aprime=aprime2)\n.\nThe bug disappears when overriding\nprepare_database_save\nto just return\nself.pk\ninstead of\ngetattr(self, field.rel.field_name)\n.  (This was the behavior as of 1.7 and the bug does not occur there.)\nNot sure why\nprepare_database_save\nwas modified but this bug actually affects a project of mine so would suggest rolling back to the 1.7 version.",
+      "issue_closed_at": "2015-04-09T07:21:57",
+      "base_commit": "20a98d863f00fc48f9c7fd783d8d0539c6be41f5",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "_get_next_or_previous_in_order",
+          "class_name": "Model",
+          "code": "def _get_next_or_previous_in_order(self, is_next):\n        cachename = \"__%s_order_cache\" % is_next\n        if not hasattr(self, cachename):\n            op = 'gt' if is_next else 'lt'\n            order = '_order' if is_next else '-_order'\n            order_field = self._meta.order_with_respect_to\n            obj = self._default_manager.filter(**{\n                order_field.name: getattr(self, order_field.attname)\n            }).filter(**{\n                '_order__%s' % op: self._default_manager.values('_order').filter(**{\n                    self._meta.pk.name: self.pk\n                })\n            }).order_by(order)[:1].get()\n            setattr(self, cachename, obj)\n        return getattr(self, cachename)"
+        }
+      ]
+    }
+  ]
+}

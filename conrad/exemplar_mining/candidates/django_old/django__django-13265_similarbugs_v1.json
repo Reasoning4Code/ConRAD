@@ -1,0 +1,178 @@
+{
+  "instance_id": "django__django-13265",
+  "repo": "django/django",
+  "created_at": "2020-08-02T10:02:11Z",
+  "problem_statement": "AlterOrderWithRespectTo() with ForeignKey crash when _order is included in Index().\nDescription\n\t\n\tclass Meta:\n\t\tdb_table = 'look_image'\n\t\torder_with_respect_to = 'look'\n\t\tindexes = [\n\t\t\tmodels.Index(fields=['look', '_order']),\n\t\t\tmodels.Index(fields=['created_at']),\n\t\t\tmodels.Index(fields=['updated_at']),\n\t\t]\nmigrations.CreateModel(\n\t\t\tname='LookImage',\n\t\t\tfields=[\n\t\t\t\t('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),\n\t\t\t\t('look', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='images', to='posts.Look', verbose_name='LOOK')),\n\t\t\t\t('image_url', models.URLField(blank=True, max_length=10000, null=True)),\n\t\t\t\t('image', models.ImageField(max_length=2000, upload_to='')),\n\t\t\t\t('deleted', models.DateTimeField(editable=False, null=True)),\n\t\t\t\t('created_at', models.DateTimeField(auto_now_add=True)),\n\t\t\t\t('updated_at', models.DateTimeField(auto_now=True)),\n\t\t\t],\n\t\t),\n\t\tmigrations.AddIndex(\n\t\t\tmodel_name='lookimage',\n\t\t\tindex=models.Index(fields=['look', '_order'], name='look_image_look_id_eaff30_idx'),\n\t\t),\n\t\tmigrations.AddIndex(\n\t\t\tmodel_name='lookimage',\n\t\t\tindex=models.Index(fields=['created_at'], name='look_image_created_f746cf_idx'),\n\t\t),\n\t\tmigrations.AddIndex(\n\t\t\tmodel_name='lookimage',\n\t\t\tindex=models.Index(fields=['updated_at'], name='look_image_updated_aceaf9_idx'),\n\t\t),\n\t\tmigrations.AlterOrderWithRespectTo(\n\t\t\tname='lookimage',\n\t\t\torder_with_respect_to='look',\n\t\t),\nI added orders_with_respect_to in new model class's Meta class and also made index for '_order' field by combining with other field. And a new migration file based on the model looks like the code above.\nThe problem is operation AlterOrderWithRespectTo after AddIndex of '_order' raising error because '_order' field had not been created yet.\nIt seems to be AlterOrderWithRespectTo has to proceed before AddIndex of '_order'.\n",
+  "patch": "diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py\n--- a/django/db/migrations/autodetector.py\n+++ b/django/db/migrations/autodetector.py\n@@ -182,12 +182,12 @@ def _detect_changes(self, convert_apps=None, graph=None):\n         self.generate_removed_fields()\n         self.generate_added_fields()\n         self.generate_altered_fields()\n+        self.generate_altered_order_with_respect_to()\n         self.generate_altered_unique_together()\n         self.generate_altered_index_together()\n         self.generate_added_indexes()\n         self.generate_added_constraints()\n         self.generate_altered_db_table()\n-        self.generate_altered_order_with_respect_to()\n \n         self._sort_migrations()\n         self._build_migration_list(graph)\n@@ -613,6 +613,18 @@ def generate_created_models(self):\n                     dependencies=list(set(dependencies)),\n                 )\n             # Generate other opns\n+            if order_with_respect_to:\n+                self.add_operation(\n+                    app_label,\n+                    operations.AlterOrderWithRespectTo(\n+                        name=model_name,\n+                        order_with_respect_to=order_with_respect_to,\n+                    ),\n+                    dependencies=[\n+                        (app_label, model_name, order_with_respect_to, True),\n+                        (app_label, model_name, None, True),\n+                    ]\n+                )\n             related_dependencies = [\n                 (app_label, model_name, name, True)\n                 for name in sorted(related_fields)\n@@ -654,19 +666,6 @@ def generate_created_models(self):\n                     ),\n                     dependencies=related_dependencies\n                 )\n-            if order_with_respect_to:\n-                self.add_operation(\n-                    app_label,\n-                    operations.AlterOrderWithRespectTo(\n-                        name=model_name,\n-                        order_with_respect_to=order_with_respect_to,\n-                    ),\n-                    dependencies=[\n-                        (app_label, model_name, order_with_respect_to, True),\n-                        (app_label, model_name, None, True),\n-                    ]\n-                )\n-\n             # Fix relationships if the model changed from a proxy model to a\n             # concrete model.\n             if (app_label, model_name) in self.old_proxy_keys:\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 3265,
+      "pr_title": "Fixed #23538 -- Added SchemaEditor for MySQL GIS.",
+      "pr_body": "",
+      "issue_id": 23538,
+      "issue_title": "MySQL GIS backend missing SchemaEditor",
+      "issue_body": "",
+      "issue_closed_at": "2014-09-25T12:53:52",
+      "base_commit": "215aa4f53b6bbd07d5c1eecfa94e7fcd00da813e",
+      "changes": [
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "line",
+          "name": "line 6",
+          "code": "from django.contrib.gis.db.backends.mysql.creation import MySQLCreation\nfrom django.contrib.gis.db.backends.mysql.introspection import MySQLIntrospection\nfrom django.contrib.gis.db.backends.mysql.operations import MySQLOperations\n\n\nclass DatabaseFeatures(BaseSpatialFeatures, MySQLDatabaseFeatures):"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "DatabaseWrapper",
+          "code": "def __init__(self, *args, **kwargs):\n        super(DatabaseWrapper, self).__init__(*args, **kwargs)\n        self.features = DatabaseFeatures(self)\n        self.creation = MySQLCreation(self)\n        self.ops = MySQLOperations(self)\n        self.introspection = MySQLIntrospection(self)"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "MySQLIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # In order to get the specific geometry type of the field,\n            # we introspect on the table definition using `DESCRIBE`.\n            cursor.execute('DESCRIBE %s' %\n                           self.connection.ops.quote_name(table_name))\n            # Increment over description info until we get to the geometry\n            # column.\n            for column, typ, null, key, default, extra in cursor.fetchall():\n                if column == geo_col:\n                    # Using OGRGeomType to convert from OGC name to Django field.\n                    # MySQL does not support 3D or SRIDs, so the field params\n                    # are empty.\n                    field_type = OGRGeomType(typ).django\n                    field_params = {}\n                    break\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/spatialite/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "SpatiaLiteIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # Querying the `geometry_columns` table to get additional metadata.\n            type_col = 'type' if self.connection.ops.spatial_version < (4, 0, 0) else 'geometry_type'\n            cursor.execute('SELECT coord_dimension, srid, %s '\n                           'FROM geometry_columns '\n                           'WHERE f_table_name=%%s AND f_geometry_column=%%s' % type_col,\n                           (table_name, geo_col))\n            row = cursor.fetchone()\n            if not row:\n                raise Exception('Could not find a geometry column for \"%s\".\"%s\"' %\n                                (table_name, geo_col))\n\n            # OGRGeomType does not require GDAL and makes it easy to convert\n            # from OGC geom type name to Django field.\n            field_type = OGRGeomType(row[2]).django\n\n            # Getting any GeometryField keyword arguments that are not the default.\n            dim = row[0]\n            srid = row[1]\n            field_params = {}\n            if srid != 4326:\n                field_params['srid'] = srid\n            if isinstance(dim, six.string_types) and 'Z' in dim:\n                field_params['dim'] = 3\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_indexes",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_indexes(self, cursor, table_name):\n        cursor.execute(\"SHOW INDEX FROM %s\" % self.connection.ops.quote_name(table_name))\n        # Do a two-pass search for indexes: on first pass check which indexes\n        # are multicolumn, on second pass check which single-column indexes\n        # are present.\n        rows = list(cursor.fetchall())\n        multicol_indexes = set()\n        for row in rows:\n            if row[3] > 1:\n                multicol_indexes.add(row[2])\n        indexes = {}\n        for row in rows:\n            if row[2] in multicol_indexes:\n                continue\n            if row[4] not in indexes:\n                indexes[row[4]] = {'primary_key': False, 'unique': False}\n            # It's possible to have the unique and PK constraints in separate indexes.\n            if row[2] == 'PRIMARY':\n                indexes[row[4]]['primary_key'] = True\n            if not row[1]:\n                indexes[row[4]]['unique'] = True\n        return indexes"
+        }
+      ]
+    },
+    {
+      "pr_number": 8926,
+      "pr_title": "Fixed #28493 -- Made migrations autodetector find dependencies for model renaming.",
+      "pr_body": "https://code.djangoproject.com/ticket/28493",
+      "issue_id": 28493,
+      "issue_title": "Foreign keys break on migration if models are renamed in a different app",
+      "issue_body": "",
+      "issue_closed_at": "2017-09-04T14:40:14",
+      "base_commit": "3f2b1d926bb3a72b4c3d2cd958455ebb9b4ca458",
+      "changes": [
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_renamed_models",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_renamed_models(self):\n        \"\"\"\n        Find any renamed models, generate the operations for them, and remove\n        the old entry from the model lists. Must be run before other\n        model-level generation.\n        \"\"\"\n        self.renamed_models = {}\n        self.renamed_models_rel = {}\n        added_models = self.new_model_keys - self.old_model_keys\n        for app_label, model_name in sorted(added_models):\n            model_state = self.to_state.models[app_label, model_name]\n            model_fields_def = self.only_relation_agnostic_fields(model_state.fields)\n\n            removed_models = self.old_model_keys - self.new_model_keys\n            for rem_app_label, rem_model_name in removed_models:\n                if rem_app_label == app_label:\n                    rem_model_state = self.from_state.models[rem_app_label, rem_model_name]\n                    rem_model_fields_def = self.only_relation_agnostic_fields(rem_model_state.fields)\n                    if model_fields_def == rem_model_fields_def:\n                        if self.questioner.ask_rename_model(rem_model_state, model_state):\n                            self.add_operation(\n                                app_label,\n                                operations.RenameModel(\n                                    old_name=rem_model_state.name,\n                                    new_name=model_state.name,\n                                )\n                            )\n                            self.renamed_models[app_label, model_name] = rem_model_name\n                            renamed_models_rel_key = '%s.%s' % (rem_model_state.app_label, rem_model_state.name)\n                            self.renamed_models_rel[renamed_models_rel_key] = '%s.%s' % (\n                                model_state.app_label,\n                                model_state.name,\n                            )\n                            self.old_model_keys.remove((rem_app_label, rem_model_name))\n                            self.old_model_keys.add((app_label, model_name))\n                            break"
+        }
+      ]
+    },
+    {
+      "pr_number": 4655,
+      "pr_title": "Fixed #24757 -- Recreated MySQL index when needed during unique_together removal",
+      "pr_body": "",
+      "issue_id": 24757,
+      "issue_title": "Removing unique_together constraint make Django 1.8 migration fail with MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2015-05-15T10:06:22",
+      "base_commit": "0eaef8e527af556c0c517a64035929404cf94a39",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "alter_unique_together",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def alter_unique_together(self, model, old_unique_together, new_unique_together):\n        \"\"\"\n        Deals with a model changing its unique_together.\n        Note: The input unique_togethers must be doubly-nested, not the single-\n        nested [\"foo\", \"bar\"] format.\n        \"\"\"\n        olds = set(tuple(fields) for fields in old_unique_together)\n        news = set(tuple(fields) for fields in new_unique_together)\n        # Deleted uniques\n        for fields in olds.difference(news):\n            columns = [model._meta.get_field(field).column for field in fields]\n            constraint_names = self._constraint_names(model, columns, unique=True)\n            if len(constraint_names) != 1:\n                raise ValueError(\"Found wrong number (%s) of constraints for %s(%s)\" % (\n                    len(constraint_names),\n                    model._meta.db_table,\n                    \", \".join(columns),\n                ))\n            self.execute(self._delete_constraint_sql(self.sql_delete_unique, model, constraint_names[0]))\n        # Created uniques\n        for fields in news.difference(olds):\n            columns = [model._meta.get_field(field).column for field in fields]\n            self.execute(self._create_unique_sql(model, columns))"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "alter_index_together",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def alter_index_together(self, model, old_index_together, new_index_together):\n        \"\"\"\n        Deals with a model changing its index_together.\n        Note: The input index_togethers must be doubly-nested, not the single-\n        nested [\"foo\", \"bar\"] format.\n        \"\"\"\n        olds = set(tuple(fields) for fields in old_index_together)\n        news = set(tuple(fields) for fields in new_index_together)\n        # Deleted indexes\n        for fields in olds.difference(news):\n            columns = [model._meta.get_field(field).column for field in fields]\n            constraint_names = self._constraint_names(model, list(columns), index=True)\n            if len(constraint_names) != 1:\n                raise ValueError(\"Found wrong number (%s) of constraints for %s(%s)\" % (\n                    len(constraint_names),\n                    model._meta.db_table,\n                    \", \".join(columns),\n                ))\n            self.execute(self._delete_constraint_sql(self.sql_delete_index, model, constraint_names[0]))\n        # Created indexes\n        for field_names in news.difference(olds):\n            fields = [model._meta.get_field(field) for field in field_names]\n            self.execute(self._create_index_sql(model, fields, suffix=\"_idx\"))"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        storage = self.connection.introspection.get_storage_engine(\n            self.connection.cursor(), model._meta.db_table\n        )\n        if storage == \"InnoDB\":\n            for field in model._meta.local_fields:\n                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\":\n                    # Temporary setting db_index to False (in memory) to disable\n                    # index creation for FKs (index automatically created by MySQL)\n                    field.db_index = False\n        return super(DatabaseSchemaEditor, self)._model_indexes_sql(model)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9345,
+      "pr_title": "Fixed #28792 -- Fixed index name truncation of namespaced tables.",
+      "pr_body": "Refs #27458, #27843.",
+      "issue_id": 28792,
+      "issue_title": "Index names can be incorrectly truncated when using a namespaced table name",
+      "issue_body": "",
+      "issue_closed_at": "2017-11-14T20:53:46",
+      "base_commit": "532a4f22ad94db320cb0fd66f4c7ee57d17ac65a",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "line",
+          "name": "line 5",
+          "code": "from django.db.backends.ddl_references import (\n    Columns, ForeignKeyName, IndexName, Statement, Table,\n)\nfrom django.db.backends.utils import strip_quotes\nfrom django.db.models import Index\nfrom django.db.transaction import TransactionManagementError, atomic\nfrom django.utils import timezone"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_create_index_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _create_index_name(self, table_name, column_names, suffix=\"\"):\n        \"\"\"\n        Generate a unique name for an index/unique constraint.\n\n        The name is divided into 3 parts: the table name, the column names,\n        and a unique digest and suffix.\n        \"\"\"\n        table_name = strip_quotes(table_name)\n        hash_data = [table_name] + list(column_names)\n        hash_suffix_part = '%s%s' % (self._digest(*hash_data), suffix)\n        max_length = self.connection.ops.max_name_length() or 200\n        # If everything fits into max_length, use that name.\n        index_name = '%s_%s_%s' % (table_name, '_'.join(column_names), hash_suffix_part)\n        if len(index_name) <= max_length:\n            return index_name\n        # Shorten a long suffix.\n        if len(hash_suffix_part) > max_length / 3:\n            hash_suffix_part = hash_suffix_part[:max_length // 3]\n        other_length = (max_length - len(hash_suffix_part)) // 2 - 1\n        index_name = '%s_%s_%s' % (\n            table_name[:other_length],\n            '_'.join(column_names)[:other_length],\n            hash_suffix_part,\n        )\n        # Prepend D if needed to prevent the name from starting with an\n        # underscore or a number (not permitted on Oracle).\n        if index_name[0] == \"_\" or index_name[0].isdigit():\n            index_name = \"D%s\" % index_name[:-1]\n        return index_name"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "import functools\nimport hashlib\nimport logging\nimport re\nfrom time import time\n\nfrom django.conf import settings"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "function",
+          "name": "rev_typecast_decimal",
+          "class_name": null,
+          "code": "def rev_typecast_decimal(d):\n    if d is None:\n        return None\n    return str(d)"
+        }
+      ]
+    }
+  ]
+}

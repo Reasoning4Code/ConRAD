@@ -1,0 +1,166 @@
+{
+  "instance_id": "django__django-13401",
+  "repo": "django/django",
+  "created_at": "2020-09-09T11:19:00Z",
+  "problem_statement": "Abstract model field should not be equal across models\nDescription\n\t\nConsider the following models:\nclass A(models.Model):\n\tclass Meta:\n\t\tabstract = True\n\tmyfield = IntegerField()\nclass B(A):\n\tpass\nclass C(A):\n\tpass\nIf I pull the fields of B and C into a shared set, one will be de-duplicated away, because they compare as equal. I found this surprising, though in practice using a list was sufficient for my need. The root of the issue is that they compare equal, as fields only consider self.creation_counter when comparing for equality.\nlen({B._meta.get_field('myfield'), C._meta.get_field('myfield')}) == 1\nB._meta.get_field('myfield') == C._meta.get_field('myfield')\nWe should adjust __eq__ so that if the field.model is different, they will compare unequal. Similarly, it is probably wise to adjust __hash__ and __lt__ to match.\nWhen adjusting __lt__, it may be wise to order first by self.creation_counter so that cases not affected by this equality collision won't be re-ordered. In my experimental branch, there was one test that broke if I ordered them by model first.\nI brought this up on IRC django-dev to check my intuitions, and those conversing with me there seemed to agree that the current behavior is not intuitive.\n",
+  "patch": "diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py\n--- a/django/db/models/fields/__init__.py\n+++ b/django/db/models/fields/__init__.py\n@@ -516,17 +516,37 @@ def clone(self):\n     def __eq__(self, other):\n         # Needed for @total_ordering\n         if isinstance(other, Field):\n-            return self.creation_counter == other.creation_counter\n+            return (\n+                self.creation_counter == other.creation_counter and\n+                getattr(self, 'model', None) == getattr(other, 'model', None)\n+            )\n         return NotImplemented\n \n     def __lt__(self, other):\n         # This is needed because bisect does not take a comparison function.\n+        # Order by creation_counter first for backward compatibility.\n         if isinstance(other, Field):\n-            return self.creation_counter < other.creation_counter\n+            if (\n+                self.creation_counter != other.creation_counter or\n+                not hasattr(self, 'model') and not hasattr(other, 'model')\n+            ):\n+                return self.creation_counter < other.creation_counter\n+            elif hasattr(self, 'model') != hasattr(other, 'model'):\n+                return not hasattr(self, 'model')  # Order no-model fields first\n+            else:\n+                # creation_counter's are equal, compare only models.\n+                return (\n+                    (self.model._meta.app_label, self.model._meta.model_name) <\n+                    (other.model._meta.app_label, other.model._meta.model_name)\n+                )\n         return NotImplemented\n \n     def __hash__(self):\n-        return hash(self.creation_counter)\n+        return hash((\n+            self.creation_counter,\n+            self.model._meta.app_label if hasattr(self, 'model') else None,\n+            self.model._meta.model_name if hasattr(self, 'model') else None,\n+        ))\n \n     def __deepcopy__(self, memodict):\n         # We don't have to deepcopy very much here, since most things are not\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 4352,
+      "pr_title": "Fixed #24508 -- Made annotations reflective",
+      "pr_body": "We should backport this to 1.8 to be consistent with `filter(a=2+F())`.\n",
+      "issue_id": 24508,
+      "issue_title": "F() object operations do not correcly reflect with annotate",
+      "issue_body": "",
+      "issue_closed_at": "2015-03-22T01:34:12",
+      "base_commit": "a6bada1ee0c3756e4b8d6bd4b4346dd5235c78ce",
+      "changes": [
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempts to infer the output type of the expression. If the output\n        fields of all source fields match then we can simply infer the same\n        type here.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                self._output_field = sources[0]\n                for source in sources:\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempts to infer the output type of the expression. If the output\n        fields of all source fields match then we can simply infer the same\n        type here.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                self._output_field = sources[0]\n                for source in sources:\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        }
+      ]
+    },
+    {
+      "pr_number": 3265,
+      "pr_title": "Fixed #23538 -- Added SchemaEditor for MySQL GIS.",
+      "pr_body": "",
+      "issue_id": 23538,
+      "issue_title": "MySQL GIS backend missing SchemaEditor",
+      "issue_body": "",
+      "issue_closed_at": "2014-09-25T12:53:52",
+      "base_commit": "215aa4f53b6bbd07d5c1eecfa94e7fcd00da813e",
+      "changes": [
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "line",
+          "name": "line 6",
+          "code": "from django.contrib.gis.db.backends.mysql.creation import MySQLCreation\nfrom django.contrib.gis.db.backends.mysql.introspection import MySQLIntrospection\nfrom django.contrib.gis.db.backends.mysql.operations import MySQLOperations\n\n\nclass DatabaseFeatures(BaseSpatialFeatures, MySQLDatabaseFeatures):"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "DatabaseWrapper",
+          "code": "def __init__(self, *args, **kwargs):\n        super(DatabaseWrapper, self).__init__(*args, **kwargs)\n        self.features = DatabaseFeatures(self)\n        self.creation = MySQLCreation(self)\n        self.ops = MySQLOperations(self)\n        self.introspection = MySQLIntrospection(self)"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "MySQLIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # In order to get the specific geometry type of the field,\n            # we introspect on the table definition using `DESCRIBE`.\n            cursor.execute('DESCRIBE %s' %\n                           self.connection.ops.quote_name(table_name))\n            # Increment over description info until we get to the geometry\n            # column.\n            for column, typ, null, key, default, extra in cursor.fetchall():\n                if column == geo_col:\n                    # Using OGRGeomType to convert from OGC name to Django field.\n                    # MySQL does not support 3D or SRIDs, so the field params\n                    # are empty.\n                    field_type = OGRGeomType(typ).django\n                    field_params = {}\n                    break\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/spatialite/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "SpatiaLiteIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # Querying the `geometry_columns` table to get additional metadata.\n            type_col = 'type' if self.connection.ops.spatial_version < (4, 0, 0) else 'geometry_type'\n            cursor.execute('SELECT coord_dimension, srid, %s '\n                           'FROM geometry_columns '\n                           'WHERE f_table_name=%%s AND f_geometry_column=%%s' % type_col,\n                           (table_name, geo_col))\n            row = cursor.fetchone()\n            if not row:\n                raise Exception('Could not find a geometry column for \"%s\".\"%s\"' %\n                                (table_name, geo_col))\n\n            # OGRGeomType does not require GDAL and makes it easy to convert\n            # from OGC geom type name to Django field.\n            field_type = OGRGeomType(row[2]).django\n\n            # Getting any GeometryField keyword arguments that are not the default.\n            dim = row[0]\n            srid = row[1]\n            field_params = {}\n            if srid != 4326:\n                field_params['srid'] = srid\n            if isinstance(dim, six.string_types) and 'Z' in dim:\n                field_params['dim'] = 3\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_indexes",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_indexes(self, cursor, table_name):\n        cursor.execute(\"SHOW INDEX FROM %s\" % self.connection.ops.quote_name(table_name))\n        # Do a two-pass search for indexes: on first pass check which indexes\n        # are multicolumn, on second pass check which single-column indexes\n        # are present.\n        rows = list(cursor.fetchall())\n        multicol_indexes = set()\n        for row in rows:\n            if row[3] > 1:\n                multicol_indexes.add(row[2])\n        indexes = {}\n        for row in rows:\n            if row[2] in multicol_indexes:\n                continue\n            if row[4] not in indexes:\n                indexes[row[4]] = {'primary_key': False, 'unique': False}\n            # It's possible to have the unique and PK constraints in separate indexes.\n            if row[2] == 'PRIMARY':\n                indexes[row[4]]['primary_key'] = True\n            if not row[1]:\n                indexes[row[4]]['unique'] = True\n        return indexes"
+        }
+      ]
+    },
+    {
+      "pr_number": 13109,
+      "pr_title": "Fixed #31596 -- Changed ForeignKey.validate() to use the base manager.",
+      "pr_body": "Follow up from #12923 for which ~~GH seems~~ I seem to have _had a moment_...\r\n\r\n\r\ncc @jdufresne ",
+      "issue_id": 31596,
+      "issue_title": "ForeignKey.validate() should validate using the base manager.",
+      "issue_body": "",
+      "issue_closed_at": "2020-06-25T04:36:37",
+      "base_commit": "fbe82f82555bc25dccb476c749ca062f0b522be3",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "validate",
+          "class_name": "ForeignKey",
+          "code": "def validate(self, value, model_instance):\n        if self.remote_field.parent_link:\n            return\n        super().validate(value, model_instance)\n        if value is None:\n            return\n\n        using = router.db_for_read(self.remote_field.model, instance=model_instance)\n        qs = self.remote_field.model._default_manager.using(using).filter(\n            **{self.remote_field.field_name: value}\n        )\n        qs = qs.complex_filter(self.get_limit_choices_to())\n        if not qs.exists():\n            raise exceptions.ValidationError(\n                self.error_messages['invalid'],\n                code='invalid',\n                params={\n                    'model': self.remote_field.model._meta.verbose_name, 'pk': value,\n                    'field': self.remote_field.field_name, 'value': value,\n                },  # 'pk' is included for backwards compatibility\n            )"
+        }
+      ]
+    },
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 4655,
+      "pr_title": "Fixed #24757 -- Recreated MySQL index when needed during unique_together removal",
+      "pr_body": "",
+      "issue_id": 24757,
+      "issue_title": "Removing unique_together constraint make Django 1.8 migration fail with MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2015-05-15T10:06:22",
+      "base_commit": "0eaef8e527af556c0c517a64035929404cf94a39",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "alter_unique_together",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def alter_unique_together(self, model, old_unique_together, new_unique_together):\n        \"\"\"\n        Deals with a model changing its unique_together.\n        Note: The input unique_togethers must be doubly-nested, not the single-\n        nested [\"foo\", \"bar\"] format.\n        \"\"\"\n        olds = set(tuple(fields) for fields in old_unique_together)\n        news = set(tuple(fields) for fields in new_unique_together)\n        # Deleted uniques\n        for fields in olds.difference(news):\n            columns = [model._meta.get_field(field).column for field in fields]\n            constraint_names = self._constraint_names(model, columns, unique=True)\n            if len(constraint_names) != 1:\n                raise ValueError(\"Found wrong number (%s) of constraints for %s(%s)\" % (\n                    len(constraint_names),\n                    model._meta.db_table,\n                    \", \".join(columns),\n                ))\n            self.execute(self._delete_constraint_sql(self.sql_delete_unique, model, constraint_names[0]))\n        # Created uniques\n        for fields in news.difference(olds):\n            columns = [model._meta.get_field(field).column for field in fields]\n            self.execute(self._create_unique_sql(model, columns))"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "alter_index_together",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def alter_index_together(self, model, old_index_together, new_index_together):\n        \"\"\"\n        Deals with a model changing its index_together.\n        Note: The input index_togethers must be doubly-nested, not the single-\n        nested [\"foo\", \"bar\"] format.\n        \"\"\"\n        olds = set(tuple(fields) for fields in old_index_together)\n        news = set(tuple(fields) for fields in new_index_together)\n        # Deleted indexes\n        for fields in olds.difference(news):\n            columns = [model._meta.get_field(field).column for field in fields]\n            constraint_names = self._constraint_names(model, list(columns), index=True)\n            if len(constraint_names) != 1:\n                raise ValueError(\"Found wrong number (%s) of constraints for %s(%s)\" % (\n                    len(constraint_names),\n                    model._meta.db_table,\n                    \", \".join(columns),\n                ))\n            self.execute(self._delete_constraint_sql(self.sql_delete_index, model, constraint_names[0]))\n        # Created indexes\n        for field_names in news.difference(olds):\n            fields = [model._meta.get_field(field) for field in field_names]\n            self.execute(self._create_index_sql(model, fields, suffix=\"_idx\"))"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        storage = self.connection.introspection.get_storage_engine(\n            self.connection.cursor(), model._meta.db_table\n        )\n        if storage == \"InnoDB\":\n            for field in model._meta.local_fields:\n                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\":\n                    # Temporary setting db_index to False (in memory) to disable\n                    # index creation for FKs (index automatically created by MySQL)\n                    field.db_index = False\n        return super(DatabaseSchemaEditor, self)._model_indexes_sql(model)"
+        }
+      ]
+    }
+  ]
+}

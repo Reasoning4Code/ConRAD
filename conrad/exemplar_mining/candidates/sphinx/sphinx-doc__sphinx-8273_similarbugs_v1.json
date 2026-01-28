@@ -1,0 +1,131 @@
+{
+  "instance_id": "sphinx-doc__sphinx-8273",
+  "repo": "sphinx-doc/sphinx",
+  "created_at": "2020-10-03T13:31:13Z",
+  "problem_statement": "Generate man page section directories\n**Current man page generation does not conform to `MANPATH` search functionality**\r\nCurrently, all generated man pages are placed in to a single-level directory: `<build-dir>/man`. Unfortunately, this cannot be used in combination with the unix `MANPATH` environment variable. The `man` program explicitly looks for man pages in section directories (such as `man/man1`, etc.). \r\n\r\n**Describe the solution you'd like**\r\nIt would be great if sphinx would automatically create the section directories (e.g., `man/man1/`, `man/man3/`, etc.) and place each generated man page within appropriate section.\r\n\r\n**Describe alternatives you've considered**\r\nThis problem can be over come within our project\u2019s build system, ensuring the built man pages are installed in a correct location, but it would be nice if the build directory had the proper layout.\r\n\r\nI\u2019m happy to take a crack at implementing a fix, though this change in behavior may break some people who expect everything to appear in a `man/` directory. \r\n\n",
+  "patch": "diff --git a/sphinx/builders/manpage.py b/sphinx/builders/manpage.py\n--- a/sphinx/builders/manpage.py\n+++ b/sphinx/builders/manpage.py\n@@ -24,7 +24,7 @@\n from sphinx.util import progress_message\n from sphinx.util.console import darkgreen  # type: ignore\n from sphinx.util.nodes import inline_all_toctrees\n-from sphinx.util.osutil import make_filename_from_project\n+from sphinx.util.osutil import ensuredir, make_filename_from_project\n from sphinx.writers.manpage import ManualPageWriter, ManualPageTranslator\n \n \n@@ -80,7 +80,12 @@ def write(self, *ignored: Any) -> None:\n             docsettings.authors = authors\n             docsettings.section = section\n \n-            targetname = '%s.%s' % (name, section)\n+            if self.config.man_make_section_directory:\n+                ensuredir(path.join(self.outdir, str(section)))\n+                targetname = '%s/%s.%s' % (section, name, section)\n+            else:\n+                targetname = '%s.%s' % (name, section)\n+\n             logger.info(darkgreen(targetname) + ' { ', nonl=True)\n             destination = FileOutput(\n                 destination_path=path.join(self.outdir, targetname),\n@@ -115,6 +120,7 @@ def setup(app: Sphinx) -> Dict[str, Any]:\n \n     app.add_config_value('man_pages', default_man_pages, None)\n     app.add_config_value('man_show_urls', False, None)\n+    app.add_config_value('man_make_section_directory', False, None)\n \n     return {\n         'version': 'builtin',\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 6501,
+      "pr_title": "Fix #6499: html: Sphinx never updates a copy of html_logo",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #6499 ",
+      "issue_id": 6499,
+      "issue_title": "html_logo file will be never updated",
+      "issue_body": "**Describe the bug**\r\nOnce `html_logo` file copied, it will be never overwrited.\r\n\r\n**To Reproduce**\r\n```\r\nhtml_logo = 'logo.jpg'\r\n```\r\n```\r\n$ make html\r\n\r\nmodify logo.jpg\r\n\r\n$ touch index.rst  # update source file to build docs again\r\n$ make html\r\n```\r\n\r\n**Expected behavior**\r\n`html_logo` file is updated when original file changed.\r\n\r\n**Your project**\r\nNone\r\n\r\n**Screenshots**\r\nNone\r\n\r\n**Environment info**\r\n- OS: Mac\r\n- Python version: 3.7.3\r\n- Sphinx version: 2.1.1\r\n- Sphinx extensions:  None\r\n",
+      "issue_closed_at": "2019-06-18T12:38:26Z",
+      "base_commit": "3047bd211ff3de173d7af817d84118c8ad776772",
+      "changes": [
+        {
+          "file": "sphinx/builders/html.py",
+          "type": "function",
+          "name": "copy_static_files",
+          "class_name": "StandaloneHTMLBuilder",
+          "code": "def copy_static_files(self) -> None:\n        try:\n            # copy static files\n            logger.info(bold(__('copying static files... ')), nonl=True)\n            ensuredir(path.join(self.outdir, '_static'))\n            # first, create pygments style file\n            with open(path.join(self.outdir, '_static', 'pygments.css'), 'w') as f:\n                f.write(self.highlighter.get_stylesheet())\n            # then, copy translations JavaScript file\n            if self.config.language is not None:\n                jsfile = self._get_translations_js()\n                if jsfile:\n                    copyfile(jsfile, path.join(self.outdir, '_static',\n                                               'translations.js'))\n\n            # copy non-minified stemmer JavaScript file\n            if self.indexer is not None:\n                jsfile = self.indexer.get_js_stemmer_rawcode()\n                if jsfile:\n                    copyfile(jsfile, path.join(self.outdir, '_static', '_stemmer.js'))\n\n            ctx = self.globalcontext.copy()\n\n            # add context items for search function used in searchtools.js_t\n            if self.indexer is not None:\n                ctx.update(self.indexer.context_for_searchtool())\n\n            # then, copy over theme-supplied static files\n            if self.theme:\n                for theme_path in self.theme.get_theme_dirs()[::-1]:\n                    entry = path.join(theme_path, 'static')\n                    copy_asset(entry, path.join(self.outdir, '_static'), excluded=DOTFILES,\n                               context=ctx, renderer=self.templates)\n            # then, copy over all user-supplied static files\n            excluded = Matcher(self.config.exclude_patterns + [\"**/.*\"])\n            for static_path in self.config.html_static_path:\n                entry = path.join(self.confdir, static_path)\n                copy_asset(entry, path.join(self.outdir, '_static'), excluded,\n                           context=ctx, renderer=self.templates)\n            # copy logo and favicon files if not already in static path\n            if self.config.html_logo:\n                logobase = path.basename(self.config.html_logo)\n                logotarget = path.join(self.outdir, '_static', logobase)\n                if not path.isfile(logotarget):\n                    copyfile(path.join(self.confdir, self.config.html_logo),\n                             logotarget)\n            if self.config.html_favicon:\n                iconbase = path.basename(self.config.html_favicon)\n                icontarget = path.join(self.outdir, '_static', iconbase)\n                if not path.isfile(icontarget):\n                    copyfile(path.join(self.confdir, self.config.html_favicon),\n                             icontarget)\n            logger.info(__('done'))\n        except OSError as err:\n            logger.warning(__('cannot copy static file %r'), err)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6159,
+      "pr_title": "Fix #3859: manpage: code-block captions are not displayed correctly",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #3859 \r\n",
+      "issue_id": 3859,
+      "issue_title": "code-block captions are not displayed correctly in man pages",
+      "issue_body": "### Problem\r\ncode-block captions are not displayed correctly in man pages\r\n\r\n#### Procedure to reproduce the problem\r\nRun the following:\r\n```\r\nmkdir /tmp/code-block-test\r\ncd /tmp/code-block-test\r\nyes \"n\" | sphinx-quickstart --dot _ --project code-block-test --author \"Example\" -v 0 --release 0 --language en --suffix .rst --master index --makefile --batchfile docs\r\necho '\r\nBelow is an example of a codeblock with a caption.\r\n\r\n.. code-block:: bash\r\n   :caption: This is a caption\r\n\r\n   echo 1234\r\n' >> docs/index.rst\r\nmake -C docs man\r\n```\r\n\r\n#### Error logs / results\r\nThe rendered man page contains:\r\n```\r\n       Below is an example of a codeblock with a caption. This is a caption.INDENT 0.0\r\n\r\n          echo 1234\r\n```\r\n\r\n#### Expected results\r\n\".INDENT 0.0\" should not appear in the man page.\r\n\r\nI would expect the rendered version of the man page to look more like:\r\n\r\n```\r\n       Below is an example of a codeblock with a caption.\r\n\r\n       This is a caption\r\n\r\n          echo 1234\r\n```\r\n\r\n(This would be consistent with the behavior of `html` and `latexpdf`.)\r\n\r\n### Reproducible project / your project\r\nSee above.\r\n\r\n### Environment info\r\n- OS: Ubuntu 16.04 LTS\r\n- Python version: Python 2.7.12\r\n- Sphinx version: Sphinx v1.5.6",
+      "issue_closed_at": "2019-03-10T06:24:55Z",
+      "base_commit": "f57041ab000c6c2b1e672f3d963d849ecd3ee7ab",
+      "changes": [
+        {
+          "file": "sphinx/writers/manpage.py",
+          "type": "function",
+          "name": "depart_manpage",
+          "class_name": "ManualPageTranslator",
+          "code": "def depart_manpage(self, node):\n        # type: (nodes.Node) -> None\n        return self.depart_strong(node)"
+        }
+      ]
+    },
+    {
+      "pr_number": 7350,
+      "pr_title": "Fix #6240: napoleon: Attributes and Methods sections ignore :noindex: option",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #6240 ",
+      "issue_id": 6240,
+      "issue_title": "Napoleon's Attributes directive ignores :noindex: option.",
+      "issue_body": "**Description of the bug**\r\nSphinxcontrib-napoleon's `Attributes:` directive appears to ignore the `:noindex:` option. \r\n\r\nThe following reST code produces an index that includes the `Attributes:` directives found in `example_google.py` but leaves out all other directives:\r\n\r\n```reST\r\nGoogle Example\r\n==============\r\n\r\n.. automodule:: example_google\r\n   :members:\r\n   :noindex:\r\n\r\n:ref:`genindex`\r\n```\r\n\r\n\r\n**Expected behavior**\r\nThe above example should produce an empty document index.\r\n\r\n\r\n**Environment info**\r\nI am using the Sphinx packages that are provided by Ubuntu 18.04 and installed Napoleon with pip3 afterwards:\r\n\r\n```\r\napt install make python3-sphinx python3-pip\r\npip3 install sphinxcontrib-napoleon\r\n```\r\n\r\nThe file `example_google.py` is from https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html\r\n\r\nI used `sphinx-quickstart` to configure my directory, edited `conf.py` to include `sphinxcontrib-napoleon` and set the Python path, then typed `make html`.\r\n",
+      "issue_closed_at": "2020-03-22T07:29:54Z",
+      "base_commit": "c75470f9b79046f6d32344be5eacf60a4e1c1b7d",
+      "changes": [
+        {
+          "file": "sphinx/ext/napoleon/docstring.py",
+          "type": "function",
+          "name": "_parse_attributes_section",
+          "class_name": "GoogleDocstring",
+          "code": "def _parse_attributes_section(self, section: str) -> List[str]:\n        lines = []\n        for _name, _type, _desc in self._consume_fields():\n            if self._config.napoleon_use_ivar:\n                _name = self._qualify_name(_name, self._obj)\n                field = ':ivar %s: ' % _name\n                lines.extend(self._format_block(field, _desc))\n                if _type:\n                    lines.append(':vartype %s: %s' % (_name, _type))\n            else:\n                lines.extend(['.. attribute:: ' + _name, ''])\n                fields = self._format_field('', '', _desc)\n                lines.extend(self._indent(fields, 3))\n                if _type:\n                    lines.append('')\n                    lines.extend(self._indent([':type: %s' % _type], 3))\n                lines.append('')\n        if self._config.napoleon_use_ivar:\n            lines.append('')\n        return lines"
+        },
+        {
+          "file": "sphinx/ext/napoleon/docstring.py",
+          "type": "function",
+          "name": "_parse_methods_section",
+          "class_name": "GoogleDocstring",
+          "code": "def _parse_methods_section(self, section: str) -> List[str]:\n        lines = []  # type: List[str]\n        for _name, _type, _desc in self._consume_fields(parse_type=False):\n            lines.append('.. method:: %s' % _name)\n            if _desc:\n                lines.extend([''] + self._indent(_desc, 3))\n            lines.append('')\n        return lines"
+        }
+      ]
+    },
+    {
+      "pr_number": 6592,
+      "pr_title": "Fix #6589: autodoc: Formatting issues with autodoc_typehints='none'",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #6589 ",
+      "issue_id": 6589,
+      "issue_title": "Formatting issues with autodoc_typehints='none'",
+      "issue_body": "**Describe the bug**\r\n\r\nWhen using `autodoc_typehints='none'`, I see two issues currently:\r\n\r\n1. When an annotated parameter has a default value, spaces are inserted around `=` where they are not for unannotated parameters. Consider:\r\n\r\n   ```python\r\n   def foo(x=True, y: bool = True, z = True):\r\n       return x and y and z\r\n   ```\r\n\r\n   The result looks like:\r\n\r\n   **foo**(*x=True, y = True, z=True*)\r\n\r\n2. Return types are not removed. Consider:\r\n\r\n   ```python\r\n   def bar(x: int) -> int:\r\n       return x * 2\r\n   ```\r\n\r\n   The result looks like:\r\n\r\n   **bar**(*x*) -> int\r\n\r\n**To Reproduce**\r\nSteps to reproduce the behavior:\r\n\r\nUse the above examples with the `autodoc_typehints='none'` option, or with the attached project (see below).\r\n\r\n**Expected behavior**\r\n\r\nI expect the annotated and unannotated parameters to be rendered similarly and for return type annotations to be removed as well, as if they were not there originally.\r\n\r\n**Your project**\r\n\r\nSee attached [foobar.zip](https://github.com/sphinx-doc/sphinx/files/3406054/foobar.zip)\r\n\r\n**Environment info**\r\n- OS: [Pop!_OS 18.10]\r\n- Python version: 3.6.8\r\n- Sphinx version: 2.1.2\r\n- Sphinx extensions:  [sphinx.ext.autodoc]\r\n\r\n**Additional context**\r\n\r\n- #6361 \r\n- #5868 \r\n- https://github.com/agronholm/sphinx-autodoc-typehints/pull/78\r\n\r\n",
+      "issue_closed_at": "2019-08-02T13:37:16Z",
+      "base_commit": "4732ec5edf9e53e2fa78cd5e1ff6bee92f1b27b7",
+      "changes": [
+        {
+          "file": "sphinx/util/inspect.py",
+          "type": "function",
+          "name": "format_args",
+          "class_name": "Signature",
+          "code": "def format_args(self, show_annotation: bool = True) -> str:\n        args = []\n        last_kind = None\n        for i, param in enumerate(self.parameters.values()):\n            # skip first argument if subject is bound method\n            if self.skip_first_argument and i == 0:\n                continue\n\n            arg = StringIO()\n\n            # insert '*' between POSITIONAL args and KEYWORD_ONLY args::\n            #     func(a, b, *, c, d):\n            if param.kind == param.KEYWORD_ONLY and last_kind in (param.POSITIONAL_OR_KEYWORD,\n                                                                  param.POSITIONAL_ONLY,\n                                                                  None):\n                args.append('*')\n\n            if param.kind in (param.POSITIONAL_ONLY,\n                              param.POSITIONAL_OR_KEYWORD,\n                              param.KEYWORD_ONLY):\n                arg.write(param.name)\n                if show_annotation and param.annotation is not param.empty:\n                    if isinstance(param.annotation, str) and param.name in self.annotations:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(self.annotations[param.name]))\n                    else:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(param.annotation))\n                if param.default is not param.empty:\n                    if param.annotation is param.empty:\n                        arg.write('=')\n                        arg.write(object_description(param.default))\n                    else:\n                        arg.write(' = ')\n                        arg.write(object_description(param.default))\n            elif param.kind == param.VAR_POSITIONAL:\n                arg.write('*')\n                arg.write(param.name)\n            elif param.kind == param.VAR_KEYWORD:\n                arg.write('**')\n                arg.write(param.name)\n\n            args.append(arg.getvalue())\n            last_kind = param.kind\n\n        if self.return_annotation is inspect.Parameter.empty:\n            return '(%s)' % ', '.join(args)\n        else:\n            if 'return' in self.annotations:\n                annotation = self.format_annotation(self.annotations['return'])\n            else:\n                annotation = self.format_annotation(self.return_annotation)\n\n            return '(%s) -> %s' % (', '.join(args), annotation)"
+        },
+        {
+          "file": "sphinx/util/inspect.py",
+          "type": "function",
+          "name": "format_args",
+          "class_name": "Signature",
+          "code": "def format_args(self, show_annotation: bool = True) -> str:\n        args = []\n        last_kind = None\n        for i, param in enumerate(self.parameters.values()):\n            # skip first argument if subject is bound method\n            if self.skip_first_argument and i == 0:\n                continue\n\n            arg = StringIO()\n\n            # insert '*' between POSITIONAL args and KEYWORD_ONLY args::\n            #     func(a, b, *, c, d):\n            if param.kind == param.KEYWORD_ONLY and last_kind in (param.POSITIONAL_OR_KEYWORD,\n                                                                  param.POSITIONAL_ONLY,\n                                                                  None):\n                args.append('*')\n\n            if param.kind in (param.POSITIONAL_ONLY,\n                              param.POSITIONAL_OR_KEYWORD,\n                              param.KEYWORD_ONLY):\n                arg.write(param.name)\n                if show_annotation and param.annotation is not param.empty:\n                    if isinstance(param.annotation, str) and param.name in self.annotations:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(self.annotations[param.name]))\n                    else:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(param.annotation))\n                if param.default is not param.empty:\n                    if param.annotation is param.empty:\n                        arg.write('=')\n                        arg.write(object_description(param.default))\n                    else:\n                        arg.write(' = ')\n                        arg.write(object_description(param.default))\n            elif param.kind == param.VAR_POSITIONAL:\n                arg.write('*')\n                arg.write(param.name)\n            elif param.kind == param.VAR_KEYWORD:\n                arg.write('**')\n                arg.write(param.name)\n\n            args.append(arg.getvalue())\n            last_kind = param.kind\n\n        if self.return_annotation is inspect.Parameter.empty:\n            return '(%s)' % ', '.join(args)\n        else:\n            if 'return' in self.annotations:\n                annotation = self.format_annotation(self.annotations['return'])\n            else:\n                annotation = self.format_annotation(self.return_annotation)\n\n            return '(%s) -> %s' % (', '.join(args), annotation)"
+        }
+      ]
+    },
+    {
+      "pr_number": 4634,
+      "pr_title": "Fix #4630: Have order on msgids in sphinx.pot deterministic",
+      "pr_body": "ref. #4630 \r\n\r\n### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- Have order on msgids in sphinx.pot deterministic\r\n\r\n### Detail\r\n- Have order on msgids in sphinx.pot deterministic\r\n",
+      "issue_id": 4630,
+      "issue_title": "Order on msgids included in sphinx.pot is not deterministic",
+      "issue_body": "Subject: Order on msgids in sphinx.pot has difference even if its content has no essential changes\r\n\r\n### Problem\r\n- When .pot files are managed with VCS (such as Git), difference without essential changes bother project manager.\r\n\r\n#### Procedure to reproduce the problem\r\n```\r\ngit clone https://github.com/python/cpython\r\ncd cpython/Doc\r\nmake build ALLSPHINXOPTS=\"-E -b gettext -D gettext_compact=0 -d build/.doctrees . locales/pot\"\r\n```\r\n\r\n#### Error logs / results\r\n- https://github.com/python/python-docs-ja/commit/e23b4d3b310353073f1ba60b08160d8da09425db#diff-45573348f1c20fa58a6bb5ae4fbeb851\r\n\r\n#### Expected results\r\nTreated as \"No difference\".\r\nMore concretely, msgids in sphinx.pot have deterministic order.\r\n\r\n### Reproducible project / your project\r\n- https://github.com/python/cpython (.pot files are genereted from this project)\r\n\r\n### Environment info\r\n- OS: Linux/Travis CI\r\n- Python version: 3.6.3\r\n- Sphinx version: 1.7.0\r\n\r\n",
+      "issue_closed_at": "2018-02-19T01:49:03Z",
+      "base_commit": "8e73cbca5206e11b62838a90e9f935e7906e8b85",
+      "changes": [
+        {
+          "file": "sphinx/builders/gettext.py",
+          "type": "line",
+          "name": "line 12",
+          "code": "from __future__ import unicode_literals\n\nfrom codecs import open\nfrom collections import defaultdict\nfrom datetime import datetime, tzinfo, timedelta\nfrom os import path, walk, getenv\nfrom time import time"
+        },
+        {
+          "file": "sphinx/builders/gettext.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "LocalTimeZone",
+          "code": "def __init__(self, *args, **kw):\n        # type: (Any, Any) -> None\n        super(LocalTimeZone, self).__init__(*args, **kw)  # type: ignore\n        self.tzdelta = tzdelta"
+        },
+        {
+          "file": "sphinx/builders/gettext.py",
+          "type": "function",
+          "name": "_collect_templates",
+          "class_name": "MessageCatalogBuilder",
+          "code": "def _collect_templates(self):\n        # type: () -> Set[unicode]\n        template_files = set()\n        for template_path in self.config.templates_path:\n            tmpl_abs_path = path.join(self.app.srcdir, template_path)\n            for dirpath, dirs, files in walk(tmpl_abs_path):\n                for fn in files:\n                    if fn.endswith('.html'):\n                        filename = canon_path(path.join(dirpath, fn))\n                        template_files.add(filename)\n        return template_files"
+        }
+      ]
+    }
+  ]
+}

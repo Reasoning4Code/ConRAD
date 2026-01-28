@@ -1,0 +1,166 @@
+{
+  "instance_id": "django__django-11910",
+  "repo": "django/django",
+  "created_at": "2019-10-14T01:56:49Z",
+  "problem_statement": "ForeignKey's to_field parameter gets the old field's name when renaming a PrimaryKey.\nDescription\n\t\nHaving these two models \nclass ModelA(models.Model):\n\tfield_wrong = models.CharField('field1', max_length=50, primary_key=True) # I'm a Primary key.\nclass ModelB(models.Model):\n\tfield_fk = models.ForeignKey(ModelA, blank=True, null=True, on_delete=models.CASCADE) \n... migrations applyed ...\nthe ModelA.field_wrong field has been renamed ... and Django recognizes the \"renaming\"\n# Primary key renamed\nclass ModelA(models.Model):\n\tfield_fixed = models.CharField('field1', max_length=50, primary_key=True) # I'm a Primary key.\nAttempts to to_field parameter. \nThe to_field points to the old_name (field_typo) and not to the new one (\"field_fixed\")\nclass Migration(migrations.Migration):\n\tdependencies = [\n\t\t('app1', '0001_initial'),\n\t]\n\toperations = [\n\t\tmigrations.RenameField(\n\t\t\tmodel_name='modela',\n\t\t\told_name='field_wrong',\n\t\t\tnew_name='field_fixed',\n\t\t),\n\t\tmigrations.AlterField(\n\t\t\tmodel_name='modelb',\n\t\t\tname='modela',\n\t\t\tfield=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, to='app1.ModelB', to_field='field_wrong'),\n\t\t),\n\t]\n",
+  "patch": "diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py\n--- a/django/db/migrations/autodetector.py\n+++ b/django/db/migrations/autodetector.py\n@@ -927,6 +927,10 @@ def generate_altered_fields(self):\n                 if remote_field_name:\n                     to_field_rename_key = rename_key + (remote_field_name,)\n                     if to_field_rename_key in self.renamed_fields:\n+                        # Repoint both model and field name because to_field\n+                        # inclusion in ForeignKey.deconstruct() is based on\n+                        # both.\n+                        new_field.remote_field.model = old_field.remote_field.model\n                         new_field.remote_field.field_name = old_field.remote_field.field_name\n                 # Handle ForeignObjects which can have multiple from_fields/to_fields.\n                 from_fields = getattr(new_field, 'from_fields', None)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8926,
+      "pr_title": "Fixed #28493 -- Made migrations autodetector find dependencies for model renaming.",
+      "pr_body": "https://code.djangoproject.com/ticket/28493",
+      "issue_id": 28493,
+      "issue_title": "Foreign keys break on migration if models are renamed in a different app",
+      "issue_body": "",
+      "issue_closed_at": "2017-09-04T14:40:14",
+      "base_commit": "3f2b1d926bb3a72b4c3d2cd958455ebb9b4ca458",
+      "changes": [
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_renamed_models",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_renamed_models(self):\n        \"\"\"\n        Find any renamed models, generate the operations for them, and remove\n        the old entry from the model lists. Must be run before other\n        model-level generation.\n        \"\"\"\n        self.renamed_models = {}\n        self.renamed_models_rel = {}\n        added_models = self.new_model_keys - self.old_model_keys\n        for app_label, model_name in sorted(added_models):\n            model_state = self.to_state.models[app_label, model_name]\n            model_fields_def = self.only_relation_agnostic_fields(model_state.fields)\n\n            removed_models = self.old_model_keys - self.new_model_keys\n            for rem_app_label, rem_model_name in removed_models:\n                if rem_app_label == app_label:\n                    rem_model_state = self.from_state.models[rem_app_label, rem_model_name]\n                    rem_model_fields_def = self.only_relation_agnostic_fields(rem_model_state.fields)\n                    if model_fields_def == rem_model_fields_def:\n                        if self.questioner.ask_rename_model(rem_model_state, model_state):\n                            self.add_operation(\n                                app_label,\n                                operations.RenameModel(\n                                    old_name=rem_model_state.name,\n                                    new_name=model_state.name,\n                                )\n                            )\n                            self.renamed_models[app_label, model_name] = rem_model_name\n                            renamed_models_rel_key = '%s.%s' % (rem_model_state.app_label, rem_model_state.name)\n                            self.renamed_models_rel[renamed_models_rel_key] = '%s.%s' % (\n                                model_state.app_label,\n                                model_state.name,\n                            )\n                            self.old_model_keys.remove((rem_app_label, rem_model_name))\n                            self.old_model_keys.add((app_label, model_name))\n                            break"
+        }
+      ]
+    },
+    {
+      "pr_number": 4233,
+      "pr_title": "Fixed #24435 -- Prevented m2m field removal and addition in migrations when changing blank",
+      "pr_body": "https://code.djangoproject.com/ticket/24435\n",
+      "issue_id": 24435,
+      "issue_title": "Removing blank=True, null=True from ManyToMany field causes data deletion in migration",
+      "issue_body": "",
+      "issue_closed_at": "2015-03-04T08:41:51",
+      "base_commit": "70123cf084e3af7dfc61bb7bd2090ff802c3cda4",
+      "changes": [
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_altered_fields",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_altered_fields(self):\n        \"\"\"\n        Fields that have been altered.\n        \"\"\"\n        for app_label, model_name, field_name in sorted(self.old_field_keys.intersection(self.new_field_keys)):\n            # Did the field change?\n            old_model_name = self.renamed_models.get((app_label, model_name), model_name)\n            old_field_name = self.renamed_fields.get((app_label, model_name, field_name), field_name)\n            old_field = self.old_apps.get_model(app_label, old_model_name)._meta.get_field(old_field_name)\n            new_field = self.new_apps.get_model(app_label, model_name)._meta.get_field(field_name)\n            # Implement any model renames on relations; these are handled by RenameModel\n            # so we need to exclude them from the comparison\n            if hasattr(new_field, \"rel\") and getattr(new_field.rel, \"to\", None):\n                rename_key = (\n                    new_field.rel.to._meta.app_label,\n                    new_field.rel.to._meta.model_name,\n                )\n                if rename_key in self.renamed_models:\n                    new_field.rel.to = old_field.rel.to\n            old_field_dec = self.deep_deconstruct(old_field)\n            new_field_dec = self.deep_deconstruct(new_field)\n            if old_field_dec != new_field_dec:\n                if (not isinstance(old_field, models.ManyToManyField) and\n                        not isinstance(new_field, models.ManyToManyField)):\n                    preserve_default = True\n                    if (old_field.null and not new_field.null and not new_field.has_default() and\n                            not isinstance(new_field, models.ManyToManyField)):\n                        field = new_field.clone()\n                        new_default = self.questioner.ask_not_null_alteration(field_name, model_name)\n                        if new_default is not models.NOT_PROVIDED:\n                            field.default = new_default\n                            preserve_default = False\n                    else:\n                        field = new_field\n                    self.add_operation(\n                        app_label,\n                        operations.AlterField(\n                            model_name=model_name,\n                            name=field_name,\n                            field=field,\n                            preserve_default=preserve_default,\n                        )\n                    )\n                else:\n                    self._generate_removed_field(app_label, model_name, field_name)\n                    self._generate_added_field(app_label, model_name, field_name)"
+        },
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_altered_fields",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_altered_fields(self):\n        \"\"\"\n        Fields that have been altered.\n        \"\"\"\n        for app_label, model_name, field_name in sorted(self.old_field_keys.intersection(self.new_field_keys)):\n            # Did the field change?\n            old_model_name = self.renamed_models.get((app_label, model_name), model_name)\n            old_field_name = self.renamed_fields.get((app_label, model_name, field_name), field_name)\n            old_field = self.old_apps.get_model(app_label, old_model_name)._meta.get_field(old_field_name)\n            new_field = self.new_apps.get_model(app_label, model_name)._meta.get_field(field_name)\n            # Implement any model renames on relations; these are handled by RenameModel\n            # so we need to exclude them from the comparison\n            if hasattr(new_field, \"rel\") and getattr(new_field.rel, \"to\", None):\n                rename_key = (\n                    new_field.rel.to._meta.app_label,\n                    new_field.rel.to._meta.model_name,\n                )\n                if rename_key in self.renamed_models:\n                    new_field.rel.to = old_field.rel.to\n            old_field_dec = self.deep_deconstruct(old_field)\n            new_field_dec = self.deep_deconstruct(new_field)\n            if old_field_dec != new_field_dec:\n                if (not isinstance(old_field, models.ManyToManyField) and\n                        not isinstance(new_field, models.ManyToManyField)):\n                    preserve_default = True\n                    if (old_field.null and not new_field.null and not new_field.has_default() and\n                            not isinstance(new_field, models.ManyToManyField)):\n                        field = new_field.clone()\n                        new_default = self.questioner.ask_not_null_alteration(field_name, model_name)\n                        if new_default is not models.NOT_PROVIDED:\n                            field.default = new_default\n                            preserve_default = False\n                    else:\n                        field = new_field\n                    self.add_operation(\n                        app_label,\n                        operations.AlterField(\n                            model_name=model_name,\n                            name=field_name,\n                            field=field,\n                            preserve_default=preserve_default,\n                        )\n                    )\n                else:\n                    self._generate_removed_field(app_label, model_name, field_name)\n                    self._generate_added_field(app_label, model_name, field_name)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9383,
+      "pr_title": " Fixed #25817 -- Made RenameField repoint to_field/to_fields references. ",
+      "pr_body": "https://code.djangoproject.com/ticket/25817\r\n\r\nThis is still missing tests for `ForeignObject` multiple `to_fields` and still causes SQLite to crash (probably because of the table rebuild).",
+      "issue_id": 25817,
+      "issue_title": "Unable to rename a field reference in foreign key 'to_field'",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-30T14:17:55",
+      "base_commit": "2faeb21d2f618d5bfe9f8f6c574730d3f9407b2a",
+      "changes": [
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_altered_fields",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_altered_fields(self):\n        \"\"\"\n        Make AlterField operations, or possibly RemovedField/AddField if alter\n        isn's possible.\n        \"\"\"\n        for app_label, model_name, field_name in sorted(self.old_field_keys & self.new_field_keys):\n            # Did the field change?\n            old_model_name = self.renamed_models.get((app_label, model_name), model_name)\n            old_field_name = self.renamed_fields.get((app_label, model_name, field_name), field_name)\n            old_field = self.old_apps.get_model(app_label, old_model_name)._meta.get_field(old_field_name)\n            new_field = self.new_apps.get_model(app_label, model_name)._meta.get_field(field_name)\n            # Implement any model renames on relations; these are handled by RenameModel\n            # so we need to exclude them from the comparison\n            if hasattr(new_field, \"remote_field\") and getattr(new_field.remote_field, \"model\", None):\n                rename_key = (\n                    new_field.remote_field.model._meta.app_label,\n                    new_field.remote_field.model._meta.model_name,\n                )\n                if rename_key in self.renamed_models:\n                    new_field.remote_field.model = old_field.remote_field.model\n            if hasattr(new_field, \"remote_field\") and getattr(new_field.remote_field, \"through\", None):\n                rename_key = (\n                    new_field.remote_field.through._meta.app_label,\n                    new_field.remote_field.through._meta.model_name,\n                )\n                if rename_key in self.renamed_models:\n                    new_field.remote_field.through = old_field.remote_field.through\n            old_field_dec = self.deep_deconstruct(old_field)\n            new_field_dec = self.deep_deconstruct(new_field)\n            if old_field_dec != new_field_dec:\n                both_m2m = old_field.many_to_many and new_field.many_to_many\n                neither_m2m = not old_field.many_to_many and not new_field.many_to_many\n                if both_m2m or neither_m2m:\n                    # Either both fields are m2m or neither is\n                    preserve_default = True\n                    if (old_field.null and not new_field.null and not new_field.has_default() and\n                            not new_field.many_to_many):\n                        field = new_field.clone()\n                        new_default = self.questioner.ask_not_null_alteration(field_name, model_name)\n                        if new_default is not models.NOT_PROVIDED:\n                            field.default = new_default\n                            preserve_default = False\n                    else:\n                        field = new_field\n                    self.add_operation(\n                        app_label,\n                        operations.AlterField(\n                            model_name=model_name,\n                            name=field_name,\n                            field=field,\n                            preserve_default=preserve_default,\n                        )\n                    )\n                else:\n                    # We cannot alter between m2m and concrete fields\n                    self._generate_removed_field(app_label, model_name, field_name)\n                    self._generate_added_field(app_label, model_name, field_name)"
+        },
+        {
+          "file": "django/db/migrations/operations/fields.py",
+          "type": "function",
+          "name": "state_forwards",
+          "class_name": "RenameField",
+          "code": "def state_forwards(self, app_label, state):\n        model_state = state.models[app_label, self.model_name_lower]\n        # Rename the field\n        fields = model_state.fields\n        for index, (name, field) in enumerate(fields):\n            if name == self.old_name:\n                fields[index] = (self.new_name, field)\n                # Delay rendering of relationships if it's not a relational\n                # field and not referenced by a foreign key.\n                delay = (\n                    not field.is_relation and\n                    not is_referenced_by_foreign_key(state, self.model_name_lower, field, self.name)\n                )\n                break\n        else:\n            raise FieldDoesNotExist(\n                \"%s.%s has no field named '%s'\" % (app_label, self.model_name, self.old_name)\n            )\n        # Fix index/unique_together to refer to the new field\n        options = model_state.options\n        for option in ('index_together', 'unique_together'):\n            if option in options:\n                options[option] = [\n                    [self.new_name if n == self.old_name else n for n in together]\n                    for together in options[option]\n                ]\n        state.reload_model(app_label, self.model_name_lower, delay=delay)"
+        },
+        {
+          "file": "django/db/migrations/operations/fields.py",
+          "type": "function",
+          "name": "state_forwards",
+          "class_name": "RenameField",
+          "code": "def state_forwards(self, app_label, state):\n        model_state = state.models[app_label, self.model_name_lower]\n        # Rename the field\n        fields = model_state.fields\n        for index, (name, field) in enumerate(fields):\n            if name == self.old_name:\n                fields[index] = (self.new_name, field)\n                # Delay rendering of relationships if it's not a relational\n                # field and not referenced by a foreign key.\n                delay = (\n                    not field.is_relation and\n                    not is_referenced_by_foreign_key(state, self.model_name_lower, field, self.name)\n                )\n                break\n        else:\n            raise FieldDoesNotExist(\n                \"%s.%s has no field named '%s'\" % (app_label, self.model_name, self.old_name)\n            )\n        # Fix index/unique_together to refer to the new field\n        options = model_state.options\n        for option in ('index_together', 'unique_together'):\n            if option in options:\n                options[option] = [\n                    [self.new_name if n == self.old_name else n for n in together]\n                    for together in options[option]\n                ]\n        state.reload_model(app_label, self.model_name_lower, delay=delay)"
+        },
+        {
+          "file": "django/db/migrations/operations/fields.py",
+          "type": "function",
+          "name": "state_forwards",
+          "class_name": "RenameField",
+          "code": "def state_forwards(self, app_label, state):\n        model_state = state.models[app_label, self.model_name_lower]\n        # Rename the field\n        fields = model_state.fields\n        for index, (name, field) in enumerate(fields):\n            if name == self.old_name:\n                fields[index] = (self.new_name, field)\n                # Delay rendering of relationships if it's not a relational\n                # field and not referenced by a foreign key.\n                delay = (\n                    not field.is_relation and\n                    not is_referenced_by_foreign_key(state, self.model_name_lower, field, self.name)\n                )\n                break\n        else:\n            raise FieldDoesNotExist(\n                \"%s.%s has no field named '%s'\" % (app_label, self.model_name, self.old_name)\n            )\n        # Fix index/unique_together to refer to the new field\n        options = model_state.options\n        for option in ('index_together', 'unique_together'):\n            if option in options:\n                options[option] = [\n                    [self.new_name if n == self.old_name else n for n in together]\n                    for together in options[option]\n                ]\n        state.reload_model(app_label, self.model_name_lower, delay=delay)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6178,
+      "pr_title": "Fixed #26186 -- Documented how app relative relationships of abstract models behave.",
+      "pr_body": "This partially reverts commit bc7d201bdbaeac14a49f51a9ef292d6312b4c45e.\n\nRefs #25858.\n",
+      "issue_id": 26186,
+      "issue_title": "When extending from abstract model, ForeignKey points to wrong application",
+      "issue_body": "",
+      "issue_closed_at": "2016-02-29T21:07:53",
+      "base_commit": "eac1423f9ebcf432dc5be95d605d124a05ab2686",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "line",
+          "name": "line 35",
+          "code": "RECURSIVE_RELATIONSHIP_CONSTANT = 'self'\n\n\ndef resolve_relation(scope_model, relation, resolve_recursive_relationship=True):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model."
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_relation",
+          "class_name": null,
+          "code": "def resolve_relation(scope_model, relation, resolve_recursive_relationship=True):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model.\n\n    The relation argument can be:\n      * RECURSIVE_RELATIONSHIP_CONSTANT, i.e. the string \"self\", in which case\n        the model argument will be returned.\n      * A bare model name without an app_label, in which case scope_model's\n        app_label will be prepended.\n      * An \"app_label.ModelName\" string.\n      * A model class, which will be returned unchanged.\n    \"\"\"\n    # Check for recursive relations\n    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:\n        if resolve_recursive_relationship:\n            relation = scope_model\n    # Look for an \"app.Model\" relation\n    elif isinstance(relation, six.string_types) and '.' not in relation:\n        relation = \"%s.%s\" % (scope_model._meta.app_label, relation)\n\n    return relation"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_related_class",
+          "class_name": "RelatedField",
+          "code": "def resolve_related_class(model, related, field):\n                field.remote_field.model = related\n                field.do_related_class(related, model)"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_through_model",
+          "class_name": "ManyToManyField",
+          "code": "def resolve_through_model(_, model, field):\n                    field.remote_field.through = model"
+        }
+      ]
+    },
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    }
+  ]
+}

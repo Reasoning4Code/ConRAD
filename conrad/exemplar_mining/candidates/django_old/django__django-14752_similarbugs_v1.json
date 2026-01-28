@@ -1,0 +1,159 @@
+{
+  "instance_id": "django__django-14752",
+  "repo": "django/django",
+  "created_at": "2021-08-07T16:34:32Z",
+  "problem_statement": "Refactor AutocompleteJsonView to support extra fields in autocomplete response\nDescription\n\t \n\t\t(last modified by mrts)\n\t \nAdding data attributes to items in ordinary non-autocomplete foreign key fields that use forms.widgets.Select-based widgets is relatively easy. This enables powerful and dynamic admin site customizations where fields from related models are updated immediately when users change the selected item.\nHowever, adding new attributes to autocomplete field results currently requires extending contrib.admin.views.autocomplete.AutocompleteJsonView and fully overriding the AutocompleteJsonView.get() method. Here's an example:\nclass MyModelAdmin(admin.ModelAdmin):\n\tdef get_urls(self):\n\t\treturn [\n\t\t\tpath('autocomplete/', CustomAutocompleteJsonView.as_view(admin_site=self.admin_site))\n\t\t\tif url.pattern.match('autocomplete/')\n\t\t\telse url for url in super().get_urls()\n\t\t]\nclass CustomAutocompleteJsonView(AutocompleteJsonView):\n\tdef get(self, request, *args, **kwargs):\n\t\tself.term, self.model_admin, self.source_field, to_field_name = self.process_request(request)\n\t\tif not self.has_perm(request):\n\t\t\traise PermissionDenied\n\t\tself.object_list = self.get_queryset()\n\t\tcontext = self.get_context_data()\n\t\treturn JsonResponse({\n\t\t\t'results': [\n\t\t\t\t{'id': str(getattr(obj, to_field_name)), 'text': str(obj), 'notes': obj.notes} # <-- customization here\n\t\t\t\tfor obj in context['object_list']\n\t\t\t],\n\t\t\t'pagination': {'more': context['page_obj'].has_next()},\n\t\t})\nThe problem with this is that as AutocompleteJsonView.get() keeps evolving, there's quite a lot of maintenance overhead required to catch up.\nThe solutions is simple, side-effect- and risk-free: adding a result customization extension point to get() by moving the lines that construct the results inside JsonResponse constructor to a separate method. So instead of\n\t\treturn JsonResponse({\n\t\t\t'results': [\n\t\t\t\t{'id': str(getattr(obj, to_field_name)), 'text': str(obj)}\n\t\t\t\tfor obj in context['object_list']\n\t\t\t],\n\t\t\t'pagination': {'more': context['page_obj'].has_next()},\n\t\t})\nthere would be\n\t\treturn JsonResponse({\n\t\t\t'results': [\n\t\t\t\tself.serialize_result(obj, to_field_name) for obj in context['object_list']\n\t\t\t],\n\t\t\t'pagination': {'more': context['page_obj'].has_next()},\n\t\t})\nwhere serialize_result() contains the original object to dictionary conversion code that would be now easy to override:\ndef serialize_result(self, obj, to_field_name):\n\treturn {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}\nThe example CustomAutocompleteJsonView from above would now become succinct and maintainable:\nclass CustomAutocompleteJsonView(AutocompleteJsonView):\n\tdef serialize_result(self, obj, to_field_name):\n\t\treturn super.serialize_result(obj, to_field_name) | {'notes': obj.notes}\nWhat do you think, is this acceptable? I'm more than happy to provide the patch.\n",
+  "patch": "diff --git a/django/contrib/admin/views/autocomplete.py b/django/contrib/admin/views/autocomplete.py\n--- a/django/contrib/admin/views/autocomplete.py\n+++ b/django/contrib/admin/views/autocomplete.py\n@@ -11,7 +11,8 @@ class AutocompleteJsonView(BaseListView):\n \n     def get(self, request, *args, **kwargs):\n         \"\"\"\n-        Return a JsonResponse with search results of the form:\n+        Return a JsonResponse with search results as defined in\n+        serialize_result(), by default:\n         {\n             results: [{id: \"123\" text: \"foo\"}],\n             pagination: {more: true}\n@@ -26,12 +27,19 @@ def get(self, request, *args, **kwargs):\n         context = self.get_context_data()\n         return JsonResponse({\n             'results': [\n-                {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}\n+                self.serialize_result(obj, to_field_name)\n                 for obj in context['object_list']\n             ],\n             'pagination': {'more': context['page_obj'].has_next()},\n         })\n \n+    def serialize_result(self, obj, to_field_name):\n+        \"\"\"\n+        Convert the provided model object to a dictionary that is added to the\n+        results list.\n+        \"\"\"\n+        return {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}\n+\n     def get_paginator(self, *args, **kwargs):\n         \"\"\"Use the ModelAdmin's paginator.\"\"\"\n         return self.model_admin.get_paginator(self.request, *args, **kwargs)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8213,
+      "pr_title": "Refs #27935 -- Fixed BrinIndex.max_name_length if a project's default database isn't PostgreSQL.",
+      "pr_body": "",
+      "issue_id": 27935,
+      "issue_title": "BrinIndex crashes if name  > 30 characters",
+      "issue_body": "",
+      "issue_closed_at": "2017-03-20T10:30:05",
+      "base_commit": "6cb0a3ac2836c044987f7a0cca0d1e99d52e002e",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from django.db import connection\nfrom django.db.models import Index\nfrom django.utils.functional import cached_property\n\n__all__ = ['BrinIndex', 'GinIndex']\n\n\nclass BrinIndex(Index):\n    suffix = 'brin'\n\n    def __init__(self, fields=[], name=None, pages_per_range=None):\n        if pages_per_range is not None and pages_per_range <= 0:"
+        },
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "function",
+          "name": "get_sql_create_template_values",
+          "class_name": "BrinIndex",
+          "code": "def get_sql_create_template_values(self, model, schema_editor, using):\n        parameters = super().get_sql_create_template_values(model, schema_editor, using=' USING brin')\n        if self.pages_per_range is not None:\n            parameters['extra'] = ' WITH (pages_per_range={})'.format(\n                schema_editor.quote_value(self.pages_per_range)) + parameters['extra']\n        return parameters"
+        }
+      ]
+    },
+    {
+      "pr_number": 14404,
+      "pr_title": " Fixed #32754 -- Made AdminSite.catch_all_view() respect SCRIPT_NAME.",
+      "pr_body": "",
+      "issue_id": 32754,
+      "issue_title": "catch_all_view() does not support FORCE_SCRIPT_NAME.",
+      "issue_body": "",
+      "issue_closed_at": "2021-05-18T02:58:51",
+      "base_commit": "de32fe83a2e4a20887972c69a0693b94eb25a88b",
+      "changes": [
+        {
+          "file": "django/contrib/admin/sites.py",
+          "type": "function",
+          "name": "autocomplete_view",
+          "class_name": "AdminSite",
+          "code": "def autocomplete_view(self, request):\n        return AutocompleteJsonView.as_view(admin_site=self)(request)"
+        }
+      ]
+    },
+    {
+      "pr_number": 7097,
+      "pr_title": "Fixed #27068 -- Unified form field initial data retrieval.",
+      "pr_body": "https://code.djangoproject.com/ticket/27068\n",
+      "issue_id": 27068,
+      "issue_title": "Acquire form's initial data more consistently",
+      "issue_body": "",
+      "issue_closed_at": "2016-08-18T19:51:32",
+      "base_commit": "13857b45ca54a519a58361238442af84262c0d23",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "value",
+          "class_name": "BoundField",
+          "code": "def value(self):\n        \"\"\"\n        Returns the value for this BoundField, using the initial value if\n        the form is not bound or the data otherwise.\n        \"\"\"\n        if not self.form.is_bound:\n            data = self.initial\n        else:\n            data = self.field.bound_data(\n                self.data, self.form.initial.get(self.name, self.field.initial)\n            )\n        return self.field.prepare_value(data)"
+        },
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "id_for_label",
+          "class_name": "BoundField",
+          "code": "def id_for_label(self):\n        \"\"\"\n        Wrapper around the field widget's `id_for_label` method.\n        Useful, for example, for focusing on this field regardless of whether\n        it has a single widget or a MultiWidget.\n        \"\"\"\n        widget = self.field.widget\n        id_ = widget.attrs.get('id') or self.auto_id\n        return widget.id_for_label(id_)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "_clean_fields",
+          "class_name": "BaseForm",
+          "code": "def _clean_fields(self):\n        for name, field in self.fields.items():\n            # value_from_datadict() gets the data from the data dictionaries.\n            # Each widget type knows how to retrieve its own data, because some\n            # widgets split data over several HTML fields.\n            if field.disabled:\n                value = self.initial.get(name, field.initial)\n            else:\n                value = field.widget.value_from_datadict(self.data, self.files, self.add_prefix(name))\n            try:\n                if isinstance(field, FileField):\n                    initial = self.initial.get(name, field.initial)\n                    value = field.clean(value, initial)\n                else:\n                    value = field.clean(value)\n                self.cleaned_data[name] = value\n                if hasattr(self, 'clean_%s' % name):\n                    value = getattr(self, 'clean_%s' % name)()\n                    self.cleaned_data[name] = value\n            except ValidationError as e:\n                self.add_error(name, e)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "changed_data",
+          "class_name": "BaseForm",
+          "code": "def changed_data(self):\n        data = []\n        for name, field in self.fields.items():\n            prefixed_name = self.add_prefix(name)\n            data_value = field.widget.value_from_datadict(self.data, self.files, prefixed_name)\n            if not field.show_hidden_initial:\n                initial_value = self.initial.get(name, field.initial)\n                if callable(initial_value):\n                    initial_value = initial_value()\n            else:\n                initial_prefixed_name = self.add_initial_prefix(name)\n                hidden_widget = field.hidden_widget()\n                try:\n                    initial_value = field.to_python(hidden_widget.value_from_datadict(\n                        self.data, self.files, initial_prefixed_name))\n                except ValidationError:\n                    # Always assume data has changed if validation fails.\n                    data.append(name)\n                    continue\n            if field.has_changed(initial_value, data_value):\n                data.append(name)\n        return data"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "visible_fields",
+          "class_name": "BaseForm",
+          "code": "def visible_fields(self):\n        \"\"\"\n        Returns a list of BoundField objects that aren't hidden fields.\n        The opposite of the hidden_fields() method.\n        \"\"\"\n        return [field for field in self if not field.is_hidden]"
+        }
+      ]
+    },
+    {
+      "pr_number": 9964,
+      "pr_title": "Fixed #29413 -- Prevented evaluation of QuerySet.get_or_create()/update_or_create() defaults unless needed.",
+      "pr_body": "https://code.djangoproject.com/ticket/29413",
+      "issue_id": 29413,
+      "issue_title": "QuerySet.get_or_create()/update_or_create() shouldn't evaluate lazy defaults unless they are needed",
+      "issue_body": "",
+      "issue_closed_at": "2018-07-16T21:09:12",
+      "base_commit": "4d48ddd8f93800a80330ec1dee7b7d4afe6ea95a",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "get_or_create",
+          "class_name": "QuerySet",
+          "code": "def get_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, creating one if necessary.\n        Return a tuple of (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        # The get() needs to be targeted at the write database in order\n        # to avoid potential transaction consistency problems.\n        self._for_write = True\n        try:\n            return self.get(**lookup), False\n        except self.model.DoesNotExist:\n            return self._create_object_from_params(lookup, params)"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "update_or_create",
+          "class_name": "QuerySet",
+          "code": "def update_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, updating one with defaults\n        if it exists, otherwise create a new one.\n        Return a tuple (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        defaults = defaults or {}\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        self._for_write = True\n        with transaction.atomic(using=self.db):\n            try:\n                obj = self.select_for_update().get(**lookup)\n            except self.model.DoesNotExist:\n                obj, created = self._create_object_from_params(lookup, params)\n                if created:\n                    return obj, created\n            for k, v in defaults.items():\n                setattr(obj, k, v() if callable(v) else v)\n            obj.save(using=self.db)\n        return obj, False"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_create_object_from_params",
+          "class_name": "QuerySet",
+          "code": "def _create_object_from_params(self, lookup, params):\n        \"\"\"\n        Try to create an object using passed params. Used by get_or_create()\n        and update_or_create().\n        \"\"\"\n        try:\n            with transaction.atomic(using=self.db):\n                params = {k: v() if callable(v) else v for k, v in params.items()}\n                obj = self.create(**params)\n            return obj, True\n        except IntegrityError as e:\n            try:\n                return self.get(**lookup), False\n            except self.model.DoesNotExist:\n                pass\n            raise e"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_extract_model_params",
+          "class_name": "QuerySet",
+          "code": "def _extract_model_params(self, defaults, **kwargs):\n        \"\"\"\n        Prepare `lookup` (kwargs that are valid model attributes), `params`\n        (for creating a model instance) based on given kwargs; for use by\n        get_or_create() and update_or_create().\n        \"\"\"\n        defaults = defaults or {}\n        lookup = kwargs.copy()\n        for f in self.model._meta.fields:\n            if f.attname in lookup:\n                lookup[f.name] = lookup.pop(f.attname)\n        params = {k: v for k, v in kwargs.items() if LOOKUP_SEP not in k}\n        params.update(defaults)\n        property_names = self.model._meta._property_names\n        invalid_params = []\n        for param in params:\n            try:\n                self.model._meta.get_field(param)\n            except exceptions.FieldDoesNotExist:\n                # It's okay to use a model's property if it has a setter.\n                if not (param in property_names and getattr(self.model, param).fset):\n                    invalid_params.append(param)\n        if invalid_params:\n            raise exceptions.FieldError(\n                \"Invalid field name(s) for model %s: '%s'.\" % (\n                    self.model._meta.object_name,\n                    \"', '\".join(sorted(invalid_params)),\n                ))\n        return lookup, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 8362,
+      "pr_title": "Fixed #28058 -- Restored empty BoundFields evaluating to True.",
+      "pr_body": "https://code.djangoproject.com/ticket/28058",
+      "issue_id": 28058,
+      "issue_title": "Empty Select widget (no choices) evaluates to False",
+      "issue_body": "",
+      "issue_closed_at": "2017-04-17T07:49:12",
+      "base_commit": "e5dce7b0fbd2965e524ce97114f501319ec2bb6f",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "subwidgets",
+          "class_name": "BoundField",
+          "code": "def subwidgets(self):\n        \"\"\"\n        Most widgets yield a single subwidget, but others like RadioSelect and\n        CheckboxSelectMultiple produce one subwidget for each choice.\n\n        This property is cached so that only one database query occurs when\n        rendering ModelChoiceFields.\n        \"\"\"\n        id_ = self.field.widget.attrs.get('id') or self.auto_id\n        attrs = {'id': id_} if id_ else {}\n        attrs = self.build_widget_attrs(attrs)\n        return list(\n            BoundWidget(self.field.widget, widget, self.form.renderer)\n            for widget in self.field.widget.subwidgets(self.html_name, self.value(), attrs=attrs)\n        )"
+        }
+      ]
+    }
+  ]
+}

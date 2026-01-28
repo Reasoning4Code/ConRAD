@@ -1,0 +1,124 @@
+{
+  "instance_id": "sympy__sympy-13177",
+  "repo": "sympy/sympy",
+  "created_at": "2017-08-22T20:28:20Z",
+  "problem_statement": "Mod(x**2, x) is not (always) 0\nWhen the base is not an integer, `x**2 % x` is not 0. The base is not tested to be an integer in Mod's eval logic:\r\n\r\n```\r\nif (p == q or p == -q or\r\n        p.is_Pow and p.exp.is_Integer and p.base == q or\r\n        p.is_integer and q == 1):\r\n    return S.Zero\r\n```\r\n\r\nso\r\n\r\n```\r\n>>> Mod(x**2, x)\r\n0\r\n```\r\nbut\r\n```\r\n>>> x = S(1.5)\r\n>>> Mod(x**2, x)\r\n0.75\r\n```\n",
+  "patch": "diff --git a/sympy/core/mod.py b/sympy/core/mod.py\n--- a/sympy/core/mod.py\n+++ b/sympy/core/mod.py\n@@ -39,7 +39,8 @@ def doit(p, q):\n             if p.is_infinite or q.is_infinite or p is nan or q is nan:\n                 return nan\n             if (p == q or p == -q or\n-                    p.is_Pow and p.exp.is_Integer and p.base == q or\n+                    p.is_Pow and p.exp.is_integer and p.base == q and q.is_integer\n+                    and p.exp.is_positive or\n                     p.is_integer and q == 1):\n                 return S.Zero\n \n",
+  "similar_bug_items": [
+    {
+      "pr_number": 12952,
+      "pr_title": "Fix addition of a quantity and a number",
+      "pr_body": "closes #12918\r\n\r\ncc @schymans ",
+      "issue_id": 12918,
+      "issue_title": "Addition of a quantity and a number does not raise an error",
+      "issue_body": "If I add two quantities with inconsistent units, sympy rightly returns an error:\r\n```\r\n>>> from sympy.physics.units import kilogram, kelvin\r\n>>> try: print kilogram + kelvin\r\n>>> except Exception, error: print error\r\nsummation of quantities of incompatible dimensions\r\n```\r\nHowever, if one of the terms is a number, no error is raised:\r\n```\r\n>>> try: print kilogram + 1.1\r\n>>> except Exception, error: print error\r\nkilogram + 1.1\r\n```\r\n\r\nIf I add two quantities, one of which does not have a dimension, an error is raised:\r\n```\r\n>>> from sympy.physics.units import Quantity, mass\r\n>>> try: print Quantity('x', mass, kilogram) + Quantity('y', S.One, 1.1)\r\n>>> except Exception, error: print error\r\nsummation of quantities of incompatible dimensions\r\n```\r\n\r\nIf I add a quantity and a number, no error is raised:\r\n```\r\n>>> try: print Quantity('x', mass, kilogram) + Number(1.1)\r\n>>> except Exception, error: print error\r\nx + 1.1\r\n```\r\nI believe that this is a bug, as numbers should be treated like dimensionless quantities whenever they are used alongside with quantities.\r\n",
+      "issue_closed_at": "2017-07-12T20:13:26Z",
+      "base_commit": "195061bd91f2e888e6449ec05f2caca140067fb2",
+      "changes": [
+        {
+          "file": "sympy/core/power.py",
+          "type": "function",
+          "name": "_eval_is_rational",
+          "class_name": "Pow",
+          "code": "def _eval_is_rational(self):\n        p = self.func(*self.as_base_exp())  # in case it's unevaluated\n        if not p.is_Pow:\n            return p.is_rational\n        b, e = p.as_base_exp()\n        if e.is_Rational and b.is_Rational:\n            # we didn't check that e is not an Integer\n            # because Rational**Integer autosimplifies\n            return False\n        if e.is_integer:\n            if b.is_rational:\n                if fuzzy_not(b.is_zero) or e.is_nonnegative:\n                    return True\n                if b == e:  # always rational, even for 0**0\n                    return True\n            elif b.is_irrational:\n                return e.is_zero"
+        },
+        {
+          "file": "sympy/core/power.py",
+          "type": "function",
+          "name": "_eval_is_algebraic",
+          "class_name": "Pow",
+          "code": "def _eval_is_algebraic(self):\n        if self.base.is_zero or (self.base - 1).is_zero:\n            return True\n        elif self.exp.is_rational:\n            if self.base.is_algebraic is False:\n                return self.exp.is_nonzero\n            return self.base.is_algebraic\n        elif self.base.is_algebraic and self.exp.is_algebraic:\n            if ((fuzzy_not(self.base.is_zero)\n                and fuzzy_not((self.base - 1).is_zero))\n                or self.base.is_integer is False\n                or self.base.is_irrational):\n                return self.exp.is_rational"
+        },
+        {
+          "file": "sympy/physics/units/quantities.py",
+          "type": "function",
+          "name": "_Quantity_constructor_postprocessor_Add",
+          "class_name": null,
+          "code": "def _Quantity_constructor_postprocessor_Add(expr):\n    # Construction postprocessor for the addition,\n    # checks for dimension mismatches of the addends, thus preventing\n    # expressions like `meter + second` to be created.\n\n    deset = {\n        tuple(sorted(Dimension(\n            Quantity.get_dimensional_expr(i)\n        ).get_dimensional_dependencies().items()))\n        for i in expr.args\n        if i.free_symbols == set()  # do not raise if there are symbols\n                    # (free symbols could contain the units corrections)\n        and not i.is_number\n    }\n    # If `deset` has more than one element, then some dimensions do not\n    # match in the sum:\n    if len(deset) > 1:\n        raise ValueError(\"summation of quantities of incompatible dimensions\")\n    return expr"
+        }
+      ]
+    },
+    {
+      "pr_number": 8223,
+      "pr_title": "Add _eval_simplify helper for AlgebraicNumber",
+      "pr_body": "fixes #4401\n",
+      "issue_id": 4401,
+      "issue_title": "Raising complex numbers to fractional powers",
+      "issue_body": "bc.. >>> simplify((3+4_I)__(Rational(3,2)))\n(3 + 4_I)**(3/2)\n\n> > > expand(_)\n> > > (3 + 4_I)_*(3/2)\n\nMathematica gives: 2 + 11 \\* I as the answer. Would be good if Sympy could do the same (so far as \nmathematics allows ;)\n\np. Original issue for \"#4401\":https://github.com/sympy/sympy/issues/4401: \"http://code.google.com/p/sympy/issues/detail?id=1302\":http://code.google.com/p/sympy/issues/detail?id=1302\n\np. Original author: \"https://code.google.com/u/111560553046880738986/\":https://code.google.com/u/111560553046880738986/\n\np. Original owner: \"https://code.google.com/u/111560553046880738986/\":https://code.google.com/u/111560553046880738986/\n",
+      "issue_closed_at": "2014-11-06T01:06:09Z",
+      "base_commit": "0cd829dc3e88d5b1f0fa76a73360f94d58926008",
+      "changes": [
+        {
+          "file": "sympy/core/numbers.py",
+          "type": "function",
+          "name": "to_algebraic_integer",
+          "class_name": "AlgebraicNumber",
+          "code": "def to_algebraic_integer(self):\n        \"\"\"Convert ``self`` to an algebraic integer. \"\"\"\n        f = self.minpoly\n\n        if f.LC() == 1:\n            return self\n\n        coeff = f.LC()**(f.degree() - 1)\n        poly = f.compose(C.Poly(f.gen/f.LC()))\n\n        minpoly = poly*coeff\n        root = f.LC()*self.root\n\n        return AlgebraicNumber((minpoly, root), self.coeffs())"
+        }
+      ]
+    },
+    {
+      "pr_number": 8548,
+      "pr_title": "Issue #6988: expand_log(exp(x), force=True) = x",
+      "pr_body": "This is a try to fix issue #6988. If I made some mistake just let me know, as I'm still new to sympy development.\n\n```\nIn [9]: expand_log(log(exp(x)), force=True)\nOut[9]: x\n\nIn [10]: expand_log(log(y**(x)), force=True)\nOut[10]: x\u22c5log(y)\n```\n",
+      "issue_id": 6988,
+      "issue_title": "expand_log(exp(x), force=True) should give x",
+      "issue_body": "```\nIn [5]: expand_log(log(exp(x)), force=True)\nOut[5]:\n   \u239b x\u239e\nlog\u239d\u212f \u23a0\n\nIn [6]: expand_log(log(y**(x)), force=True)\nOut[6]: x\u22c5log(y) Issue 1799 is probably to blame.\n```\n\nOriginal issue for #6988: http://code.google.com/p/sympy/issues/detail?id=3889\nOriginal author: https://code.google.com/u/asmeurer@gmail.com/\n",
+      "issue_closed_at": "2014-12-03T13:34:14Z",
+      "base_commit": "e6fc53f27ee872b27bc79b96529fc4bf34d4f023",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/exponential.py",
+          "type": "function",
+          "name": "_eval_expand_log",
+          "class_name": "log",
+          "code": "def _eval_expand_log(self, deep=True, **hints):\n        from sympy import unpolarify\n        from sympy.concrete import Sum, Product\n        force = hints.get('force', False)\n        arg = self.args[0]\n        if arg.is_Integer:\n            # remove perfect powers\n            p = perfect_power(int(arg))\n            if p is not False:\n                return p[1]*self.func(p[0])\n        elif arg.is_Mul:\n            expr = []\n            nonpos = []\n            for x in arg.args:\n                if force or x.is_positive or x.is_polar:\n                    a = self.func(x)\n                    if isinstance(a, log):\n                        expr.append(self.func(x)._eval_expand_log(**hints))\n                    else:\n                        expr.append(a)\n                elif x.is_negative:\n                    a = self.func(-x)\n                    expr.append(a)\n                    nonpos.append(S.NegativeOne)\n                else:\n                    nonpos.append(x)\n            return Add(*expr) + log(Mul(*nonpos))\n        elif arg.is_Pow:\n            if force or (arg.exp.is_real and arg.base.is_positive) or \\\n                    arg.base.is_polar:\n                b = arg.base\n                e = arg.exp\n                a = self.func(b)\n                if isinstance(a, log):\n                    return unpolarify(e) * a._eval_expand_log(**hints)\n                else:\n                    return unpolarify(e) * a\n        elif isinstance(arg, Product):\n            if arg.function.is_positive:\n                return Sum(log(arg.function), *arg.limits)\n\n        return self.func(arg)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8052,
+      "pr_title": "Revert \"simplify Mul._eval_is_even\"",
+      "pr_body": "This reverts commit 1b436d045107f610b51065e03eff0dbdf92e76c5.\n\nThis \"simplification\" produces loop, because Add._eval_is_odd\ncall in turn is_even property on Add's arguments.\n\nfixes #8050\n",
+      "issue_id": 8050,
+      "issue_title": "Build failure in master after merging #8044",
+      "issue_body": "Hate to be the bearer of bad news [but](https://travis-ci.org/sympy/sympy/builds/35446512)...\n\n``` bash\n============================= test process starts ==============================\nexecutable:         /home/travis/virtualenv/python2.6.9/bin/python  (2.6.9-final-0) [CPython]\narchitecture:       64-bit\ncache:              yes\nground types:       python \nrandom seed:        17472977\nhash randomization: on (PYTHONHASHSEED=2650512865)\nsplit:              1/4\nsympy/assumptions/tests/test_assumptions_2.py[5] .....                      [OK]\nsympy/assumptions/tests/test_context.py[4] ....                             [OK]\nsympy/assumptions/tests/test_matrices.py[19] ..........ff.......            [OK]\nsympy/assumptions/tests/test_query.py[57] ....fff.w.............................\n...................                                                         [OK]\nsympy/assumptions/tests/test_refine.py[6] ......                            [OK]\nsympy/calculus/tests/test_euler.py[5] .....                                 [OK]\nsympy/calculus/tests/test_finite_diff.py[3] ...                             [OK]\nsympy/calculus/tests/test_singularities.py[2] .f                            [OK]\nsympy/categories/tests/test_baseclasses.py[3] ...                           [OK]\nsympy/categories/tests/test_drawing.py[8] ........                          [OK]\nsympy/combinatorics/tests/test_generators.py[1] .                           [OK]\nsympy/combinatorics/tests/test_graycode.py[1] .                             [OK]\nsympy/combinatorics/tests/test_group_constructs.py[1] .                     [OK]\nsympy/combinatorics/tests/test_named_groups.py[5] .....                     [OK]\nsympy/combinatorics/tests/test_partitions.py[3] ...                         [OK]\nsympy/combinatorics/tests/test_perm_groups.py[38] .....ff.......................\n........                                                                    [OK]\nsympy/combinatorics/tests/test_permutations.py[7] .......                   [OK]\nsympy/combinatorics/tests/test_polyhedron.py[1] .                           [OK]\nsympy/combinatorics/tests/test_prufer.py[2] ..                              [OK]\nsympy/combinatorics/tests/test_subsets.py[1] .                              [OK]\nsympy/combinatorics/tests/test_tensor_can.py[12] ....f.......               [OK]\nsympy/combinatorics/tests/test_testutil.py[5] .....                         [OK]\nsympy/combinatorics/tests/test_util.py[8] ........                          [OK]\nsympy/concrete/tests/test_delta.py[26] ..........................           [OK]\nsympy/concrete/tests/test_gosper.py[11] ...........                         [OK]\nsympy/concrete/tests/test_products.py[16] ................                  [OK]\nsympy/concrete/tests/test_sums_products.py[48] .................................\n...............                                                             [OK]\nsympy/core/tests/test_args.py[625] ....ffffffffffffffffff.fffffff.ssssssssssssss\nssssssssssssssssssssssssssssssssss..............................................\n................................................................................\n................................................................................\n................................................................................\n................................................................................\n................................................................................\n................................................................................\n....................                                                        [OK]\nsympy/core/tests/test_arit.py[71] .....ff............F..........................\n.........................                                                 [FAIL]\n```\n\namong others\n",
+      "issue_closed_at": "2014-09-17T11:55:20Z",
+      "base_commit": "f69f6b514ca0075c94448c80731b1590f5445647",
+      "changes": [
+        {
+          "file": "sympy/core/mul.py",
+          "type": "function",
+          "name": "_eval_is_odd",
+          "class_name": "Mul",
+          "code": "def _eval_is_odd(self):\n        is_integer = self.is_integer\n\n        if is_integer:\n            r, acc = True, 1\n            for t in self.args:\n                if not t.is_integer:\n                    return None\n                elif t.is_even:\n                    r = False\n                elif t.is_integer:\n                    if r is False:\n                        pass\n                    elif acc != 1 and (acc + t).is_odd:\n                        r = False\n                    elif t.is_odd is None:\n                        r = None\n                acc = t\n            return r\n\n        # !integer -> !odd\n        elif is_integer is False:\n            return False"
+        }
+      ]
+    },
+    {
+      "pr_number": 12882,
+      "pr_title": "Checker functions for orthogonality of coordinate system",
+      "pr_body": "This PR introduce additional condition for transformation equation which must be fulfill. \r\nIn `vector` module we are dealing with orthogonal curvilinear coordinate system only, so we need to check if transformation equations are correctly defined.\r\n\r\nCloses #12852",
+      "issue_id": 12852,
+      "issue_title": "Vector module: make sure that the base vectors remain orthogonal",
+      "issue_body": "Given a generic transformation equation, make sure that the base vectors remain orthogonal, if not, raise an exception.",
+      "issue_closed_at": "2017-07-05T15:10:49Z",
+      "base_commit": "c87c0fbf1223c28db8590f2591f64db75d5bdd66",
+      "changes": [
+        {
+          "file": "sympy/vector/coordsysrect.py",
+          "type": "line",
+          "name": "line 4",
+          "code": "from sympy.core.cache import cacheit\nfrom sympy.core import S\nfrom sympy.vector.scalar import BaseScalar\nfrom sympy import eye, trigsimp, ImmutableMatrix as Matrix, Symbol, sin, cos, sqrt, diff, Tuple\nimport sympy.vector\nfrom sympy import simplify\nfrom sympy.vector.orienters import (Orienter, AxisOrienter, BodyOrienter,"
+        },
+        {
+          "file": "sympy/vector/coordsysrect.py",
+          "type": "function",
+          "name": "_connect_to_standard_cartesian",
+          "class_name": "CoordSys3D",
+          "code": "def _connect_to_standard_cartesian(self, curv_coord_type):\n        \"\"\"\n        Change the type of orthogonal curvilinear system. It could be done\n        by tuple of transformation equations or by choosing one of pre-defined\n        coordinate system.\n\n        Parameters\n        ==========\n\n        :param curv_coord_type: str, tuple\n\n        \"\"\"\n        if isinstance(curv_coord_type, string_types):\n            self._set_transformation_equations_mapping(curv_coord_type)\n            self._set_lame_coefficient_mapping(curv_coord_type)\n\n        elif isinstance(curv_coord_type, (tuple, list, Tuple)) and len(curv_coord_type) == 3:\n            self._transformation_eqs = curv_coord_type\n            self._h1, self._h2, self._h3 = self._calculate_lame_coefficients(curv_coord_type)\n\n        elif isinstance(curv_coord_type, (tuple, list, Tuple)) and len(curv_coord_type) == 2:\n            self._transformation_eqs = \\\n            tuple([eq.subs({curv_coord_type[0][0]: self.x,\n                            curv_coord_type[0][1]: self.y,\n                            curv_coord_type[0][2]: self.z}) for eq in curv_coord_type[1]])\n            self._h1, self._h2, self._h3 = self._calculate_lame_coefficients(self._transformation_equations())\n\n        else:\n            raise ValueError(\"Wrong set of parameter.\")"
+        }
+      ]
+    }
+  ]
+}

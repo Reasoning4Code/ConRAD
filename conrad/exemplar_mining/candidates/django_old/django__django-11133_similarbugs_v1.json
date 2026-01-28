@@ -1,0 +1,165 @@
+{
+  "instance_id": "django__django-11133",
+  "repo": "django/django",
+  "created_at": "2019-03-27T06:48:09Z",
+  "problem_statement": "HttpResponse doesn't handle memoryview objects\nDescription\n\t\nI am trying to write a BinaryField retrieved from the database into a HttpResponse. When the database is Sqlite this works correctly, but Postgresql returns the contents of the field as a memoryview object and it seems like current Django doesn't like this combination:\nfrom django.http import HttpResponse\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t \n# String content\nresponse = HttpResponse(\"My Content\")\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\nresponse.content\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t \n# Out: b'My Content'\n# This is correct\n# Bytes content\nresponse = HttpResponse(b\"My Content\")\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t \nresponse.content\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t \n# Out: b'My Content'\n# This is also correct\n# memoryview content\nresponse = HttpResponse(memoryview(b\"My Content\"))\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t \nresponse.content\n# Out: b'<memory at 0x7fcc47ab2648>'\n# This is not correct, I am expecting b'My Content'\n",
+  "patch": "diff --git a/django/http/response.py b/django/http/response.py\n--- a/django/http/response.py\n+++ b/django/http/response.py\n@@ -229,7 +229,7 @@ def make_bytes(self, value):\n         # Handle string types -- we can't rely on force_bytes here because:\n         # - Python attempts str conversion first\n         # - when self._charset != 'utf-8' it re-encodes the content\n-        if isinstance(value, bytes):\n+        if isinstance(value, (bytes, memoryview)):\n             return bytes(value)\n         if isinstance(value, str):\n             return bytes(value.encode(self.charset))\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10781,
+      "pr_title": "Fixed #30054 -- Implemented cascaded flush on SQLite.",
+      "pr_body": "This is required to maintain foreign key integrity when using the `TransactionTestCase.available_apps` feature.\r\n\r\nRefs [#30033](https://code.djangoproject.com/ticket/30033), [#14204](https://code.djangoproject.com/ticket/14204), [#20483](https://code.djangoproject.com/ticket/20483).",
+      "issue_id": 30054,
+      "issue_title": "SQLite doesn't implement cascading flush and breaks available_apps feature.",
+      "issue_body": "",
+      "issue_closed_at": "2018-12-22T16:48:11",
+      "base_commit": "790d108c97f0cf9caa02c72791f2bf158d308fcd",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/operations.py",
+          "type": "function",
+          "name": "no_limit_value",
+          "class_name": "DatabaseOperations",
+          "code": "def no_limit_value(self):\n        return -1"
+        },
+        {
+          "file": "django/db/backends/sqlite3/operations.py",
+          "type": "function",
+          "name": "sql_flush",
+          "class_name": "DatabaseOperations",
+          "code": "def sql_flush(self, style, tables, sequences, allow_cascade=False):\n        sql = ['%s %s %s;' % (\n            style.SQL_KEYWORD('DELETE'),\n            style.SQL_KEYWORD('FROM'),\n            style.SQL_FIELD(self.quote_name(table))\n        ) for table in tables]\n        # Note: No requirement for reset of auto-incremented indices (cf. other\n        # sql_flush() implementations). Just return SQL at this point\n        return sql"
+        }
+      ]
+    },
+    {
+      "pr_number": 10537,
+      "pr_title": "Fixed #29721 -- Ensured migrations are applied and recorded atomically.",
+      "pr_body": "cc @carltongibson \r\n\r\nThanks @ubernostrum for helping during DjangoCon US sprints :)",
+      "issue_id": 29721,
+      "issue_title": "Migrations are not applied atomically",
+      "issue_body": "",
+      "issue_closed_at": "2018-10-24T19:00:32",
+      "base_commit": "32da3cfdf9f25e0a21c0376e94067795380abeae",
+      "changes": [
+        {
+          "file": "django/db/migrations/executor.py",
+          "type": "function",
+          "name": "collect_sql",
+          "class_name": "MigrationExecutor",
+          "code": "def collect_sql(self, plan):\n        \"\"\"\n        Take a migration plan and return a list of collected SQL statements\n        that represent the best-efforts version of that plan.\n        \"\"\"\n        statements = []\n        state = None\n        for migration, backwards in plan:\n            with self.connection.schema_editor(collect_sql=True, atomic=migration.atomic) as schema_editor:\n                if state is None:\n                    state = self.loader.project_state((migration.app_label, migration.name), at_end=False)\n                if not backwards:\n                    state = migration.apply(state, schema_editor, collect_sql=True)\n                else:\n                    state = migration.unapply(state, schema_editor, collect_sql=True)\n            statements.extend(schema_editor.collected_sql)\n        return statements"
+        },
+        {
+          "file": "django/db/migrations/executor.py",
+          "type": "function",
+          "name": "apply_migration",
+          "class_name": "MigrationExecutor",
+          "code": "def apply_migration(self, state, migration, fake=False, fake_initial=False):\n        \"\"\"Run a migration forwards.\"\"\"\n        if self.progress_callback:\n            self.progress_callback(\"apply_start\", migration, fake)\n        if not fake:\n            if fake_initial:\n                # Test to see if this is an already-applied initial migration\n                applied, state = self.detect_soft_applied(state, migration)\n                if applied:\n                    fake = True\n            if not fake:\n                # Alright, do it normally\n                with self.connection.schema_editor(atomic=migration.atomic) as schema_editor:\n                    state = migration.apply(state, schema_editor)\n        # For replacement migrations, record individual statuses\n        if migration.replaces:\n            for app_label, name in migration.replaces:\n                self.recorder.record_applied(app_label, name)\n        else:\n            self.recorder.record_applied(migration.app_label, migration.name)\n        # Report progress\n        if self.progress_callback:\n            self.progress_callback(\"apply_success\", migration, fake)\n        return state"
+        }
+      ]
+    },
+    {
+      "pr_number": 9964,
+      "pr_title": "Fixed #29413 -- Prevented evaluation of QuerySet.get_or_create()/update_or_create() defaults unless needed.",
+      "pr_body": "https://code.djangoproject.com/ticket/29413",
+      "issue_id": 29413,
+      "issue_title": "QuerySet.get_or_create()/update_or_create() shouldn't evaluate lazy defaults unless they are needed",
+      "issue_body": "",
+      "issue_closed_at": "2018-07-16T21:09:12",
+      "base_commit": "4d48ddd8f93800a80330ec1dee7b7d4afe6ea95a",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "get_or_create",
+          "class_name": "QuerySet",
+          "code": "def get_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, creating one if necessary.\n        Return a tuple of (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        # The get() needs to be targeted at the write database in order\n        # to avoid potential transaction consistency problems.\n        self._for_write = True\n        try:\n            return self.get(**lookup), False\n        except self.model.DoesNotExist:\n            return self._create_object_from_params(lookup, params)"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "update_or_create",
+          "class_name": "QuerySet",
+          "code": "def update_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, updating one with defaults\n        if it exists, otherwise create a new one.\n        Return a tuple (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        defaults = defaults or {}\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        self._for_write = True\n        with transaction.atomic(using=self.db):\n            try:\n                obj = self.select_for_update().get(**lookup)\n            except self.model.DoesNotExist:\n                obj, created = self._create_object_from_params(lookup, params)\n                if created:\n                    return obj, created\n            for k, v in defaults.items():\n                setattr(obj, k, v() if callable(v) else v)\n            obj.save(using=self.db)\n        return obj, False"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_create_object_from_params",
+          "class_name": "QuerySet",
+          "code": "def _create_object_from_params(self, lookup, params):\n        \"\"\"\n        Try to create an object using passed params. Used by get_or_create()\n        and update_or_create().\n        \"\"\"\n        try:\n            with transaction.atomic(using=self.db):\n                params = {k: v() if callable(v) else v for k, v in params.items()}\n                obj = self.create(**params)\n            return obj, True\n        except IntegrityError as e:\n            try:\n                return self.get(**lookup), False\n            except self.model.DoesNotExist:\n                pass\n            raise e"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_extract_model_params",
+          "class_name": "QuerySet",
+          "code": "def _extract_model_params(self, defaults, **kwargs):\n        \"\"\"\n        Prepare `lookup` (kwargs that are valid model attributes), `params`\n        (for creating a model instance) based on given kwargs; for use by\n        get_or_create() and update_or_create().\n        \"\"\"\n        defaults = defaults or {}\n        lookup = kwargs.copy()\n        for f in self.model._meta.fields:\n            if f.attname in lookup:\n                lookup[f.name] = lookup.pop(f.attname)\n        params = {k: v for k, v in kwargs.items() if LOOKUP_SEP not in k}\n        params.update(defaults)\n        property_names = self.model._meta._property_names\n        invalid_params = []\n        for param in params:\n            try:\n                self.model._meta.get_field(param)\n            except exceptions.FieldDoesNotExist:\n                # It's okay to use a model's property if it has a setter.\n                if not (param in property_names and getattr(self.model, param).fset):\n                    invalid_params.append(param)\n        if invalid_params:\n            raise exceptions.FieldError(\n                \"Invalid field name(s) for model %s: '%s'.\" % (\n                    self.model._meta.object_name,\n                    \"', '\".join(sorted(invalid_params)),\n                ))\n        return lookup, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 9112,
+      "pr_title": "Fixed #27846 -- clear all cached reverse relationships on refresh_from_db()",
+      "pr_body": "https://code.djangoproject.com/ticket/27846",
+      "issue_id": 27846,
+      "issue_title": "refresh_from_db() doesn't clear reverse OneToOneFields",
+      "issue_body": "",
+      "issue_closed_at": "2017-10-12T16:25:22",
+      "base_commit": "df0aebc893973c78d7d2cda712ba4133dbe29b6e",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "refresh_from_db",
+          "class_name": "Model",
+          "code": "def refresh_from_db(self, using=None, fields=None):\n        \"\"\"\n        Reload field values from the database.\n\n        By default, the reloading happens from the database this instance was\n        loaded from, or by the read router if this instance wasn't loaded from\n        any database. The using parameter will override the default.\n\n        Fields can be used to specify which fields to reload. The fields\n        should be an iterable of field attnames. If fields is None, then\n        all non-deferred fields are reloaded.\n\n        When accessing deferred fields of an instance, the deferred loading\n        of the field will call this method.\n        \"\"\"\n        if fields is not None:\n            if len(fields) == 0:\n                return\n            if any(LOOKUP_SEP in f for f in fields):\n                raise ValueError(\n                    'Found \"%s\" in fields argument. Relations and transforms '\n                    'are not allowed in fields.' % LOOKUP_SEP)\n\n        db = using if using is not None else self._state.db\n        db_instance_qs = self.__class__._default_manager.using(db).filter(pk=self.pk)\n\n        # Use provided fields, if not set then reload all non-deferred fields.\n        deferred_fields = self.get_deferred_fields()\n        if fields is not None:\n            fields = list(fields)\n            db_instance_qs = db_instance_qs.only(*fields)\n        elif deferred_fields:\n            fields = [f.attname for f in self._meta.concrete_fields\n                      if f.attname not in deferred_fields]\n            db_instance_qs = db_instance_qs.only(*fields)\n\n        db_instance = db_instance_qs.get()\n        non_loaded_fields = db_instance.get_deferred_fields()\n        for field in self._meta.concrete_fields:\n            if field.attname in non_loaded_fields:\n                # This field wasn't refreshed - skip ahead.\n                continue\n            setattr(self, field.attname, getattr(db_instance, field.attname))\n            # Throw away stale foreign key references.\n            if field.is_relation and field.is_cached(self):\n                rel_instance = field.get_cached_value(self)\n                local_val = getattr(db_instance, field.attname)\n                related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)\n                if local_val != related_val or (local_val is None and related_val is None):\n                    field.delete_cached_value(self)\n        self._state.db = db_instance._state.db"
+        }
+      ]
+    },
+    {
+      "pr_number": 8754,
+      "pr_title": "Fixed #28391 -- Fixed Cast() with CharField and max_length on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/28391",
+      "issue_id": 28391,
+      "issue_title": "Cast doesn't take into account CharField's max_length on MySQL.",
+      "issue_body": "",
+      "issue_closed_at": "2017-07-17T14:12:39",
+      "base_commit": "feeafdad02e2874e2e2f879a825d3527f6b193ad",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite cannot handle us only partially reading from a cursor's result set\n    # and then writing the same rows to the database in another cursor. This\n    # setting ensures we always read result sets fully into memory all in one\n    # go.\n    can_use_chunked_reads = False\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    has_bulk_insert = True\n    supports_column_check_constraints = False\n    autocommits_when_autocommit_is_off = True\n    can_introspect_decimal_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n\n    @cached_property\n    def uses_savepoints(self):\n        return Database.sqlite_version_info >= (3, 6, 8)\n\n    @cached_property\n    def supports_index_column_ordering(self):\n        return Database.sqlite_version_info >= (3, 3, 0)\n\n    @cached_property\n    def can_release_savepoints(self):\n        return self.uses_savepoints\n\n    @cached_property\n    def can_share_in_memory_db(self):\n        return (\n            Database.__name__ == 'sqlite3.dbapi2' and\n            Database.sqlite_version_info >= (3, 7, 13)\n        )\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "clean",
+          "class_name": "Field",
+          "code": "def clean(self, value, model_instance):\n        \"\"\"\n        Convert the value's type and run validation. Validation errors\n        from to_python() and validate() are propagated. Return the correct\n        value if no error is raised.\n        \"\"\"\n        value = self.to_python(value)\n        self.validate(value, model_instance)\n        self.run_validators(value)\n        return value"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "db_type",
+          "class_name": "Field",
+          "code": "def db_type(self, connection):\n        \"\"\"\n        Return the database column data type for this field, for the provided\n        connection.\n        \"\"\"\n        # The default implementation of this method looks at the\n        # backend-specific data_types dictionary, looking up the field by its\n        # \"internal type\".\n        #\n        # A Field class can implement the get_internal_type() method to specify\n        # which *preexisting* Django Field class it's most similar to -- i.e.,\n        # a custom field might be represented by a TEXT column type, which is\n        # the same as the TextField Django field type, which means the custom\n        # field's get_internal_type() returns 'TextField'.\n        #\n        # But the limitation of the get_internal_type() / data_types approach\n        # is that it cannot handle database column types that aren't already\n        # mapped to one of the built-in Django field types. In this case, you\n        # can implement db_type() instead of get_internal_type() to specify\n        # exactly which wacky database column type you want to use.\n        data = DictWrapper(self.__dict__, connection.ops.quote_name, \"qn_\")\n        try:\n            return connection.data_types[self.get_internal_type()] % data\n        except KeyError:\n            return None"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "class",
+          "name": "Cast",
+          "code": "class Cast(Func):\n    \"\"\"Coerce an expression to a new field type.\"\"\"\n    function = 'CAST'\n    template = '%(function)s(%(expressions)s AS %(db_type)s)'\n\n    mysql_types = {\n        fields.CharField: 'char',\n        fields.IntegerField: 'signed integer',\n        fields.BigIntegerField: 'signed integer',\n        fields.SmallIntegerField: 'signed integer',\n        fields.FloatField: 'signed',\n        fields.PositiveIntegerField: 'unsigned integer',\n        fields.PositiveSmallIntegerField: 'unsigned integer',\n    }\n\n    def __init__(self, expression, output_field):\n        super().__init__(expression, output_field=output_field)\n\n    def as_sql(self, compiler, connection, **extra_context):\n        if 'db_type' not in extra_context:\n            extra_context['db_type'] = self.output_field.db_type(connection)\n        return super().as_sql(compiler, connection, **extra_context)\n\n    def as_mysql(self, compiler, connection):\n        extra_context = {}\n        output_field_class = type(self.output_field)\n        if output_field_class in self.mysql_types:\n            extra_context['db_type'] = self.mysql_types[output_field_class]\n        return self.as_sql(compiler, connection, **extra_context)\n\n    def as_postgresql(self, compiler, connection):\n        # CAST would be valid too, but the :: shortcut syntax is more readable.\n        return self.as_sql(compiler, connection, template='%(expressions)s::%(db_type)s')"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "function",
+          "name": "as_mysql",
+          "class_name": "Length",
+          "code": "def as_mysql(self, compiler, connection):\n        return super().as_sql(compiler, connection, function='CHAR_LENGTH')"
+        }
+      ]
+    }
+  ]
+}

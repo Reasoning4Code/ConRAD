@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+env/
+
+# Environment
+.env
+
+# Large or generated directories
+conrad/exemplar_mining/result_llm_judge/
+result_llm_judge/
+
+# VSCode
+.vscode/

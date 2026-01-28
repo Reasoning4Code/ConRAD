@@ -1,0 +1,146 @@
+{
+  "instance_id": "sympy__sympy-17630",
+  "repo": "sympy/sympy",
+  "created_at": "2019-09-18T22:56:31Z",
+  "problem_statement": "Exception when multiplying BlockMatrix containing ZeroMatrix blocks\nWhen a block matrix with zero blocks is defined\r\n\r\n```\r\n>>> from sympy import *\r\n>>> a = MatrixSymbol(\"a\", 2, 2)\r\n>>> z = ZeroMatrix(2, 2)\r\n>>> b = BlockMatrix([[a, z], [z, z]])\r\n```\r\n\r\nthen block-multiplying it once seems to work fine:\r\n\r\n```\r\n>>> block_collapse(b * b)\r\nMatrix([\r\n[a**2, 0],\r\n[0, 0]])\r\n>>> b._blockmul(b)\r\nMatrix([\r\n[a**2, 0],\r\n[0, 0]])\r\n```\r\n\r\nbut block-multiplying twice throws an exception:\r\n\r\n```\r\n>>> block_collapse(b * b * b)\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/matrices/expressions/blockmatrix.py\", line 297, in block_collapse\r\n    result = rule(expr)\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/strategies/core.py\", line 11, in exhaustive_rl\r\n    new, old = rule(expr), expr\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/strategies/core.py\", line 44, in chain_rl\r\n    expr = rule(expr)\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/strategies/core.py\", line 11, in exhaustive_rl\r\n    new, old = rule(expr), expr\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/strategies/core.py\", line 33, in conditioned_rl\r\n    return rule(expr)\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/strategies/core.py\", line 95, in switch_rl\r\n    return rl(expr)\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/matrices/expressions/blockmatrix.py\", line 361, in bc_matmul\r\n    matrices[i] = A._blockmul(B)\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/matrices/expressions/blockmatrix.py\", line 91, in _blockmul\r\n    self.colblocksizes == other.rowblocksizes):\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/matrices/expressions/blockmatrix.py\", line 80, in colblocksizes\r\n    return [self.blocks[0, i].cols for i in range(self.blockshape[1])]\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/matrices/expressions/blockmatrix.py\", line 80, in <listcomp>\r\n    return [self.blocks[0, i].cols for i in range(self.blockshape[1])]\r\nAttributeError: 'Zero' object has no attribute 'cols'\r\n>>> b._blockmul(b)._blockmul(b)\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/matrices/expressions/blockmatrix.py\", line 91, in _blockmul\r\n    self.colblocksizes == other.rowblocksizes):\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/matrices/expressions/blockmatrix.py\", line 80, in colblocksizes\r\n    return [self.blocks[0, i].cols for i in range(self.blockshape[1])]\r\n  File \"/home/jan/.pyenv/versions/3.7.4/lib/python3.7/site-packages/sympy/matrices/expressions/blockmatrix.py\", line 80, in <listcomp>\r\n    return [self.blocks[0, i].cols for i in range(self.blockshape[1])]\r\nAttributeError: 'Zero' object has no attribute 'cols'\r\n```\r\n\r\nThis seems to be caused by the fact that the zeros in `b._blockmul(b)` are not `ZeroMatrix` but `Zero`:\r\n\r\n```\r\n>>> type(b._blockmul(b).blocks[0, 1])\r\n<class 'sympy.core.numbers.Zero'>\r\n```\r\n\r\nHowever, I don't understand SymPy internals well enough to find out why this happens. I use Python 3.7.4 and sympy 1.4 (installed with pip).\n",
+  "patch": "diff --git a/sympy/matrices/expressions/matexpr.py b/sympy/matrices/expressions/matexpr.py\n--- a/sympy/matrices/expressions/matexpr.py\n+++ b/sympy/matrices/expressions/matexpr.py\n@@ -627,6 +627,8 @@ def _postprocessor(expr):\n                 # manipulate them like non-commutative scalars.\n                 return cls._from_args(nonmatrices + [mat_class(*matrices).doit(deep=False)])\n \n+        if mat_class == MatAdd:\n+            return mat_class(*matrices).doit(deep=False)\n         return mat_class(cls._from_args(nonmatrices), *matrices).doit(deep=False)\n     return _postprocessor\n \n",
+  "similar_bug_items": [
+    {
+      "pr_number": 13437,
+      "pr_title": "Fix bell(n) for n=oo, and negative/non-integer 'n'",
+      "pr_body": "This PR uses commits of #9198 (maintaining ownership to original author). And tries to address the requested changes on PR #9198 .\r\nFixes #9184",
+      "issue_id": 9184,
+      "issue_title": "bell(n).limit(n, oo) should be oo rather than bell(oo)",
+      "issue_body": "`bell(n).limit(n,oo)` should take the value infinity, but the current output is `bell(oo)`. As the Bell numbers represent the number of partitions of a set, it seems natural that `bell(oo)` should be able to be evaluated rather than be returned unevaluated. This issue is also in line with the recent fixes to the corresponding limit for the Fibonacci numbers and Lucas numbers.\n\n```\nfrom sympy import *\nn = symbols('n')\nbell(n).limit(n,oo)\n\nOutput:\nbell(oo)\n```\n\nI'm new to Sympy, so I'd appreciate the opportunity to fix this bug myself if that's alright.\n",
+      "issue_closed_at": "2017-10-13T04:35:13Z",
+      "base_commit": "674afc619d7f5c519b6a5393a8b0532a131e57e0",
+      "changes": [
+        {
+          "file": "sympy/functions/combinatorial/numbers.py",
+          "type": "function",
+          "name": "_bell_incomplete_poly",
+          "class_name": "bell",
+          "code": "def _bell_incomplete_poly(n, k, symbols):\n        r\"\"\"\n        The second kind of Bell polynomials (incomplete Bell polynomials).\n\n        Calculated by recurrence formula:\n\n        .. math:: B_{n,k}(x_1, x_2, \\dotsc, x_{n-k+1}) =\n                \\sum_{m=1}^{n-k+1}\n                \\x_m \\binom{n-1}{m-1} B_{n-m,k-1}(x_1, x_2, \\dotsc, x_{n-m-k})\n\n        where\n            B_{0,0} = 1;\n            B_{n,0} = 0; for n>=1\n            B_{0,k} = 0; for k>=1\n\n        \"\"\"\n        if (n == 0) and (k == 0):\n            return S.One\n        elif (n == 0) or (k == 0):\n            return S.Zero\n        s = S.Zero\n        a = S.One\n        for m in range(1, n - k + 2):\n            s += a * bell._bell_incomplete_poly(\n                n - m, k - 1, symbols) * symbols[m - 1]\n            a = a * (n - m) / m\n        return expand_mul(s)"
+        }
+      ]
+    },
+    {
+      "pr_number": 11947,
+      "pr_title": "aligned middle of matrix with baseline",
+      "pr_body": "**Previous Output**: \r\n\r\n```\r\n>>> Z = Matrix(5,5, lambda i,j: i+j)\r\n>>> pprint(MatMul(2,Z))\r\n2\u22c5\u23a10  1  2  3  4\u23a4\r\n  \u23a2             \u23a5\r\n  \u23a21  2  3  4  5\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a22  3  4  5  6\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a23  4  5  6  7\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a34  5  6  7  8\u23a6\r\n```\r\n\r\n**Output after this PR**:\r\n```\r\n>>> Z = Matrix(5,5, lambda i,j: i+j)\r\n>>> pprint(MatMul(2,Z))\r\n  \u23a10  1  2  3  4\u23a4\r\n  \u23a2             \u23a5\r\n  \u23a21  2  3  4  5\u23a5\r\n  \u23a2             \u23a5\r\n2.\u23a22  3  4  5  6\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a23  4  5  6  7\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a34  5  6  7  8\u23a6\r\n```\r\nFixes #10472 . ",
+      "issue_id": 10472,
+      "issue_title": "pprint should align the middle of the matrix to the baseline?",
+      "issue_body": "Consider the current behaviour, where operators align with the top of the matrix:\n\n```\n>>> Z = Matrix(5,5, lambda i,j: i+j)\n>>> pprint(MatMul(2,Z))\n2\u22c5\u23a10  1  2  3  4\u23a4\n  \u23a2             \u23a5\n  \u23a21  2  3  4  5\u23a5\n  \u23a2             \u23a5\n  \u23a22  3  4  5  6\u23a5\n  \u23a2             \u23a5\n  \u23a23  4  5  6  7\u23a5\n  \u23a2             \u23a5\n  \u23a34  5  6  7  8\u23a6\n>>> pprint(MatAdd(Z,Z))\n\u23a10  1  2  3  4\u23a4 + \u23a10  1  2  3  4\u23a4\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a21  2  3  4  5\u23a5   \u23a21  2  3  4  5\u23a5\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a22  3  4  5  6\u23a5   \u23a22  3  4  5  6\u23a5\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a23  4  5  6  7\u23a5   \u23a23  4  5  6  7\u23a5\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a34  5  6  7  8\u23a6   \u23a34  5  6  7  8\u23a6\n```\n\nThis looks poor, but I figured it might be the desired behaviour...\n\nHere's the example that makes me think its wrong:\n\n```\n>>> pprint(sin((1+1/x)/(1+1/y)) + det(MatMul(2,Z)))\n   \u239b    1\u239e                       \n   \u239c1 + \u2500\u239f                       \n   \u239c    x\u239f                       \nsin\u239c\u2500\u2500\u2500\u2500\u2500\u239f + 32\u22c5\u2502\u23a10  1  2  3  4\u23a4\u2502\n   \u239c    1\u239f      \u2502\u23a2             \u23a5\u2502\n   \u239c1 + \u2500\u239f      \u2502\u23a21  2  3  4  5\u23a5\u2502\n   \u239d    y\u23a0      \u2502\u23a2             \u23a5\u2502\n                \u2502\u23a22  3  4  5  6\u23a5\u2502\n                \u2502\u23a2             \u23a5\u2502\n                \u2502\u23a23  4  5  6  7\u23a5\u2502\n                \u2502\u23a2             \u23a5\u2502\n                \u2502\u23a34  5  6  7  8\u23a6\u2502\n```\n\nHere's how I think it should work, using the proposed #10423:\n\n```\npprint(sin((1+1/x)/y) + Trace(Z))\n               \u239b\u23a10  1  2  3  4\u23a4\u239e\n   \u239b    1\u239e     \u239c\u23a2             \u23a5\u239f\n   \u239c1 + \u2500\u239f     \u239c\u23a21  2  3  4  5\u23a5\u239f\n   \u239c    x\u239f     \u239c\u23a2             \u23a5\u239f\nsin\u239c\u2500\u2500\u2500\u2500\u2500\u239f + tr\u239c\u23a22  3  4  5  6\u23a5\u239f\n   \u239d  y  \u23a0     \u239c\u23a2             \u23a5\u239f\n               \u239c\u23a23  4  5  6  7\u23a5\u239f\n               \u239c\u23a2             \u23a5\u239f\n               \u239d\u23a34  5  6  7  8\u23a6\u23a0\n```\n\nwhere note the `sin` alignment is by-design, and (relevant to this bug) the `+` and `tr` operator line up with `sin`.\n\nAt least, det, MatAdd, MatMul, MatPow would need fixed, maybe others I haven't thought of.\n",
+      "issue_closed_at": "2016-12-22T06:52:11Z",
+      "base_commit": "9a724a42c033c1aae97064947a0f44ec3b922d73",
+      "changes": [
+        {
+          "file": "sympy/matrices/expressions/matadd.py",
+          "type": "function",
+          "name": "merge_explicit",
+          "class_name": null,
+          "code": "def merge_explicit(matadd):\n    \"\"\" Merge explicit MatrixBase arguments\n\n    >>> from sympy import MatrixSymbol, eye, Matrix, MatAdd, pprint\n    >>> from sympy.matrices.expressions.matadd import merge_explicit\n    >>> A = MatrixSymbol('A', 2, 2)\n    >>> B = eye(2)\n    >>> C = Matrix([[1, 2], [3, 4]])\n    >>> X = MatAdd(A, B, C)\n    >>> pprint(X)\n    A + [1  0] + [1  2]\n        [    ]   [    ]\n        [0  1]   [3  4]\n    >>> pprint(merge_explicit(X))\n    A + [2  2]\n        [    ]\n        [3  5]\n    \"\"\"\n    groups = sift(matadd.args, lambda arg: isinstance(arg, MatrixBase))\n    if len(groups[True]) > 1:\n        return MatAdd(*(groups[False] + [reduce(add, groups[True])]))\n    else:\n        return matadd"
+        },
+        {
+          "file": "sympy/matrices/expressions/matmul.py",
+          "type": "function",
+          "name": "merge_explicit",
+          "class_name": null,
+          "code": "def merge_explicit(matmul):\n    \"\"\" Merge explicit MatrixBase arguments\n\n    >>> from sympy import MatrixSymbol, eye, Matrix, MatMul, pprint\n    >>> from sympy.matrices.expressions.matmul import merge_explicit\n    >>> A = MatrixSymbol('A', 2, 2)\n    >>> B = Matrix([[1, 1], [1, 1]])\n    >>> C = Matrix([[1, 2], [3, 4]])\n    >>> X = MatMul(A, B, C)\n    >>> pprint(X)\n    A*[1  1]*[1  2]\n      [    ] [    ]\n      [1  1] [3  4]\n    >>> pprint(merge_explicit(X))\n    A*[4  6]\n      [    ]\n      [4  6]\n\n    >>> X = MatMul(B, A, C)\n    >>> pprint(X)\n    [1  1]*A*[1  2]\n    [    ]   [    ]\n    [1  1]   [3  4]\n    >>> pprint(merge_explicit(X))\n    [1  1]*A*[1  2]\n    [    ]   [    ]\n    [1  1]   [3  4]\n    \"\"\"\n    if not any(isinstance(arg, MatrixBase) for arg in matmul.args):\n        return matmul\n    newargs = []\n    last = matmul.args[0]\n    for arg in matmul.args[1:]:\n        if isinstance(arg, (MatrixBase, Number)) and isinstance(last, (MatrixBase, Number)):\n            last = last * arg\n        else:\n            newargs.append(last)\n            last = arg\n    newargs.append(last)\n\n    return MatMul(*newargs)"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_matrix_contents",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_matrix_contents(self, e):\n        \"\"\"\n        This method factors out what is essentially grid printing.\n        \"\"\"\n        M = e   # matrix\n        Ms = {}  # i,j -> pretty(M[i,j])\n        for i in range(M.rows):\n            for j in range(M.cols):\n                Ms[i, j] = self._print(M[i, j])\n\n        # h- and v- spacers\n        hsep = 2\n        vsep = 1\n\n        # max width for columns\n        maxw = [-1] * M.cols\n\n        for j in range(M.cols):\n            maxw[j] = max([Ms[i, j].width() for i in range(M.rows)] or [0])\n\n        # drawing result\n        D = None\n\n        for i in range(M.rows):\n\n            D_row = None\n            for j in range(M.cols):\n                s = Ms[i, j]\n\n                # reshape s to maxw\n                # XXX this should be generalized, and go to stringPict.reshape ?\n                assert s.width() <= maxw[j]\n\n                # hcenter it, +0.5 to the right                        2\n                # ( it's better to align formula starts for say 0 and r )\n                # XXX this is not good in all cases -- maybe introduce vbaseline?\n                wdelta = maxw[j] - s.width()\n                wleft = wdelta // 2\n                wright = wdelta - wleft\n\n                s = prettyForm(*s.right(' '*wright))\n                s = prettyForm(*s.left(' '*wleft))\n\n                # we don't need vcenter cells -- this is automatically done in\n                # a pretty way because when their baselines are taking into\n                # account in .right()\n\n                if D_row is None:\n                    D_row = s   # first box in a row\n                    continue\n\n                D_row = prettyForm(*D_row.right(' '*hsep))  # h-spacer\n                D_row = prettyForm(*D_row.right(s))\n\n            if D is None:\n                D = D_row       # first row in a picture\n                continue\n\n            # v-spacer\n            for _ in range(vsep):\n                D = prettyForm(*D.below(' '))\n\n            D = prettyForm(*D.below(D_row))\n\n        if D is None:\n            D = prettyForm('')  # Empty Matrix\n\n        return D"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_MatrixElement",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_MatrixElement(self, expr):\n        from sympy.matrices import MatrixSymbol\n        from sympy import Symbol\n        if (isinstance(expr.parent, MatrixSymbol)\n                and expr.i.is_number and expr.j.is_number):\n            return self._print(\n                    Symbol(expr.parent.name + '_%d%d'%(expr.i, expr.j)))\n        else:\n            prettyFunc = self._print(expr.parent)\n            prettyIndices = self._print_seq((expr.i, expr.j), delimiter=', '\n                    ).parens(left='[', right=']')[0]\n            pform = prettyForm(binding=prettyForm.FUNC,\n                    *stringPict.next(prettyFunc, prettyIndices))\n\n            # store pform parts so it can be reassembled e.g. when powered\n            pform.prettyFunc = prettyFunc\n            pform.prettyArgs = prettyIndices\n\n            return pform"
+        }
+      ]
+    },
+    {
+      "pr_number": 12920,
+      "pr_title": "fix Piecewise assumptions",
+      "pr_body": "fixes #10258\r\n",
+      "issue_id": 10258,
+      "issue_title": "Relational involving Piecewise evaluates incorrectly as True",
+      "issue_body": "``` python\n>>> p = Piecewise((1,x<0),(0,True)); p\nPiecewise((1, x < 0), (0, True))\n>>> p > 0\nTrue  <---- should not evaluate since if x >= 0, the value of the Piecewise is 0 which is not gt 0\n```\n",
+      "issue_closed_at": "2017-07-12T13:10:41Z",
+      "base_commit": "3a771edb034c81957c0975ca06f0e0d51ab3741b",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/piecewise.py",
+          "type": "function",
+          "name": "_eval_subs",
+          "class_name": "Piecewise",
+          "code": "def _eval_subs(self, old, new):\n        \"\"\"\n        Piecewise conditions may contain bool which are not of Basic type.\n        \"\"\"\n        args = list(self.args)\n        for i, (e, c) in enumerate(args):\n            if isinstance(c, bool):\n                pass\n            elif isinstance(c, Basic):\n                c = c._subs(old, new)\n            if c != False:\n                e = e._subs(old, new)\n            args[i] = e, c\n            if c == True:\n                return self.func(*args)\n\n        return self.func(*args)"
+        },
+        {
+          "file": "sympy/functions/elementary/piecewise.py",
+          "type": "function",
+          "name": "_eval_template_is_attr",
+          "class_name": "Piecewise",
+          "code": "def _eval_template_is_attr(self, is_attr, when_multiple=None):\n        b = None\n        for expr, _ in self.args:\n            a = getattr(expr, is_attr)\n            if a is None:\n                return None\n            if b is None:\n                b = a\n            elif b is not a:\n                return when_multiple\n        return b"
+        }
+      ]
+    },
+    {
+      "pr_number": 8707,
+      "pr_title": "Fix real assumption for gamma function.",
+      "pr_body": "- [x] Updated code as suggested by Sergey.\n\n@pelegm @skirpichev \n",
+      "issue_id": 8657,
+      "issue_title": "gamma(x) is assumed (wrongly) to be real when x is real",
+      "issue_body": "It may be that `x` is -1, for example, where `gamma` is not defined (or rather is `zoo`). So, unless it is known that `x` is not a nonpositive integer, `gamma(x).is_real` should return `None` (currently it returns `True`).\n",
+      "issue_closed_at": "2014-12-31T11:14:57Z",
+      "base_commit": "ed054cc55f714dab9e809036151f0ca136397604",
+      "changes": [
+        {
+          "file": "sympy/functions/special/gamma_functions.py",
+          "type": "function",
+          "name": "_eval_conjugate",
+          "class_name": "loggamma",
+          "code": "def _eval_conjugate(self):\n        z = self.args[0]\n        if not z in (S.Zero, S.NegativeInfinity):\n            return self.func(z.conjugate())"
+        }
+      ]
+    },
+    {
+      "pr_number": 16668,
+      "pr_title": "speed up Line/Segment intersections",
+      "pr_body": "<!-- Your title above should be a short description of what\r\nwas changed. Do not include the issue number in the title. -->\r\n\r\n#### References to other Issues or PRs\r\n<!-- If this pull request fixes an issue, write \"Fixes #NNNN\" in that exact\r\nformat, e.g. \"Fixes #1234\". See\r\nhttps://github.com/blog/1506-closing-issues-via-pull-requests . Please also\r\nwrite a comment on that issue linking back to this pull request once it is\r\nopen. -->\r\n\r\ncloses #16628\r\n\r\n#### Brief description of what is fixed or changed\r\n\r\nIntersections will return more quickly for Line/Segment interactions in 2D because a redundant check that the point is in the line has been eliminated.\r\n\r\nPoint containment in a 2D Segment now uses a quick check before using the triangle inequality.\r\n\r\n#### Other comments\r\n\r\nSome tests which were quite fast already were moved out of the slow test.\r\n\r\n#### Release Notes\r\n\r\n<!-- Write the release notes for this release below. See\r\nhttps://github.com/sympy/sympy/wiki/Writing-Release-Notes for more information\r\non how to write release notes. The bot will check your release notes\r\nautomatically to see if they are formatted correctly. -->\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\n- geometry\r\n  * improved response time of 2D Line/Segement interactions and Segment containment of Point\r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 16628,
+      "issue_title": "Geometry: Line-Segment-Intersection can run into memory problems",
+      "issue_body": "Hi,\r\n\r\nwhen determining a line-segment-intersection, depending on the geometry, sympy can take up som much memory that the script will crash.\r\n\r\nI'm on Windows, using CPython 3.7.3 on sympy commit b97cbe99, although the issue exists in version 1.3 too.\r\n\r\nExample code:\r\n<pre>\r\n#!Python -u\r\n\r\nimport sys, os, time, math\r\n\r\nsys.stderr.write(str(os.getpid())+time.strftime(': starting @ %d%b%y, %H:%M\\n'))\r\n\t\r\nfrom sympy.geometry import Point, Point2D, Line, Segment, intersection\r\nfrom sympy import *\r\nimport sympy\r\n\r\nsys.stderr.write('sympy version: '+sympy.__version__+'\\n')\r\n\r\np0=Point2D(249/5, 497999/10000)\r\np1x=3*(-19659028262*sqrt(405639795226) + 676896692394731 + 6704069269*sqrt(630547164901) + 33200*sqrt(255775022850776494562626))/(2000*(sqrt(255775022850776494562626) + 995999*sqrt(405639795226) + 995999*sqrt(630547164901) + 811280586451))\r\np1y=(-498000*sqrt(255775022850776494562626) - 995999*sqrt(630547164901) + 90004251917891999 + 496005510002*sqrt(405639795226))/(10000*(sqrt(255775022850776494562626) + 995999*sqrt(405639795226) + 995999*sqrt(630547164901) + 811280586451))\r\np1=Point2D(p1x, p1y)\r\n\r\n\r\nsys.stderr.write('p1: '+str(p1)+'\\n')\r\n\r\np2=Point2D(497/10, -497/10)\r\np3=Point2D(-497/10, -497/10)\r\n\r\nl=Line(p0,p1)\r\ns=Segment(p2,p3)\r\nints=intersection(l,s)\r\n\r\n\r\nsys.stderr.write(str(os.getpid())+time.strftime(': done @ %d%b%y, %H:%M\\n'))\r\n</pre>",
+      "issue_closed_at": "2019-04-17T22:08:24Z",
+      "base_commit": "96925f549e10ee2d95e592d1fe84cbdd39cec3f4",
+      "changes": [
+        {
+          "file": "sympy/geometry/line.py",
+          "type": "function",
+          "name": "intersect_parallel_segments",
+          "class_name": "LinearEntity",
+          "code": "def intersect_parallel_segments(seg1, seg2):\n            if seg1.contains(seg2):\n                return [seg2]\n            if seg2.contains(seg1):\n                return [seg1]\n\n            # direct the segments so they're oriented the same way\n            if seg1.direction.dot(seg2.direction) < 0:\n                seg2 = Segment(seg2.p2, seg2.p1)\n            # order the segments so seg1 is \"behind\" seg2\n            if seg1._span_test(seg2.p1) < 0:\n                seg1, seg2 = seg2, seg1\n            if seg2._span_test(seg1.p2) < 0:\n                return []\n            return [Segment(seg2.p1, seg1.p2)]"
+        },
+        {
+          "file": "sympy/geometry/line.py",
+          "type": "function",
+          "name": "contains",
+          "class_name": "Segment",
+          "code": "def contains(self, other):\n        \"\"\"\n        Is the other GeometryEntity contained within this Segment?\n\n        Examples\n        ========\n\n        >>> from sympy import Point, Segment\n        >>> p1, p2 = Point(0, 1), Point(3, 4)\n        >>> s = Segment(p1, p2)\n        >>> s2 = Segment(p2, p1)\n        >>> s.contains(s2)\n        True\n        >>> from sympy import Point3D, Segment3D\n        >>> p1, p2 = Point3D(0, 1, 1), Point3D(3, 4, 5)\n        >>> s = Segment3D(p1, p2)\n        >>> s2 = Segment3D(p2, p1)\n        >>> s.contains(s2)\n        True\n        >>> s.contains((p1 + p2) / 2)\n        True\n        \"\"\"\n\n        if not isinstance(other, GeometryEntity):\n            other = Point(other, dim=self.ambient_dimension)\n        if isinstance(other, Point):\n            if Point.is_collinear(other, self.p1, self.p2):\n                d1, d2 = other - self.p1, other - self.p2\n                d = self.p2 - self.p1\n                # without the call to simplify, sympy cannot tell that an expression\n                # like (a+b)*(a/2+b/2) is always non-negative.  If it cannot be\n                # determined, raise an Undecidable error\n                try:\n                    # the triangle inequality says that |d1|+|d2| >= |d| and is strict\n                    # only if other lies in the line segment\n                    return bool(simplify(Eq(abs(d1) + abs(d2) - abs(d), 0)))\n                except TypeError:\n                    raise Undecidable(\"Cannot determine if {} is in {}\".format(other, self))\n        if isinstance(other, Segment):\n            return other.p1 in self and other.p2 in self\n\n        return False"
+        },
+        {
+          "file": "sympy/geometry/polygon.py",
+          "type": "function",
+          "name": "bisectors",
+          "class_name": "Triangle",
+          "code": "def bisectors(self):\n        \"\"\"The angle bisectors of the triangle.\n\n        An angle bisector of a triangle is a straight line through a vertex\n        which cuts the corresponding angle in half.\n\n        Returns\n        =======\n\n        bisectors : dict\n            Each key is a vertex (Point) and each value is the corresponding\n            bisector (Segment).\n\n        See Also\n        ========\n\n        sympy.geometry.point.Point, sympy.geometry.line.Segment\n\n        Examples\n        ========\n\n        >>> from sympy.geometry import Point, Triangle, Segment\n        >>> p1, p2, p3 = Point(0, 0), Point(1, 0), Point(0, 1)\n        >>> t = Triangle(p1, p2, p3)\n        >>> from sympy import sqrt\n        >>> t.bisectors()[p2] == Segment(Point(1, 0), Point(0, sqrt(2) - 1))\n        True\n\n        \"\"\"\n        # use lines containing sides so containment check during\n        # intersection calculation can be avoided\n        # This would reduce the processing time for calculating the bisectors\n        s = [Line(l) for l in self.sides]\n        v = self.vertices\n        c = self.incenter\n        l1 = Segment(v[0], Line(v[0], c).intersection(s[1])[0])\n        l2 = Segment(v[1], Line(v[1], c).intersection(s[2])[0])\n        l3 = Segment(v[2], Line(v[2], c).intersection(s[0])[0])\n        return {v[0]: l1, v[1]: l2, v[2]: l3}"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,165 @@
+{
+  "instance_id": "django__django-12589",
+  "repo": "django/django",
+  "created_at": "2020-03-19T19:04:17Z",
+  "problem_statement": "Django 3.0: \"GROUP BY\" clauses error with tricky field annotation\nDescription\n\t\nLet's pretend that we have next model structure with next model's relations:\nclass A(models.Model):\n\tbs = models.ManyToManyField('B',\n\t\t\t\t\t\t\t\trelated_name=\"a\",\n\t\t\t\t\t\t\t\tthrough=\"AB\")\nclass B(models.Model):\n\tpass\nclass AB(models.Model):\n\ta = models.ForeignKey(A, on_delete=models.CASCADE, related_name=\"ab_a\")\n\tb = models.ForeignKey(B, on_delete=models.CASCADE, related_name=\"ab_b\")\n\tstatus = models.IntegerField()\nclass C(models.Model):\n\ta = models.ForeignKey(\n\t\tA,\n\t\tnull=True,\n\t\tblank=True,\n\t\ton_delete=models.SET_NULL,\n\t\trelated_name=\"c\",\n\t\tverbose_name=_(\"a\")\n\t)\n\tstatus = models.IntegerField()\nLet's try to evaluate next query\nab_query = AB.objects.filter(a=OuterRef(\"pk\"), b=1)\nfilter_conditions = Q(pk=1) | Q(ab_a__b=1)\nquery = A.objects.\\\n\tfilter(filter_conditions).\\\n\tannotate(\n\t\tstatus=Subquery(ab_query.values(\"status\")),\n\t\tc_count=Count(\"c\"),\n)\nanswer = query.values(\"status\").annotate(total_count=Count(\"status\"))\nprint(answer.query)\nprint(answer)\nOn Django 3.0.4 we have an error\ndjango.db.utils.ProgrammingError: column reference \"status\" is ambiguous\nand query is next:\nSELECT (SELECT U0.\"status\" FROM \"test_app_ab\" U0 WHERE (U0.\"a_id\" = \"test_app_a\".\"id\" AND U0.\"b_id\" = 1)) AS \"status\", COUNT((SELECT U0.\"status\" FROM \"test_app_ab\" U0 WHERE (U0.\"a_id\" = \"test_app_a\".\"id\" AND U0.\"b_id\" = 1))) AS \"total_count\" FROM \"test_app_a\" LEFT OUTER JOIN \"test_app_ab\" ON (\"test_app_a\".\"id\" = \"test_app_ab\".\"a_id\") LEFT OUTER JOIN \"test_app_c\" ON (\"test_app_a\".\"id\" = \"test_app_c\".\"a_id\") WHERE (\"test_app_a\".\"id\" = 1 OR \"test_app_ab\".\"b_id\" = 1) GROUP BY \"status\"\nHowever, Django 2.2.11 processed this query properly with the next query:\nSELECT (SELECT U0.\"status\" FROM \"test_app_ab\" U0 WHERE (U0.\"a_id\" = (\"test_app_a\".\"id\") AND U0.\"b_id\" = 1)) AS \"status\", COUNT((SELECT U0.\"status\" FROM \"test_app_ab\" U0 WHERE (U0.\"a_id\" = (\"test_app_a\".\"id\") AND U0.\"b_id\" = 1))) AS \"total_count\" FROM \"test_app_a\" LEFT OUTER JOIN \"test_app_ab\" ON (\"test_app_a\".\"id\" = \"test_app_ab\".\"a_id\") LEFT OUTER JOIN \"test_app_c\" ON (\"test_app_a\".\"id\" = \"test_app_c\".\"a_id\") WHERE (\"test_app_a\".\"id\" = 1 OR \"test_app_ab\".\"b_id\" = 1) GROUP BY (SELECT U0.\"status\" FROM \"test_app_ab\" U0 WHERE (U0.\"a_id\" = (\"test_app_a\".\"id\") AND U0.\"b_id\" = 1))\nso, the difference in \"GROUP BY\" clauses\n(as DB provider uses \"django.db.backends.postgresql\", postgresql 11)\n",
+  "patch": "diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py\n--- a/django/db/models/sql/query.py\n+++ b/django/db/models/sql/query.py\n@@ -1927,6 +1927,19 @@ def set_group_by(self, allow_aliases=True):\n         primary key, and the query would be equivalent, the optimization\n         will be made automatically.\n         \"\"\"\n+        # Column names from JOINs to check collisions with aliases.\n+        if allow_aliases:\n+            column_names = set()\n+            seen_models = set()\n+            for join in list(self.alias_map.values())[1:]:  # Skip base table.\n+                model = join.join_field.related_model\n+                if model not in seen_models:\n+                    column_names.update({\n+                        field.column\n+                        for field in model._meta.local_concrete_fields\n+                    })\n+                    seen_models.add(model)\n+\n         group_by = list(self.select)\n         if self.annotation_select:\n             for alias, annotation in self.annotation_select.items():\n@@ -1940,7 +1953,7 @@ def set_group_by(self, allow_aliases=True):\n                     warnings.warn(msg, category=RemovedInDjango40Warning)\n                     group_by_cols = annotation.get_group_by_cols()\n                 else:\n-                    if not allow_aliases:\n+                    if not allow_aliases or alias in column_names:\n                         alias = None\n                     group_by_cols = annotation.get_group_by_cols(alias=alias)\n                 group_by.extend(group_by_cols)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10715,
+      "pr_title": "Fixed #29932 -- Fixed combining compound queries with sub compound queries on SQLite and Oracle.",
+      "pr_body": "Ticket [29932](https://code.djangoproject.com/ticket/29932).",
+      "issue_id": 29932,
+      "issue_title": "QuerySet.difference() after intersection() returns incorrect results on SQLite and Oracle",
+      "issue_body": "Considering a simple model\nfrom\ndjango.db\nimport\nmodels\nclass\nFoo\n(\nmodels\n.\nModel\n):\npass\nHere is the minimal way to encounter this issue\nFoo\n.\nobjects\n.\ncreate\n(\npk\n=\n1\n)\nFoo\n.\nobjects\n.\ncreate\n(\npk\n=\n2\n)\na\n=\nFoo\n.\nobjects\n.\nall\n()\nb\n=\nFoo\n.\nobjects\n.\nintersection\n(\nFoo\n.\nobjects\n.\nfilter\n(\npk\n=\n1\n))\nassert\na\n.\ncount\n()\n==\n2\nassert\nb\n.\ncount\n()\n==\n1\ndiff\n=\na\n.\ndifference\n(\nb\n)\nassert\ndiff\n.\nexists\n()\n# fails with SQLite!\nThis operation however works as expected on PostgreSQL.",
+      "issue_closed_at": "2018-12-06T14:51:03",
+      "base_commit": "ae180fa4b7f927a4aeae772975927c9888bb0cb0",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite can read from a cursor since SQLite 3.6.5, subject to the caveat\n    # that statements within a connection aren't isolated from each other. See\n    # https://sqlite.org/isolation.html.\n    can_use_chunked_reads = True\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    autocommits_when_autocommit_is_off = sys.version_info < (3, 6)\n    can_introspect_decimal_field = False\n    can_introspect_duration_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_atomic_references_rename = False\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n    supports_cast_with_precision = False\n    time_cast_precision = 3\n    can_release_savepoints = True\n    supports_partial_indexes = Database.version_info >= (3, 8, 0)\n    # Is \"ALTER TABLE ... RENAME COLUMN\" supported?\n    can_alter_table_rename_column = Database.sqlite_version_info >= (3, 25, 0)\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries if not query.is_empty()\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = ()\n        for compiler in compilers:\n            try:\n                # If the columns list is limited, then all combined queries\n                # must have the same columns list. Set the selects defined on\n                # the query on all combined queries, if not already set.\n                if not compiler.query.values_select and self.query.values_select:\n                    compiler.query.set_values((\n                        *self.query.extra_select,\n                        *self.query.values_select,\n                        *self.query.annotation_select,\n                    ))\n                parts += (compiler.as_sql(),)\n            except EmptyResultSet:\n                # Omit the empty queryset with UNION and with DIFFERENCE if the\n                # first queryset is nonempty.\n                if combinator == 'union' or (combinator == 'difference' and parts):\n                    continue\n                raise\n        if not parts:\n            raise EmptyResultSet\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 7097,
+      "pr_title": "Fixed #27068 -- Unified form field initial data retrieval.",
+      "pr_body": "https://code.djangoproject.com/ticket/27068\n",
+      "issue_id": 27068,
+      "issue_title": "Acquire form's initial data more consistently",
+      "issue_body": "In\nBoundField\n, sometimes initial data\n​\nhandles callables\n. While other times,\n​\nit doesn't\n. This can lead to a theoretical bug when the initial data is a callable, but the field is disabled.\nOther times, the initial callable is handled, but microseconds are\n​\nnot chopped\nleading to theoretical false positives that data has changed.\nInitial data should be handled more consistently across all cases.\nMarking as a bug due to the theoretical edge cases that can produce unexpected results. Noticed these inconsistencies while working on\n#27037\n.",
+      "issue_closed_at": "2016-08-18T19:51:32",
+      "base_commit": "13857b45ca54a519a58361238442af84262c0d23",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "value",
+          "class_name": "BoundField",
+          "code": "def value(self):\n        \"\"\"\n        Returns the value for this BoundField, using the initial value if\n        the form is not bound or the data otherwise.\n        \"\"\"\n        if not self.form.is_bound:\n            data = self.initial\n        else:\n            data = self.field.bound_data(\n                self.data, self.form.initial.get(self.name, self.field.initial)\n            )\n        return self.field.prepare_value(data)"
+        },
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "id_for_label",
+          "class_name": "BoundField",
+          "code": "def id_for_label(self):\n        \"\"\"\n        Wrapper around the field widget's `id_for_label` method.\n        Useful, for example, for focusing on this field regardless of whether\n        it has a single widget or a MultiWidget.\n        \"\"\"\n        widget = self.field.widget\n        id_ = widget.attrs.get('id') or self.auto_id\n        return widget.id_for_label(id_)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "_clean_fields",
+          "class_name": "BaseForm",
+          "code": "def _clean_fields(self):\n        for name, field in self.fields.items():\n            # value_from_datadict() gets the data from the data dictionaries.\n            # Each widget type knows how to retrieve its own data, because some\n            # widgets split data over several HTML fields.\n            if field.disabled:\n                value = self.initial.get(name, field.initial)\n            else:\n                value = field.widget.value_from_datadict(self.data, self.files, self.add_prefix(name))\n            try:\n                if isinstance(field, FileField):\n                    initial = self.initial.get(name, field.initial)\n                    value = field.clean(value, initial)\n                else:\n                    value = field.clean(value)\n                self.cleaned_data[name] = value\n                if hasattr(self, 'clean_%s' % name):\n                    value = getattr(self, 'clean_%s' % name)()\n                    self.cleaned_data[name] = value\n            except ValidationError as e:\n                self.add_error(name, e)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "changed_data",
+          "class_name": "BaseForm",
+          "code": "def changed_data(self):\n        data = []\n        for name, field in self.fields.items():\n            prefixed_name = self.add_prefix(name)\n            data_value = field.widget.value_from_datadict(self.data, self.files, prefixed_name)\n            if not field.show_hidden_initial:\n                initial_value = self.initial.get(name, field.initial)\n                if callable(initial_value):\n                    initial_value = initial_value()\n            else:\n                initial_prefixed_name = self.add_initial_prefix(name)\n                hidden_widget = field.hidden_widget()\n                try:\n                    initial_value = field.to_python(hidden_widget.value_from_datadict(\n                        self.data, self.files, initial_prefixed_name))\n                except ValidationError:\n                    # Always assume data has changed if validation fails.\n                    data.append(name)\n                    continue\n            if field.has_changed(initial_value, data_value):\n                data.append(name)\n        return data"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "visible_fields",
+          "class_name": "BaseForm",
+          "code": "def visible_fields(self):\n        \"\"\"\n        Returns a list of BoundField objects that aren't hidden fields.\n        The opposite of the hidden_fields() method.\n        \"\"\"\n        return [field for field in self if not field.is_hidden]"
+        }
+      ]
+    },
+    {
+      "pr_number": 3265,
+      "pr_title": "Fixed #23538 -- Added SchemaEditor for MySQL GIS.",
+      "pr_body": "",
+      "issue_id": 23538,
+      "issue_title": "MySQL GIS backend missing SchemaEditor",
+      "issue_body": "I think this results in a missing index for GIS fields on apps that have migrations.",
+      "issue_closed_at": "2014-09-25T12:53:52",
+      "base_commit": "215aa4f53b6bbd07d5c1eecfa94e7fcd00da813e",
+      "changes": [
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "line",
+          "name": "line 6",
+          "code": "from django.contrib.gis.db.backends.mysql.creation import MySQLCreation\nfrom django.contrib.gis.db.backends.mysql.introspection import MySQLIntrospection\nfrom django.contrib.gis.db.backends.mysql.operations import MySQLOperations\n\n\nclass DatabaseFeatures(BaseSpatialFeatures, MySQLDatabaseFeatures):"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "DatabaseWrapper",
+          "code": "def __init__(self, *args, **kwargs):\n        super(DatabaseWrapper, self).__init__(*args, **kwargs)\n        self.features = DatabaseFeatures(self)\n        self.creation = MySQLCreation(self)\n        self.ops = MySQLOperations(self)\n        self.introspection = MySQLIntrospection(self)"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "MySQLIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # In order to get the specific geometry type of the field,\n            # we introspect on the table definition using `DESCRIBE`.\n            cursor.execute('DESCRIBE %s' %\n                           self.connection.ops.quote_name(table_name))\n            # Increment over description info until we get to the geometry\n            # column.\n            for column, typ, null, key, default, extra in cursor.fetchall():\n                if column == geo_col:\n                    # Using OGRGeomType to convert from OGC name to Django field.\n                    # MySQL does not support 3D or SRIDs, so the field params\n                    # are empty.\n                    field_type = OGRGeomType(typ).django\n                    field_params = {}\n                    break\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/spatialite/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "SpatiaLiteIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # Querying the `geometry_columns` table to get additional metadata.\n            type_col = 'type' if self.connection.ops.spatial_version < (4, 0, 0) else 'geometry_type'\n            cursor.execute('SELECT coord_dimension, srid, %s '\n                           'FROM geometry_columns '\n                           'WHERE f_table_name=%%s AND f_geometry_column=%%s' % type_col,\n                           (table_name, geo_col))\n            row = cursor.fetchone()\n            if not row:\n                raise Exception('Could not find a geometry column for \"%s\".\"%s\"' %\n                                (table_name, geo_col))\n\n            # OGRGeomType does not require GDAL and makes it easy to convert\n            # from OGC geom type name to Django field.\n            field_type = OGRGeomType(row[2]).django\n\n            # Getting any GeometryField keyword arguments that are not the default.\n            dim = row[0]\n            srid = row[1]\n            field_params = {}\n            if srid != 4326:\n                field_params['srid'] = srid\n            if isinstance(dim, six.string_types) and 'Z' in dim:\n                field_params['dim'] = 3\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_indexes",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_indexes(self, cursor, table_name):\n        cursor.execute(\"SHOW INDEX FROM %s\" % self.connection.ops.quote_name(table_name))\n        # Do a two-pass search for indexes: on first pass check which indexes\n        # are multicolumn, on second pass check which single-column indexes\n        # are present.\n        rows = list(cursor.fetchall())\n        multicol_indexes = set()\n        for row in rows:\n            if row[3] > 1:\n                multicol_indexes.add(row[2])\n        indexes = {}\n        for row in rows:\n            if row[2] in multicol_indexes:\n                continue\n            if row[4] not in indexes:\n                indexes[row[4]] = {'primary_key': False, 'unique': False}\n            # It's possible to have the unique and PK constraints in separate indexes.\n            if row[2] == 'PRIMARY':\n                indexes[row[4]]['primary_key'] = True\n            if not row[1]:\n                indexes[row[4]]['unique'] = True\n        return indexes"
+        }
+      ]
+    },
+    {
+      "pr_number": 9112,
+      "pr_title": "Fixed #27846 -- clear all cached reverse relationships on refresh_from_db()",
+      "pr_body": "https://code.djangoproject.com/ticket/27846",
+      "issue_id": 27846,
+      "issue_title": "refresh_from_db() doesn't clear reverse OneToOneFields",
+      "issue_body": "Sorry for the poor summary, it is difficult to explain in words. I have a project to demo this bug attached to this ticket, but I will try to explain the bug anyway in steps and the setup.\nSetup:\n2 models (A and B)\nB has a OneToOne to A\nBoth A and B have a field (ie TextField)\nSetup either a signal or override save() for A to update B's TextField to equal that of A's on save() or post_save for signals\nSteps:\nCreate instance of A\nGet another copy of the instance of A via A.objects.get()\nCreate instance of B using the copy of the instance of A\nDo refresh_from_db() on original instance of A\nTry to access B from A\nThe project I have provided is a slim version of this problem that demonstrates it with signals, overriden save(), and basic set and save inside the test. The basic set and save works, but the other two fail when using the above steps. Run the test suite to see.",
+      "issue_closed_at": "2017-10-12T16:25:22",
+      "base_commit": "df0aebc893973c78d7d2cda712ba4133dbe29b6e",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "refresh_from_db",
+          "class_name": "Model",
+          "code": "def refresh_from_db(self, using=None, fields=None):\n        \"\"\"\n        Reload field values from the database.\n\n        By default, the reloading happens from the database this instance was\n        loaded from, or by the read router if this instance wasn't loaded from\n        any database. The using parameter will override the default.\n\n        Fields can be used to specify which fields to reload. The fields\n        should be an iterable of field attnames. If fields is None, then\n        all non-deferred fields are reloaded.\n\n        When accessing deferred fields of an instance, the deferred loading\n        of the field will call this method.\n        \"\"\"\n        if fields is not None:\n            if len(fields) == 0:\n                return\n            if any(LOOKUP_SEP in f for f in fields):\n                raise ValueError(\n                    'Found \"%s\" in fields argument. Relations and transforms '\n                    'are not allowed in fields.' % LOOKUP_SEP)\n\n        db = using if using is not None else self._state.db\n        db_instance_qs = self.__class__._default_manager.using(db).filter(pk=self.pk)\n\n        # Use provided fields, if not set then reload all non-deferred fields.\n        deferred_fields = self.get_deferred_fields()\n        if fields is not None:\n            fields = list(fields)\n            db_instance_qs = db_instance_qs.only(*fields)\n        elif deferred_fields:\n            fields = [f.attname for f in self._meta.concrete_fields\n                      if f.attname not in deferred_fields]\n            db_instance_qs = db_instance_qs.only(*fields)\n\n        db_instance = db_instance_qs.get()\n        non_loaded_fields = db_instance.get_deferred_fields()\n        for field in self._meta.concrete_fields:\n            if field.attname in non_loaded_fields:\n                # This field wasn't refreshed - skip ahead.\n                continue\n            setattr(self, field.attname, getattr(db_instance, field.attname))\n            # Throw away stale foreign key references.\n            if field.is_relation and field.is_cached(self):\n                rel_instance = field.get_cached_value(self)\n                local_val = getattr(db_instance, field.attname)\n                related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)\n                if local_val != related_val or (local_val is None and related_val is None):\n                    field.delete_cached_value(self)\n        self._state.db = db_instance._state.db"
+        }
+      ]
+    },
+    {
+      "pr_number": 4462,
+      "pr_title": "Fixed #24578 -- Fixed crash with QuerySet.update() on FK to O2O fields.",
+      "pr_body": "",
+      "issue_id": 24578,
+      "issue_title": "prepare_database_save breaks some OneToOneField's in 1.8",
+      "issue_body": "With 1.8 the following doesn't work:\n# models.py\nfrom django.db import models\n\nclass A(models.Model):\n    pass\n\nclass Aprime(models.Model):\n\n    original = models.OneToOneField(A, primary_key=True)\n\nclass B(models.Model):\n    aprime = models.ForeignKey(Aprime)\n\n# tests.py\n\nfrom django.test import TestCase\n\nfrom models import *\n\nclass TestTestCase(TestCase):\n\n    def test_ref(self):\n        a_one = A.objects.create()\n        a_two = A.objects.create()\n\n        self.assertNotEqual(a_one, a_two)\n\n        aprime = Aprime.objects.create(original=a_one)\n        aprime2 = Aprime.objects.create(original=a_two)\n\n        b = B.objects.create(aprime=aprime)\n\n        self.assertEqual(b.aprime, aprime)\n\n        B.objects.update(aprime=aprime2)\n\n        b = B.objects.get(pk=b.id)\n\n        self.assertEqual(b.aprime, aprime2)\nThis throws a\nInterfaceError: Error binding parameter 0 - probably unsupported type.\nwhen calling\nB.objects.update(aprime=aprime2)\n.\nThe bug disappears when overriding\nprepare_database_save\nto just return\nself.pk\ninstead of\ngetattr(self, field.rel.field_name)\n.  (This was the behavior as of 1.7 and the bug does not occur there.)\nNot sure why\nprepare_database_save\nwas modified but this bug actually affects a project of mine so would suggest rolling back to the 1.7 version.",
+      "issue_closed_at": "2015-04-09T07:21:57",
+      "base_commit": "20a98d863f00fc48f9c7fd783d8d0539c6be41f5",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "_get_next_or_previous_in_order",
+          "class_name": "Model",
+          "code": "def _get_next_or_previous_in_order(self, is_next):\n        cachename = \"__%s_order_cache\" % is_next\n        if not hasattr(self, cachename):\n            op = 'gt' if is_next else 'lt'\n            order = '_order' if is_next else '-_order'\n            order_field = self._meta.order_with_respect_to\n            obj = self._default_manager.filter(**{\n                order_field.name: getattr(self, order_field.attname)\n            }).filter(**{\n                '_order__%s' % op: self._default_manager.values('_order').filter(**{\n                    self._meta.pk.name: self.pk\n                })\n            }).order_by(order)[:1].get()\n            setattr(self, cachename, obj)\n        return getattr(self, cachename)"
+        }
+      ]
+    }
+  ]
+}

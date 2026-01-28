@@ -1,0 +1,152 @@
+{
+  "instance_id": "django__django-14534",
+  "repo": "django/django",
+  "created_at": "2021-06-17T15:37:34Z",
+  "problem_statement": "BoundWidget.id_for_label ignores id set by ChoiceWidget.options\nDescription\n\t\nIf you look at the implementation of BoundField.subwidgets\nclass BoundField:\n\t...\n\tdef subwidgets(self):\n\t\tid_ = self.field.widget.attrs.get('id') or self.auto_id\n\t\tattrs = {'id': id_} if id_ else {}\n\t\tattrs = self.build_widget_attrs(attrs)\n\t\treturn [\n\t\t\tBoundWidget(self.field.widget, widget, self.form.renderer)\n\t\t\tfor widget in self.field.widget.subwidgets(self.html_name, self.value(), attrs=attrs)\n\t\t]\none sees that self.field.widget.subwidgets(self.html_name, self.value(), attrs=attrs) returns a dict and assigns it to widget. Now widget['attrs']['id'] contains the \"id\" we would like to use when rendering the label of our CheckboxSelectMultiple.\nHowever BoundWidget.id_for_label() is implemented as\nclass BoundWidget:\n\t...\n\tdef id_for_label(self):\n\t\treturn 'id_%s_%s' % (self.data['name'], self.data['index'])\nignoring the id available through self.data['attrs']['id']. This re-implementation for rendering the \"id\" is confusing and presumably not intended. Nobody has probably realized that so far, because rarely the auto_id-argument is overridden when initializing a form. If however we do, one would assume that the method BoundWidget.id_for_label renders that string as specified through the auto_id format-string.\nBy changing the code from above to\nclass BoundWidget:\n\t...\n\tdef id_for_label(self):\n\t\treturn self.data['attrs']['id']\nthat function behaves as expected.\nPlease note that this error only occurs when rendering the subwidgets of a widget of type CheckboxSelectMultiple. This has nothing to do with the method BoundField.id_for_label().\n",
+  "patch": "diff --git a/django/forms/boundfield.py b/django/forms/boundfield.py\n--- a/django/forms/boundfield.py\n+++ b/django/forms/boundfield.py\n@@ -277,7 +277,7 @@ def template_name(self):\n \n     @property\n     def id_for_label(self):\n-        return 'id_%s_%s' % (self.data['name'], self.data['index'])\n+        return self.data['attrs'].get('id')\n \n     @property\n     def choice_label(self):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8362,
+      "pr_title": "Fixed #28058 -- Restored empty BoundFields evaluating to True.",
+      "pr_body": "https://code.djangoproject.com/ticket/28058",
+      "issue_id": 28058,
+      "issue_title": "Empty Select widget (no choices) evaluates to False",
+      "issue_body": "",
+      "issue_closed_at": "2017-04-17T07:49:12",
+      "base_commit": "e5dce7b0fbd2965e524ce97114f501319ec2bb6f",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "subwidgets",
+          "class_name": "BoundField",
+          "code": "def subwidgets(self):\n        \"\"\"\n        Most widgets yield a single subwidget, but others like RadioSelect and\n        CheckboxSelectMultiple produce one subwidget for each choice.\n\n        This property is cached so that only one database query occurs when\n        rendering ModelChoiceFields.\n        \"\"\"\n        id_ = self.field.widget.attrs.get('id') or self.auto_id\n        attrs = {'id': id_} if id_ else {}\n        attrs = self.build_widget_attrs(attrs)\n        return list(\n            BoundWidget(self.field.widget, widget, self.form.renderer)\n            for widget in self.field.widget.subwidgets(self.html_name, self.value(), attrs=attrs)\n        )"
+        }
+      ]
+    },
+    {
+      "pr_number": 3503,
+      "pr_title": "Fixed #23795 -- Fixed a regression in custom form fields",
+      "pr_body": "Custom form fields having a `queryset` attribute but no\n`limit_choices_to` could no longer be used in ModelForms.\n\nRefs #2445.\n\nThanks to @artscoop for the report.\n",
+      "issue_id": 23795,
+      "issue_title": "Django form fields : limit_choices_to should not be mandatory with queryset",
+      "issue_body": "",
+      "issue_closed_at": "2014-11-12T15:39:19",
+      "base_commit": "11b7680d0e640a7d4b1c942f74e9197b6ec924b1",
+      "changes": [
+        {
+          "file": "django/forms/fields.py",
+          "type": "function",
+          "name": "widget_attrs",
+          "class_name": "DecimalField",
+          "code": "def widget_attrs(self, widget):\n        attrs = super(DecimalField, self).widget_attrs(widget)\n        if isinstance(widget, NumberInput) and 'step' not in widget.attrs:\n            if self.decimal_places is not None:\n                # Use exponential notation for small values since they might\n                # be parsed as 0 otherwise. ref #20765\n                step = str(Decimal('1') / 10 ** self.decimal_places).lower()\n            else:\n                step = 'any'\n            attrs.setdefault('step', step)\n        return attrs"
+        },
+        {
+          "file": "django/forms/models.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "ModelMultipleChoiceField",
+          "code": "def __init__(self, queryset, cache_choices=None, required=True,\n                 widget=None, label=None, initial=None,\n                 help_text='', *args, **kwargs):\n        super(ModelMultipleChoiceField, self).__init__(queryset, None,\n            cache_choices, required, widget, label, initial, help_text,\n            *args, **kwargs)"
+        },
+        {
+          "file": "django/forms/models.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "ModelMultipleChoiceField",
+          "code": "def __init__(self, queryset, cache_choices=None, required=True,\n                 widget=None, label=None, initial=None,\n                 help_text='', *args, **kwargs):\n        super(ModelMultipleChoiceField, self).__init__(queryset, None,\n            cache_choices, required, widget, label, initial, help_text,\n            *args, **kwargs)"
+        }
+      ]
+    },
+    {
+      "pr_number": 12263,
+      "pr_title": "Fixed #31166 -- Used \"raise from\" when raising ImproperlyConfigured exceptions in django.urls.resolvers.",
+      "pr_body": "This will make it have a text of \"this exception is the direct result of\" instead of \"During handling of the above exception, another exception occurred\" \r\n\r\nThis is more accurate for the case of this exception.",
+      "issue_id": 31166,
+      "issue_title": "Provide context for ImproperlyConfigured exceptions in URL resolver.",
+      "issue_body": "",
+      "issue_closed_at": "2020-01-17T05:21:04",
+      "base_commit": "73563183c2ea92e9ef1d3a1f790a503acc14ade2",
+      "changes": [
+        {
+          "file": "django/urls/resolvers.py",
+          "type": "function",
+          "name": "_compile",
+          "class_name": "RoutePattern",
+          "code": "def _compile(self, route):\n        return re.compile(_route_to_regex(route, self._is_endpoint)[0])"
+        },
+        {
+          "file": "django/urls/resolvers.py",
+          "type": "function",
+          "name": "_route_to_regex",
+          "class_name": null,
+          "code": "def _route_to_regex(route, is_endpoint=False):\n    \"\"\"\n    Convert a path pattern into a regular expression. Return the regular\n    expression and a dictionary mapping the capture names to the converters.\n    For example, 'foo/<int:pk>' returns '^foo\\\\/(?P<pk>[0-9]+)'\n    and {'pk': <django.urls.converters.IntConverter>}.\n    \"\"\"\n    if not set(route).isdisjoint(string.whitespace):\n        raise ImproperlyConfigured(\"URL route '%s' cannot contain whitespace.\" % route)\n    original_route = route\n    parts = ['^']\n    converters = {}\n    while True:\n        match = _PATH_PARAMETER_COMPONENT_RE.search(route)\n        if not match:\n            parts.append(re.escape(route))\n            break\n        parts.append(re.escape(route[:match.start()]))\n        route = route[match.end():]\n        parameter = match.group('parameter')\n        if not parameter.isidentifier():\n            raise ImproperlyConfigured(\n                \"URL route '%s' uses parameter name %r which isn't a valid \"\n                \"Python identifier.\" % (original_route, parameter)\n            )\n        raw_converter = match.group('converter')\n        if raw_converter is None:\n            # If a converter isn't specified, the default is `str`.\n            raw_converter = 'str'\n        try:\n            converter = get_converter(raw_converter)\n        except KeyError as e:\n            raise ImproperlyConfigured(\n                \"URL route '%s' uses invalid converter %s.\" % (original_route, e)\n            )\n        converters[parameter] = converter\n        parts.append('(?P<' + parameter + '>' + converter.regex + ')')\n    if is_endpoint:\n        parts.append('$')\n    return ''.join(parts), converters"
+        },
+        {
+          "file": "django/urls/resolvers.py",
+          "type": "function",
+          "name": "url_patterns",
+          "class_name": "URLResolver",
+          "code": "def url_patterns(self):\n        # urlconf_module might be a valid set of patterns, so we default to it\n        patterns = getattr(self.urlconf_module, \"urlpatterns\", self.urlconf_module)\n        try:\n            iter(patterns)\n        except TypeError:\n            msg = (\n                \"The included URLconf '{name}' does not appear to have any \"\n                \"patterns in it. If you see valid patterns in the file then \"\n                \"the issue is probably caused by a circular import.\"\n            )\n            raise ImproperlyConfigured(msg.format(name=self.urlconf_name))\n        return patterns"
+        }
+      ]
+    },
+    {
+      "pr_number": 8401,
+      "pr_title": "Fixed #28040 -- Updated SplitArrayWidget to use template-based widget rendering.",
+      "pr_body": "https://code.djangoproject.com/ticket/28040",
+      "issue_id": 28040,
+      "issue_title": "Update SplitArrayWidget to use template-based widget rendering",
+      "issue_body": "",
+      "issue_closed_at": "2017-04-29T18:00:32",
+      "base_commit": "c920db1e57bf6bec65b075fd0baac72e13db9919",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/forms/array.py",
+          "type": "line",
+          "name": "line 6",
+          "code": "    ArrayMaxLengthValidator, ArrayMinLengthValidator,\n)\nfrom django.core.exceptions import ValidationError\nfrom django.utils.safestring import mark_safe\nfrom django.utils.translation import gettext_lazy as _\n\nfrom ..utils import prefix_validation_error"
+        },
+        {
+          "file": "django/contrib/postgres/forms/array.py",
+          "type": "function",
+          "name": "run_validators",
+          "class_name": "SimpleArrayField",
+          "code": "def run_validators(self, value):\n        super().run_validators(value)\n        errors = []\n        for index, item in enumerate(value):\n            try:\n                self.base_field.run_validators(item)\n            except ValidationError as error:\n                errors.append(prefix_validation_error(\n                    error,\n                    prefix=self.error_messages['item_invalid'],\n                    code='item_invalid',\n                    params={'nth': index},\n                ))\n        if errors:\n            raise ValidationError(errors)"
+        },
+        {
+          "file": "django/contrib/postgres/forms/array.py",
+          "type": "function",
+          "name": "id_for_label",
+          "class_name": "SplitArrayWidget",
+          "code": "def id_for_label(self, id_):\n        # See the comment for RadioSelect.id_for_label()\n        if id_:\n            id_ += '_0'\n        return id_"
+        },
+        {
+          "file": "django/contrib/postgres/forms/array.py",
+          "type": "function",
+          "name": "render",
+          "class_name": "SplitArrayWidget",
+          "code": "def render(self, name, value, attrs=None, renderer=None):\n        if self.is_localized:\n            self.widget.is_localized = self.is_localized\n        value = value or []\n        output = []\n        final_attrs = self.build_attrs(attrs)\n        id_ = final_attrs.get('id')\n        for i in range(max(len(value), self.size)):\n            try:\n                widget_value = value[i]\n            except IndexError:\n                widget_value = None\n            if id_:\n                final_attrs = dict(final_attrs, id='%s_%s' % (id_, i))\n            output.append(self.widget.render(name + '_%s' % i, widget_value, final_attrs, renderer))\n        return mark_safe(self.format_output(output))"
+        }
+      ]
+    },
+    {
+      "pr_number": 11119,
+      "pr_title": "Fixed #29791 -- Honor engine's autoescape attribute in render_to_string",
+      "pr_body": "Passed down autoescape value from Engine to Context in Engine.render_to_string.",
+      "issue_id": 29791,
+      "issue_title": "Engine.render_to_string() should honor the autoescape attribute",
+      "issue_body": "",
+      "issue_closed_at": "2019-03-25T17:26:24",
+      "base_commit": "d4df5e1b0b1c643fe0fc521add0236764ec8e92a",
+      "changes": [
+        {
+          "file": "django/template/engine.py",
+          "type": "function",
+          "name": "render_to_string",
+          "class_name": "Engine",
+          "code": "def render_to_string(self, template_name, context=None):\n        \"\"\"\n        Render the template specified by template_name with the given context.\n        For use in Django's test suite.\n        \"\"\"\n        if isinstance(template_name, (list, tuple)):\n            t = self.select_template(template_name)\n        else:\n            t = self.get_template(template_name)\n        # Django < 1.8 accepted a Context in `context` even though that's\n        # unintended. Preserve this ability but don't rewrap `context`.\n        if isinstance(context, Context):\n            return t.render(context)\n        else:\n            return t.render(Context(context))"
+        }
+      ]
+    }
+  ]
+}

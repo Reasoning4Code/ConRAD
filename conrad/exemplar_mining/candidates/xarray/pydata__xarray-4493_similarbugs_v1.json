@@ -1,0 +1,181 @@
+{
+  "instance_id": "pydata__xarray-4493",
+  "repo": "pydata/xarray",
+  "created_at": "2020-10-06T22:00:41Z",
+  "problem_statement": "DataSet.update causes chunked dask DataArray to evalute its values eagerly \n**What happened**:\r\nUsed `DataSet.update` to update a chunked dask DataArray, but the DataArray is no longer chunked after the update.\r\n\r\n**What you expected to happen**:\r\nThe chunked DataArray should still be chunked after the update\r\n\r\n**Minimal Complete Verifiable Example**:\r\n\r\n```python\r\nfoo = xr.DataArray(np.random.randn(3, 3), dims=(\"x\", \"y\")).chunk()  # foo is chunked\r\nds = xr.Dataset({\"foo\": foo, \"bar\": (\"x\", [1, 2, 3])})  # foo is still chunked here\r\nds  # you can verify that foo is chunked\r\n```\r\n```python\r\nupdate_dict = {\"foo\": ((\"x\", \"y\"), ds.foo[1:, :]), \"bar\": (\"x\", ds.bar[1:])}\r\nupdate_dict[\"foo\"][1]  # foo is still chunked\r\n```\r\n```python\r\nds.update(update_dict)\r\nds  # now foo is no longer chunked\r\n```\r\n\r\n**Environment**:\r\n\r\n<details><summary>Output of <tt>xr.show_versions()</tt></summary>\r\n\r\n```\r\ncommit: None\r\npython: 3.8.3 (default, Jul  2 2020, 11:26:31) \r\n[Clang 10.0.0 ]\r\npython-bits: 64\r\nOS: Darwin\r\nOS-release: 19.6.0\r\nmachine: x86_64\r\nprocessor: i386\r\nbyteorder: little\r\nLC_ALL: None\r\nLANG: en_US.UTF-8\r\nLOCALE: en_US.UTF-8\r\nlibhdf5: 1.10.6\r\nlibnetcdf: None\r\n\r\nxarray: 0.16.0\r\npandas: 1.0.5\r\nnumpy: 1.18.5\r\nscipy: 1.5.0\r\nnetCDF4: None\r\npydap: None\r\nh5netcdf: None\r\nh5py: 2.10.0\r\nNio: None\r\nzarr: None\r\ncftime: None\r\nnc_time_axis: None\r\nPseudoNetCDF: None\r\nrasterio: None\r\ncfgrib: None\r\niris: None\r\nbottleneck: None\r\ndask: 2.20.0\r\ndistributed: 2.20.0\r\nmatplotlib: 3.2.2\r\ncartopy: None\r\nseaborn: None\r\nnumbagg: None\r\npint: None\r\nsetuptools: 49.2.0.post20200714\r\npip: 20.1.1\r\nconda: None\r\npytest: 5.4.3\r\nIPython: 7.16.1\r\nsphinx: None\r\n```\r\n\r\n</details>\nDataset constructor with DataArray triggers computation\nIs it intentional that creating a Dataset with a DataArray and dimension names for a single variable causes computation of that variable?  In other words, why does ```xr.Dataset(dict(a=('d0', xr.DataArray(da.random.random(10)))))``` cause the dask array to compute?\r\n\r\nA longer example:\r\n\r\n```python\r\nimport dask.array as da\r\nimport xarray as xr\r\nx = da.random.randint(1, 10, size=(100, 25))\r\nds = xr.Dataset(dict(a=xr.DataArray(x, dims=('x', 'y'))))\r\ntype(ds.a.data)\r\ndask.array.core.Array\r\n\r\n# Recreate the dataset with the same array, but also redefine the dimensions\r\nds2 = xr.Dataset(dict(a=(('x', 'y'), ds.a))\r\ntype(ds2.a.data)\r\nnumpy.ndarray\r\n```\r\n\r\n\n",
+  "patch": "diff --git a/xarray/core/variable.py b/xarray/core/variable.py\n--- a/xarray/core/variable.py\n+++ b/xarray/core/variable.py\n@@ -120,6 +120,16 @@ def as_variable(obj, name=None) -> \"Union[Variable, IndexVariable]\":\n     if isinstance(obj, Variable):\n         obj = obj.copy(deep=False)\n     elif isinstance(obj, tuple):\n+        if isinstance(obj[1], DataArray):\n+            # TODO: change into TypeError\n+            warnings.warn(\n+                (\n+                    \"Using a DataArray object to construct a variable is\"\n+                    \" ambiguous, please extract the data using the .data property.\"\n+                    \" This will raise a TypeError in 0.19.0.\"\n+                ),\n+                DeprecationWarning,\n+            )\n         try:\n             obj = Variable(*obj)\n         except (TypeError, ValueError) as error:\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 2603,
+      "pr_title": "Support HighLevelGraphs",
+      "pr_body": "Fixes https://github.com/dask/dask/issues/4291\r\n\r\n - [x] Fully documented, including `whats-new.rst` for all changes and `api.rst` for new API\r\n",
+      "issue_id": 4291,
+      "issue_title": "resample function gives 0s instead of NaNs",
+      "issue_body": "<!-- Please include a self-contained copy-pastable example that generates the issue if possible.\r\n\r\nPlease be concise with code posted. See guidelines below on how to provide a good bug report:\r\n\r\n- Craft Minimal Bug Reports: http://matthewrocklin.com/blog/work/2018/02/28/minimal-bug-reports\r\n- Minimal Complete Verifiable Examples: https://stackoverflow.com/help/mcve\r\n\r\nBug reports that follow these guidelines are easier to diagnose, and so are often handled much more quickly.\r\n-->\r\n\r\n**What happened**:\r\nWhen I use `resample(time='1d').sum(dim='time')` to resample a time series with NaNs, the resampled result gives me 0s instead of NaNs, while NaNs should be the correct answer.\r\n\r\n**What you expected to happen**:\r\n\r\nNaNs should be the correct answer.\r\n\r\n**Minimal Complete Verifiable Example**:\r\n\r\n```python\r\nimport xarray as xr\r\n\r\ndates =  pd.date_range('20200101', '20200601', freq='h')\r\ndata = np.linspace(0, 10, num=len(dates))\r\ndata[0:30*24] = np.nan\r\n\r\nda = xr.DataArray(data, coords=[dates], dims='time')\r\nda.plot()\r\n\r\n# Instead of NaNs, the resampled time series in January 20202 give us 0s, which not right.\r\nda.resample(time='1d', skipna=True).sum(dim='time', skipna=True).plot()\r\n```\r\n\r\n**Anything else we need to know?**:\r\n\r\nDid I misunderstand something here? Thanks!\r\n\r\n\r\n**Environment**:\r\nxarray - '0.15.1' \r\n\r\n<details><summary>Output of <tt>xr.show_versions()</tt></summary>\r\n\r\nxarray - '0.15.1' \r\n\r\n\r\n</details>\r\n",
+      "issue_closed_at": "2020-08-05T16:55:58Z",
+      "base_commit": "82789bc6f72a76d69ace4bbabd00601e28e808da",
+      "changes": [
+        {
+          "file": "xarray/core/dataarray.py",
+          "type": "function",
+          "name": "__dask_graph__",
+          "class_name": "DataArray",
+          "code": "def __dask_graph__(self):\n        return self._to_temp_dataset().__dask_graph__()"
+        },
+        {
+          "file": "xarray/core/dataset.py",
+          "type": "function",
+          "name": "__dask_graph__",
+          "class_name": "Dataset",
+          "code": "def __dask_graph__(self):\n        graphs = {k: v.__dask_graph__() for k, v in self.variables.items()}\n        graphs = {k: v for k, v in graphs.items() if v is not None}\n        if not graphs:\n            return None\n        else:\n            from dask import sharedict\n            return sharedict.merge(*graphs.values())"
+        },
+        {
+          "file": "xarray/core/variable.py",
+          "type": "function",
+          "name": "__dask_graph__",
+          "class_name": "Variable",
+          "code": "def __dask_graph__(self):\n        if isinstance(self._data, dask_array_type):\n            return self._data.__dask_graph__()\n        else:\n            return None"
+        }
+      ]
+    },
+    {
+      "pr_number": 2625,
+      "pr_title": "Get 0d slices of ndarrays directly from indexing",
+      "pr_body": " - [x] Closes #2622\r\n - [x] Tests added\r\n - [x] Fully documented, including `whats-new.rst` for all changes and `api.rst` for new API\r\n",
+      "issue_id": 2622,
+      "issue_title": "Unnecessary copy when indexing to obtain a 0d array",
+      "issue_body": "#### Code Sample\r\n```python\r\n>>> import numpy as np\r\n>>> import xarray as xr\r\n>>> da = xr.DataArray(np.arange(3))\r\n>>> da\r\n<xarray.DataArray (dim_0: 3)>\r\narray([0, 1, 2])\r\nDimensions without coordinates: dim_0\r\n>>> da[0].values.fill(99)\r\n>>> da\r\n<xarray.DataArray (dim_0: 3)>\r\narray([0, 1, 2])\r\nDimensions without coordinates: dim_0\r\n```\r\n#### Problem description\r\nIndexing into xarray objects creates a view of the underlying data if possible. A surprising exception is when all dimensions are indexed out and the resulting object is 0d. Xarray insists on returning a 0d array rather than a scalar, which suggests (at least to me) that this is also a view whenever possible; however, it is always a copy, and modifying it will never affect the original array.\r\n\r\n(The example above is a little contrived, since one could always call `da[0] = 99`. In my actual use case I am indexing into a Dataset in a way that creates views for all variables except the one that happens to collapse to 0d, and thus I'm unable to use the indexed Dataset to modify that variable in the original Dataset.) \r\n\r\nThe copy happens because, internally, the 0d array is created by retrieving a scalar from the underlying numpy array and then wrapping a new array around it. However, in numpy a 0d view can be created directly by indexing with `Ellipsis`/`...`, as follows:\r\n```python\r\n>>> import numpy as np\r\n>>> arr = np.arange(3)\r\n>>> arr[0, ...]\r\narray(0)\r\n```\r\nThus, a fix that solves my immediate issues and passes all current tests is to modify the following method:\r\nhttps://github.com/pydata/xarray/blob/778ffc49135d6f97e17b37b48304995fca72f1e0/xarray/core/indexing.py#L1154-L1163\r\nto always append an ellipsis for basic and outer indexing:\r\n```python\r\n    def _indexing_array_and_key(self, key):\r\n        if isinstance(key, OuterIndexer):\r\n            array = self.array\r\n>           key = _outer_to_numpy_indexer(key, self.array.shape) + (Ellipsis,)\r\n        elif isinstance(key, VectorizedIndexer):\r\n            array = nputils.NumpyVIndexAdapter(self.array)\r\n            key = key.tuple\r\n        elif isinstance(key, BasicIndexer):\r\n            array = self.array\r\n>           key = key.tuple + (Ellipsis,)\r\n```\r\nI'm not familiar enough with all the indexing variants in xarray to know if this covers all cases of 0d arrays that are currently copies but could be views. If someone wants to share some insight (e.g., some more advanced test cases), I could try and put together a pull request.\r\n\r\n#### Expected Output\r\n```python\r\n>>> da[0].values.fill(99)\r\n>>> da\r\n<xarray.DataArray (dim_0: 3)>\r\narray([99, 1, 2])\r\nDimensions without coordinates: dim_0\r\n```\r\n#### Output of ``xr.show_versions()``\r\n\r\n<details>\r\n/home/daniel/local/anaconda3/lib/python3.6/site-packages/h5py/__init__.py:36: FutureWarning: Conversion of the second argument of issubdtype from `float` to `np.floating` is deprecated. In future, it will be treated as `np.float64 == np.dtype(float).type`.\r\n  from ._conv import register_converters as _register_converters\r\n\r\nINSTALLED VERSIONS\r\n------------------\r\ncommit: None\r\npython: 3.6.5.final.0\r\npython-bits: 64\r\nOS: Linux\r\nOS-release: 4.15.0-42-lowlatency\r\nmachine: x86_64\r\nprocessor: x86_64\r\nbyteorder: little\r\nLC_ALL: None\r\nLANG: en_US.UTF-8\r\nLOCALE: en_US.UTF-8\r\n\r\nxarray: 0.11.0\r\npandas: 0.23.0\r\nnumpy: 1.14.3\r\nscipy: 1.1.0\r\nnetCDF4: 1.4.0\r\nh5netcdf: 0.6.2\r\nh5py: 2.7.1\r\nNio: None\r\nzarr: None\r\ncftime: 1.0.0b1\r\nPseudonetCDF: None\r\nrasterio: None\r\niris: None\r\nbottleneck: 1.2.1\r\ncyordereddict: None\r\ndask: 0.17.5\r\ndistributed: 1.21.8\r\nmatplotlib: 2.2.2\r\ncartopy: None\r\nseaborn: 0.8.1\r\nsetuptools: 39.1.0\r\npip: 10.0.1\r\nconda: 4.5.12\r\npytest: 3.5.1\r\nIPython: 6.4.0\r\nsphinx: 1.7.4\r\n</details>\r\n",
+      "issue_closed_at": "2018-12-22T22:57:59Z",
+      "base_commit": "a15587de419f8a47a875013813186a36fdc04c08",
+      "changes": [
+        {
+          "file": "xarray/core/indexing.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "PandasIndexAdapter",
+          "code": "def __init__(self, array, dtype=None):\n        self.array = utils.safe_cast_to_index(array)\n        if dtype is None:\n            if isinstance(array, pd.PeriodIndex):\n                dtype = np.dtype('O')\n            elif hasattr(array, 'categories'):\n                # category isn't a real numpy dtype\n                dtype = array.categories.dtype\n            elif not utils.is_valid_numpy_dtype(array.dtype):\n                dtype = np.dtype('O')\n            else:\n                dtype = array.dtype\n        self._dtype = dtype"
+        },
+        {
+          "file": "xarray/core/indexing.py",
+          "type": "function",
+          "name": "_indexing_array_and_key",
+          "class_name": "NumpyIndexingAdapter",
+          "code": "def _indexing_array_and_key(self, key):\n        if isinstance(key, OuterIndexer):\n            array = self.array\n            key = _outer_to_numpy_indexer(key, self.array.shape)\n        elif isinstance(key, VectorizedIndexer):\n            array = nputils.NumpyVIndexAdapter(self.array)\n            key = key.tuple\n        elif isinstance(key, BasicIndexer):\n            array = self.array\n            key = key.tuple\n        else:\n            raise TypeError('unexpected key type: {}'.format(type(key)))\n\n        return array, key"
+        },
+        {
+          "file": "xarray/core/indexing.py",
+          "type": "function",
+          "name": "transpose",
+          "class_name": "PandasIndexAdapter",
+          "code": "def transpose(self, order):\n        return self.array"
+        }
+      ]
+    },
+    {
+      "pr_number": 2934,
+      "pr_title": "Docs/more fixes",
+      "pr_body": "<!-- Feel free to remove check-list items aren't relevant to your change -->\r\n\r\n - partially addresses #2909 , closes #2901, closes #2908 \r\n",
+      "issue_id": 2908,
+      "issue_title": "More efficient rolling with large dask arrays",
+      "issue_body": "#### Code Sample\r\n\r\n```python\r\nimport xarray as xr\r\nimport dask.array as da\r\n\r\ndsize=[62,12,100,192,288]\r\narray1=da.random.random(dsize,chunks=(dsize[0],dsize[1],1,dsize[3],int(dsize[4]/2)))\r\narray2=xr.DataArray(array1)\r\nrollingmean=array2.rolling(dim_1=3,center=True).mean()  # <-- this kills all workers\r\n\r\n```\r\n#### Problem description\r\n\r\nI'm working on NCAR's cheyenne with a 36GB netcdf using dask_jobqueue.PBSCluster, and trying to calculate the running-mean along one dimension. Despite having plenty of memory reserved (400GB), I can watch DataArray.rolling blow up the bytes stored in the dashboard until the job hangs and all the workers are killed.  \r\n\r\nThe above snippet reproduces the issue with the same array size and chunksize as what I'm working with. This worker-killing behavior does not occur for arrays that are 100x smaller.  I've found a speedy way to calculate what I need without using rolling, but I thought I should bring this to your attention regardless. \r\n\r\nIn case it's relevant, here's how I'm setting up the dask cluster on cheyenne:\r\n```python\r\nfrom dask.distributed import Client\r\nfrom dask_jobqueue import PBSCluster  #version 0.4.1\r\n\r\ncluster=PBSCluster(cores=36, processes=9, memory='109GB', project=myproj, resource_spec='select=1:ncpus=36:mem=109G', queue='regular', walltime='02:00:00')\r\nnumnodes=4\r\nclient = Client(cluster)\r\ncluster.scale(numnodes*9)\r\n\r\n```\r\n\r\n#### Output of ``xr.show_versions()``\r\n\r\n<details>\r\n\r\nINSTALLED VERSIONS\r\n------------------\r\ncommit: None\r\npython: 3.7.1 (default, Dec 14 2018, 19:28:38) \r\n[GCC 7.3.0]\r\npython-bits: 64\r\nOS: Linux\r\nOS-release: 3.12.62-60.64.8-default\r\nmachine: x86_64\r\nprocessor: x86_64\r\nbyteorder: little\r\nLC_ALL: None\r\nLANG: en_US.UTF-8\r\nLOCALE: en_US.UTF-8\r\nlibhdf5: 1.10.4\r\nlibnetcdf: 4.6.2\r\n\r\nxarray: 0.12.1\r\npandas: 0.24.1\r\nnumpy: 1.15.4\r\nscipy: 1.2.1\r\nnetCDF4: 1.4.2\r\npydap: None\r\nh5netcdf: None\r\nh5py: None\r\nNio: None\r\nzarr: 2.3.1\r\ncftime: 1.0.3.4\r\nnc_time_axis: None\r\nPseudonetCDF: None\r\nrasterio: None\r\ncfgrib: None\r\niris: None\r\nbottleneck: None\r\ndask: 1.1.5\r\ndistributed: 1.26.1\r\nmatplotlib: 3.0.2\r\ncartopy: 0.17.0\r\nseaborn: 0.9.0\r\nsetuptools: 40.6.3\r\npip: 18.1\r\nconda: 4.6.13\r\npytest: None\r\nIPython: 7.3.0\r\nsphinx: None\r\n\r\n</details>\r\n",
+      "issue_closed_at": "2019-10-04T17:04:37Z",
+      "base_commit": "f3c7da6eba987ec67616cd8cb9aec6ea79f0e92c",
+      "changes": [
+        {
+          "file": "xarray/core/dataset.py",
+          "type": "function",
+          "name": "sizes",
+          "class_name": "Dataset",
+          "code": "def sizes(self) -> Mapping[Hashable, int]:\n        \"\"\"Mapping from dimension names to lengths.\n\n        Cannot be modified directly, but is updated when adding new variables.\n\n        This is an alias for `Dataset.dims` provided for the benefit of\n        consistency with `DataArray.sizes`.\n\n        See also\n        --------\n        DataArray.sizes\n        \"\"\"\n        return self.dims"
+        },
+        {
+          "file": "xarray/core/dataset.py",
+          "type": "function",
+          "name": "_dask_postpersist",
+          "class_name": "Dataset",
+          "code": "def _dask_postpersist(dsk, info, *args):\n        variables = OrderedDict()\n        for is_dask, k, v in info:\n            if is_dask:\n                func, args2 = v\n                result = func(dsk, *args2)\n            else:\n                result = v\n            variables[k] = result\n\n        return Dataset._construct_direct(variables, *args)"
+        },
+        {
+          "file": "xarray/core/dataset.py",
+          "type": "function",
+          "name": "persist",
+          "class_name": "Dataset",
+          "code": "def persist(self, **kwargs) -> \"Dataset\":\n        \"\"\" Trigger computation, keeping data as dask arrays\n\n        This operation can be used to trigger computation on underlying dask\n        arrays, similar to ``.compute()``.  However this operation keeps the\n        data as dask arrays.  This is particularly useful when using the\n        dask.distributed scheduler and you want to load a large amount of data\n        into distributed memory.\n\n        Parameters\n        ----------\n        **kwargs : dict\n            Additional keyword arguments passed on to ``dask.persist``.\n\n        See Also\n        --------\n        dask.persist\n        \"\"\"\n        new = self.copy(deep=False)\n        return new._persist_inplace(**kwargs)"
+        }
+      ]
+    },
+    {
+      "pr_number": 3028,
+      "pr_title": "Add \"errors\" keyword argument to drop() and drop_dims() (#2994)",
+      "pr_body": "<!-- Feel free to remove check-list items aren't relevant to your change -->\r\n\r\n - [x] Closes #2994 \r\n - [x] Tests added\r\n - [x] Fully documented, including `whats-new.rst` for all changes and `api.rst` for new API\r\n\r\nThis addresses #2994 by adding an \"errors\" keyword argument to `Dataset.drop()`, `Dataset.drop_dims()`, and `DataArray.drop()`. \r\n\r\nI stuck with pandas' convention of using either `errors='raise'`, now the default that maintains previous behavior by raising an error if any passed label is not found in the dataset/array, or `errors='ignore'` in which case any missing labels are silently ignored. \r\n\r\nThis seems like a pretty straightforward change; mainly it is just skipping checks for missing labels when `errors == 'ignore'` and passing the errors keyword over to the pandas method when using `index.drop()`. Hopefully there are no subtleties that I've missed. \r\n\r\nI added documentation to the appropriate methods, although I have been struggling to build the docs locally and am unsure if they look right.\r\n\r\nAlso this is my first attempt to contribute to any project, so suggestions and feedback are welcome. ",
+      "issue_id": 2994,
+      "issue_title": "xr.Dataset.drop",
+      "issue_body": "Currently, `drop` throws an error if one of the labels doesn't exist. It would be nice to have a parameter in the drop method for optionally ignoring errors like in the pandas.DataFrame.\r\nFrom the pandas [documentation](https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.drop.html):\r\n\r\n> errors : {\u2018ignore\u2019, \u2018raise\u2019}, default \u2018raise\u2019\r\n>     If \u2018ignore\u2019, suppress error and only existing labels are dropped.\r\n",
+      "issue_closed_at": "2019-06-20T15:48:00Z",
+      "base_commit": "c2a2a6efcaf2d279c78da4ba3a87ea96afe78be0",
+      "changes": [
+        {
+          "file": "xarray/core/dataarray.py",
+          "type": "function",
+          "name": "transpose",
+          "class_name": "DataArray",
+          "code": "def transpose(self, *dims, transpose_coords=None) -> 'DataArray':\n        \"\"\"Return a new DataArray object with transposed dimensions.\n\n        Parameters\n        ----------\n        *dims : str, optional\n            By default, reverse the dimensions. Otherwise, reorder the\n            dimensions to this order.\n        transpose_coords : boolean, optional\n            If True, also transpose the coordinates of this DataArray.\n\n        Returns\n        -------\n        transposed : DataArray\n            The returned DataArray's array is transposed.\n\n        Notes\n        -----\n        This operation returns a view of this array's data. It is\n        lazy for dask-backed DataArrays but not for numpy-backed DataArrays\n        -- the data will be fully loaded.\n\n        See Also\n        --------\n        numpy.transpose\n        Dataset.transpose\n        \"\"\"\n        if dims:\n            if set(dims) ^ set(self.dims):\n                raise ValueError('arguments to transpose (%s) must be '\n                                 'permuted array dimensions (%s)'\n                                 % (dims, tuple(self.dims)))\n\n        variable = self.variable.transpose(*dims)\n        if transpose_coords:\n            coords = {}\n            for name, coord in self.coords.items():\n                coord_dims = tuple(dim for dim in dims if dim in coord.dims)\n                coords[name] = coord.variable.transpose(*coord_dims)\n            return self._replace(variable, coords)\n        else:\n            if transpose_coords is None \\\n                    and any(self[c].ndim > 1 for c in self.coords):\n                warnings.warn('This DataArray contains multi-dimensional '\n                              'coordinates. In the future, these coordinates '\n                              'will be transposed as well unless you specify '\n                              'transpose_coords=False.',\n                              FutureWarning, stacklevel=2)\n            return self._replace(variable)"
+        },
+        {
+          "file": "xarray/core/dataarray.py",
+          "type": "function",
+          "name": "drop",
+          "class_name": "DataArray",
+          "code": "def drop(self, labels, dim=None):\n        \"\"\"Drop coordinates or index labels from this DataArray.\n\n        Parameters\n        ----------\n        labels : scalar or list of scalars\n            Name(s) of coordinate variables or index labels to drop.\n        dim : str, optional\n            Dimension along which to drop index labels. By default (if\n            ``dim is None``), drops coordinates rather than index labels.\n\n        Returns\n        -------\n        dropped : DataArray\n        \"\"\"\n        if utils.is_scalar(labels):\n            labels = [labels]\n        ds = self._to_temp_dataset().drop(labels, dim)\n        return self._from_temp_dataset(ds)"
+        },
+        {
+          "file": "xarray/core/dataset.py",
+          "type": "function",
+          "name": "_assert_all_in_dataset",
+          "class_name": "Dataset",
+          "code": "def _assert_all_in_dataset(self, names, virtual_okay=False):\n        bad_names = set(names) - set(self._variables)\n        if virtual_okay:\n            bad_names -= self.virtual_variables\n        if bad_names:\n            raise ValueError('One or more of the specified variables '\n                             'cannot be found in this dataset')"
+        },
+        {
+          "file": "xarray/core/dataset.py",
+          "type": "function",
+          "name": "drop",
+          "class_name": "Dataset",
+          "code": "def drop(self, labels, dim=None):\n        \"\"\"Drop variables or index labels from this dataset.\n\n        Parameters\n        ----------\n        labels : scalar or list of scalars\n            Name(s) of variables or index labels to drop.\n        dim : None or str, optional\n            Dimension along which to drop index labels. By default (if\n            ``dim is None``), drops variables rather than index labels.\n\n        Returns\n        -------\n        dropped : Dataset\n        \"\"\"\n        if utils.is_scalar(labels):\n            labels = [labels]\n        if dim is None:\n            return self._drop_vars(labels)\n        else:\n            try:\n                index = self.indexes[dim]\n            except KeyError:\n                raise ValueError(\n                    'dimension %r does not have coordinate labels' % dim)\n            new_index = index.drop(labels)\n            return self.loc[{dim: new_index}]"
+        },
+        {
+          "file": "xarray/core/dataset.py",
+          "type": "function",
+          "name": "drop_dims",
+          "class_name": "Dataset",
+          "code": "def drop_dims(self, drop_dims):\n        \"\"\"Drop dimensions and associated variables from this dataset.\n\n        Parameters\n        ----------\n        drop_dims : str or list\n            Dimension or dimensions to drop.\n\n        Returns\n        -------\n        obj : Dataset\n            The dataset without the given dimensions (or any variables\n            containing those dimensions)\n        \"\"\"\n        if utils.is_scalar(drop_dims):\n            drop_dims = [drop_dims]\n\n        missing_dimensions = [d for d in drop_dims if d not in self.dims]\n        if missing_dimensions:\n            raise ValueError('Dataset does not contain the dimensions: %s'\n                             % missing_dimensions)\n\n        drop_vars = set(k for k, v in self._variables.items()\n                        for d in v.dims if d in drop_dims)\n\n        variables = OrderedDict((k, v) for k, v in self._variables.items()\n                                if k not in drop_vars)\n        coord_names = set(k for k in self._coord_names if k in variables)\n\n        return self._replace_with_new_dims(variables, coord_names)"
+        }
+      ]
+    },
+    {
+      "pr_number": 4244,
+      "pr_title": "Clarify drop_vars return value.",
+      "pr_body": "The previous documentation was not clear about whether the variable\ndropping was \"inplace\" or created a fresh Dataset.\n",
+      "issue_id": 4302,
+      "issue_title": "Installing from sources does not install everything",
+      "issue_body": "<!-- Please include a self-contained copy-pastable example that generates the issue if possible.\r\n\r\nPlease be concise with code posted. See guidelines below on how to provide a good bug report:\r\n\r\n- Craft Minimal Bug Reports: http://matthewrocklin.com/blog/work/2018/02/28/minimal-bug-reports\r\n- Minimal Complete Verifiable Examples: https://stackoverflow.com/help/mcve\r\n\r\nBug reports that follow these guidelines are easier to diagnose, and so are often handled much more quickly.\r\n-->\r\n\r\n**What happened**:\r\n\r\nWhen installing from [sources](https://github.com/pydata/xarray/archive/v0.16.0.tar.gz) the package isn't fully installed, e.g. the `core` directory never gets added.\r\n```bash\r\n-rw-r--r-- 1   27K Aug  3 09:43 conventions.py\r\n-rw-r--r-- 1  9.5K Aug  3 09:43 convert.py\r\n-rw-r--r-- 1  2.4K Aug  3 09:43 __init__.py\r\ndrwxr-xr-x 1   274 Aug  3 09:43 __pycache__\r\n-rw-r--r-- 1     0 Aug  3 09:43 py.typed\r\ndrwxr-xr-x 1    14 Aug  3 09:43 static\r\n-rw-r--r-- 1   12K Aug  3 09:43 testing.py\r\ndrwxr-xr-x 1     8 Aug  3 09:43 tests\r\n-rw-r--r-- 1  3.6K Aug  3 09:43 tutorial.py\r\n-rw-r--r-- 1  4.7K Aug  3 09:43 ufuncs.py\r\n```\r\n\r\n**Minimal Complete Verifiable Example**:\r\n\r\n```bash\r\nwget -o xarray-0.16.0.tar.gz https://github.com/pydata/xarray/archive/v0.16.0.tar.gz\r\ntar xvfz xarray-0.16.0.tar.gz\r\ncd xarray-0.16.0\r\n# this is sadly required since the downloaded file does not contain *any* version information\r\n# setuptools_scm reads PKG-INFO as a last resort when trying to determine the version.\r\necho 'Version: 0.16.0' > PKG-INFO\r\npython3 setup.py install --prefix=<>\r\n# or\r\npip3 install -vvv --no-cache-dir --no-deps --no-index --no-build-isolation --compile --prefix=<> .\r\n```\r\n\r\n**Anything else we need to know?**:\r\nI think this is quite self-producing. It is just important that one does not do this on a git repo.\r\n\r\nDo you need anything else from me?",
+      "issue_closed_at": "2020-08-05T21:01:15Z",
+      "base_commit": "8fab5a2449d8368251f96fc2b9d1eaa3040894e6",
+      "changes": [
+        {
+          "file": "xarray/core/dataarray.py",
+          "type": "function",
+          "name": "T",
+          "class_name": "DataArray",
+          "code": "def T(self) -> \"DataArray\":\n        return self.transpose()"
+        },
+        {
+          "file": "xarray/core/dataarray.py",
+          "type": "function",
+          "name": "drop_vars",
+          "class_name": "DataArray",
+          "code": "def drop_vars(\n        self, names: Union[Hashable, Iterable[Hashable]], *, errors: str = \"raise\"\n    ) -> \"DataArray\":\n        \"\"\"Drop variables from this DataArray.\n\n        Parameters\n        ----------\n        names : hashable or iterable of hashables\n            Name(s) of variables to drop.\n        errors: {'raise', 'ignore'}, optional\n            If 'raise' (default), raises a ValueError error if any of the variable\n            passed are not in the dataset. If 'ignore', any given names that are in the\n            DataArray are dropped and no error is raised.\n\n        Returns\n        -------\n        dropped : Dataset\n\n        \"\"\"\n        ds = self._to_temp_dataset().drop_vars(names, errors=errors)\n        return self._from_temp_dataset(ds)"
+        }
+      ]
+    }
+  ]
+}

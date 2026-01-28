@@ -1,0 +1,132 @@
+{
+  "instance_id": "django__django-11099",
+  "repo": "django/django",
+  "created_at": "2019-03-20T03:46:18Z",
+  "problem_statement": "UsernameValidator allows trailing newline in usernames\nDescription\n\t\nASCIIUsernameValidator and UnicodeUsernameValidator use the regex \nr'^[\\w.@+-]+$'\nThe intent is to only allow alphanumeric characters as well as ., @, +, and -. However, a little known quirk of Python regexes is that $ will also match a trailing newline. Therefore, the user name validators will accept usernames which end with a newline. You can avoid this behavior by instead using \\A and \\Z to terminate regexes. For example, the validator regex could be changed to\nr'\\A[\\w.@+-]+\\Z'\nin order to reject usernames that end with a newline.\nI am not sure how to officially post a patch, but the required change is trivial - using the regex above in the two validators in contrib.auth.validators.\n",
+  "patch": "diff --git a/django/contrib/auth/validators.py b/django/contrib/auth/validators.py\n--- a/django/contrib/auth/validators.py\n+++ b/django/contrib/auth/validators.py\n@@ -7,7 +7,7 @@\n \n @deconstructible\n class ASCIIUsernameValidator(validators.RegexValidator):\n-    regex = r'^[\\w.@+-]+$'\n+    regex = r'^[\\w.@+-]+\\Z'\n     message = _(\n         'Enter a valid username. This value may contain only English letters, '\n         'numbers, and @/./+/-/_ characters.'\n@@ -17,7 +17,7 @@ class ASCIIUsernameValidator(validators.RegexValidator):\n \n @deconstructible\n class UnicodeUsernameValidator(validators.RegexValidator):\n-    regex = r'^[\\w.@+-]+$'\n+    regex = r'^[\\w.@+-]+\\Z'\n     message = _(\n         'Enter a valid username. This value may contain only letters, '\n         'numbers, and @/./+/-/_ characters.'\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 7471,
+      "pr_title": "Fixed #26812 -- Check only path with APPEND_SLASH enabled",
+      "pr_body": "",
+      "issue_id": 26812,
+      "issue_title": "APPEND_SLASH doesn't work with URLs that have query strings",
+      "issue_body": "Hi,\nIn\nmiddleware/common.py\nthere is a code, which checks whether the slash should be appended to URL.\ndef should_redirect_with_slash(self, request):\n        \"\"\"\n        Return True if settings.APPEND_SLASH is True and appending a slash to\n        the request path turns an invalid path into a valid one.\n        \"\"\"\n\n        if settings.APPEND_SLASH and not request.get_full_path().endswith('/'):\n            urlconf = getattr(request, 'urlconf', None)\n\n            return (\n                not urlresolvers.is_valid_path(request.path_info, urlconf)\n                and urlresolvers.is_valid_path('%s/' % request.path_info, urlconf)\n            )\n        return False\nIn most cases it works fine, but it fails to append slash, when used with LOGIN_URL without slash and with \"next\" parameter. For example:\nIt works fine:\n/accounts/login/?next=/polls/3/\n-> LOGIN_URL =\n/accounts/login/\nBut this one returns 404:\n/accounts/login?next=/polls/3/\n-> LOGIN_URL =\n/accounts/login (no trailing slash).\nIt is because:\nrequest.get_full_path().endswith('/')\nchecks also query string and therefore returns true and the slash is never appended.",
+      "issue_closed_at": "2016-11-06T03:38:42",
+      "base_commit": "b741fe397aa567dd43d3e9dbd9fb5ecca6eab412",
+      "changes": [
+        {
+          "file": "django/middleware/common.py",
+          "type": "function",
+          "name": "should_redirect_with_slash",
+          "class_name": "CommonMiddleware",
+          "code": "def should_redirect_with_slash(self, request):\n        \"\"\"\n        Return True if settings.APPEND_SLASH is True and appending a slash to\n        the request path turns an invalid path into a valid one.\n        \"\"\"\n        if settings.APPEND_SLASH and not request.get_full_path().endswith('/'):\n            urlconf = getattr(request, 'urlconf', None)\n            return (\n                not is_valid_path(request.path_info, urlconf) and\n                is_valid_path('%s/' % request.path_info, urlconf)\n            )\n        return False"
+        }
+      ]
+    },
+    {
+      "pr_number": 4204,
+      "pr_title": "Fixed #24395 -- Ensured inline ModelsForms have an updated related instance.",
+      "pr_body": "",
+      "issue_id": 24395,
+      "issue_title": "Cannot reference FK relation from inline ModelForm.save()",
+      "issue_body": "Hi devs,\nThis is directly related to the closed ticket\n#24325\nby Tim.\nThe problem is that the instance of the related object (an\nAuthor\ninstance in my example) in the formset's forms instances (\nBookForm\n) is not up-to-date.\nIn the admin, the call stack is:\n# django.contrib.admin.options.py\nModelAdmin.changeform_view():\n    ...\n    new_object = self.save_form(request, form, change=not add)\n    ...\n    self.save_model(request, new_object, form, not add)\n    self.save_related(...) [1]\n\n    def save_related():\n        self.save_formset(request, form, formset, change=change) [2]\n\n    def save_formset(self, request, form, formset, change):\n        formset.save() [3]\nAt this point\n[1]\n, the main form has already been saved and the\nnew_object\n(an\nAuthor\ninstance) is in the database.\nThis\nnew_object\ninstance is correctly bound to the formset(s) instance(s) but not to the formsets' forms.\nIMAO this is a bug.\nSince the\nnew_object\nis saved in the database and all the forms have been validated, there is no reason to have an old instance attached to the ModelForm.instance attribute (which is a\nBook\ninstance in my example).\nA basic patch could be something like that:\ndiff --git a/django/forms/models.py b/django/forms/models.py\nindex 98f84a0..40217f4 100644\n--- a/django/forms/models.py\n+++ b/django/forms/models.py\n@@ -649,6 +649,7 @@ class BaseModelFormSet(BaseFormSet):\n                 for form in self.saved_forms:\n                     form.save_m2m()\n             self.save_m2m = save_m2m\n+        self.set_forms_related_object(self.instance)\n         return self.save_existing_objects(commit) + self.save_new_objects(commit)\n \n     save.alters_data = True\n@@ -656,6 +657,11 @@ class BaseModelFormSet(BaseFormSet):\n     def clean(self):\n         self.validate_unique()\n \n+    def set_forms_related_object(self, obj):\n+        rel_name = self.fk.name\n+        for form in self.forms:\n+            setattr(form.instance, rel_name, obj)\n+\n     def validate_unique(self):\n         # Collect unique_checks and date_checks to run from all the forms.\n         all_unique_checks = set()\nWhat do you guys think ?\nThis patch passed most of admin tests. But I got a segfault with the last master checkout either I use the patch or not.\nstan@stanislrrasimac:tests$ PYTHONPATH=..:$PYTHONPATH python runtests.py admin_views -v 2\nTesting against Django installed in '/Users/stan/src/Django/repos/django/django/django'\nImporting application admin_views\nCreating test database for alias 'default' (':memory:')...\n...\ntest_logout_and_password_change_URLs (admin_views.tests.AdminViewBasicTest) ... ok\ntest_multiple_sort_same_field (admin_views.tests.AdminViewBasicTest) ... ok\ntest_named_group_field_choices_change_list (admin_views.tests.AdminViewBasicTest) ... ok\ntest_named_group_field_choices_filter (admin_views.tests.AdminViewBasicTest) ... ok\ntest_popup_add_POST (admin_views.tests.AdminViewBasicTest) ... ok\ntest_popup_dismiss_related (admin_views.tests.AdminViewBasicTest) ... ok\ntest_proxy_model_content_type_is_used_for_log_entries (admin_views.tests.AdminViewBasicTest) ... ok\ntest_relation_spanning_filters (admin_views.tests.AdminViewBasicTest) ... ok\ntest_resolve_admin_views (admin_views.tests.AdminViewBasicTest) ... ok\ntest_sort_indicators_admin_order (admin_views.tests.AdminViewBasicTest) ... ok\nSegmentation fault: 11\nstan@stanislrrasimac:tests$",
+      "issue_closed_at": "2015-02-24T10:46:57",
+      "base_commit": "8e129b42ad9c9adca599228ae2ad68271fa46d44",
+      "changes": [
+        {
+          "file": "django/forms/models.py",
+          "type": "function",
+          "name": "get_default_prefix",
+          "class_name": "BaseInlineFormSet",
+          "code": "def get_default_prefix(cls):\n        return cls.fk.rel.get_accessor_name(model=cls.model).replace('+', '')"
+        }
+      ]
+    },
+    {
+      "pr_number": 10277,
+      "pr_title": "Fixed #29612 -- Add prefetch_related() cache invalidation for Generic Relations",
+      "pr_body": "Ticket: https://code.djangoproject.com/ticket/29612\r\n\r\nNot sure if I need documentation for this, as the current docs seem to imply that this is the case anyway.",
+      "issue_id": 29612,
+      "issue_title": "Add prefetch_related() cache invalidation for GenericRelations",
+      "issue_body": "with two models joined with a generic foreignkey / relationship, if we prefetch the generic relation, its cache will not be invalidated by updates (\n.add\n,\n.remove\nnor\n.all().delete()\n)\nclass Foo(models.Model):\n    tags = GenericRelation(\"TaggedItem\")\n\nclass TaggedItem(models.Model):\n    tag = models.SlugField()\n    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)\n    object_id = models.PositiveIntegerField()\n    content_object = GenericForeignKey(\"content_type\", \"object_id\")\nFoo.objects.create()\nf = Foo.objects.prefetch_related('tags').last()\na = TaggedItem(tag='tag')\nprint(f.tags.all())\nf.tags.add(a, bulk=False)\nprint(f.tags.all())\nwill give\n<QuerySet []>\n<QuerySet []>",
+      "issue_closed_at": "2018-08-17T14:21:37",
+      "base_commit": "bf17f5e88466e3f571065345f5b2fea0d8af89fe",
+      "changes": [
+        {
+          "file": "django/contrib/contenttypes/fields.py",
+          "type": "function",
+          "name": "_apply_rel_filters",
+          "class_name": "GenericRelatedObjectManager",
+          "code": "def _apply_rel_filters(self, queryset):\n            \"\"\"\n            Filter the queryset for the instance this manager is bound to.\n            \"\"\"\n            db = self._db or router.db_for_read(self.model, instance=self.instance)\n            return queryset.using(db).filter(**self.core_filters)"
+        },
+        {
+          "file": "django/contrib/contenttypes/fields.py",
+          "type": "function",
+          "name": "get_prefetch_queryset",
+          "class_name": "GenericRelatedObjectManager",
+          "code": "def get_prefetch_queryset(self, instances, queryset=None):\n            if queryset is None:\n                queryset = super().get_queryset()\n\n            queryset._add_hints(instance=instances[0])\n            queryset = queryset.using(queryset._db or self._db)\n\n            query = {\n                '%s__pk' % self.content_type_field_name: self.content_type.id,\n                '%s__in' % self.object_id_field_name: {obj.pk for obj in instances}\n            }\n\n            # We (possibly) need to convert object IDs to the type of the\n            # instances' PK in order to match up instances:\n            object_id_converter = instances[0]._meta.pk.to_python\n            return (\n                queryset.filter(**query),\n                lambda relobj: object_id_converter(getattr(relobj, self.object_id_field_name)),\n                lambda obj: obj.pk,\n                False,\n                self.prefetch_cache_name,\n                False,\n            )"
+        },
+        {
+          "file": "django/contrib/contenttypes/fields.py",
+          "type": "function",
+          "name": "clear",
+          "class_name": "GenericRelatedObjectManager",
+          "code": "def clear(self, *, bulk=True):\n            self._clear(self, bulk)"
+        },
+        {
+          "file": "django/contrib/contenttypes/fields.py",
+          "type": "function",
+          "name": "set",
+          "class_name": "GenericRelatedObjectManager",
+          "code": "def set(self, objs, *, bulk=True, clear=False):\n            # Force evaluation of `objs` in case it's a queryset whose value\n            # could be affected by `manager.clear()`. Refs #19816.\n            objs = tuple(objs)\n\n            db = router.db_for_write(self.model, instance=self.instance)\n            with transaction.atomic(using=db, savepoint=False):\n                if clear:\n                    self.clear()\n                    self.add(*objs, bulk=bulk)\n                else:\n                    old_objs = set(self.using(db).all())\n                    new_objs = []\n                    for obj in objs:\n                        if obj in old_objs:\n                            old_objs.remove(obj)\n                        else:\n                            new_objs.append(obj)\n\n                    self.remove(*old_objs)\n                    self.add(*new_objs, bulk=bulk)"
+        }
+      ]
+    },
+    {
+      "pr_number": 4462,
+      "pr_title": "Fixed #24578 -- Fixed crash with QuerySet.update() on FK to O2O fields.",
+      "pr_body": "",
+      "issue_id": 24578,
+      "issue_title": "prepare_database_save breaks some OneToOneField's in 1.8",
+      "issue_body": "With 1.8 the following doesn't work:\n# models.py\nfrom django.db import models\n\nclass A(models.Model):\n    pass\n\nclass Aprime(models.Model):\n\n    original = models.OneToOneField(A, primary_key=True)\n\nclass B(models.Model):\n    aprime = models.ForeignKey(Aprime)\n\n# tests.py\n\nfrom django.test import TestCase\n\nfrom models import *\n\nclass TestTestCase(TestCase):\n\n    def test_ref(self):\n        a_one = A.objects.create()\n        a_two = A.objects.create()\n\n        self.assertNotEqual(a_one, a_two)\n\n        aprime = Aprime.objects.create(original=a_one)\n        aprime2 = Aprime.objects.create(original=a_two)\n\n        b = B.objects.create(aprime=aprime)\n\n        self.assertEqual(b.aprime, aprime)\n\n        B.objects.update(aprime=aprime2)\n\n        b = B.objects.get(pk=b.id)\n\n        self.assertEqual(b.aprime, aprime2)\nThis throws a\nInterfaceError: Error binding parameter 0 - probably unsupported type.\nwhen calling\nB.objects.update(aprime=aprime2)\n.\nThe bug disappears when overriding\nprepare_database_save\nto just return\nself.pk\ninstead of\ngetattr(self, field.rel.field_name)\n.  (This was the behavior as of 1.7 and the bug does not occur there.)\nNot sure why\nprepare_database_save\nwas modified but this bug actually affects a project of mine so would suggest rolling back to the 1.7 version.",
+      "issue_closed_at": "2015-04-09T07:21:57",
+      "base_commit": "20a98d863f00fc48f9c7fd783d8d0539c6be41f5",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "_get_next_or_previous_in_order",
+          "class_name": "Model",
+          "code": "def _get_next_or_previous_in_order(self, is_next):\n        cachename = \"__%s_order_cache\" % is_next\n        if not hasattr(self, cachename):\n            op = 'gt' if is_next else 'lt'\n            order = '_order' if is_next else '-_order'\n            order_field = self._meta.order_with_respect_to\n            obj = self._default_manager.filter(**{\n                order_field.name: getattr(self, order_field.attname)\n            }).filter(**{\n                '_order__%s' % op: self._default_manager.values('_order').filter(**{\n                    self._meta.pk.name: self.pk\n                })\n            }).order_by(order)[:1].get()\n            setattr(self, cachename, obj)\n        return getattr(self, cachename)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8629,
+      "pr_title": "Fixed #28293 -- Fixed union(), intersection(), and difference() when combining with an EmptyQuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/28293",
+      "issue_id": 28293,
+      "issue_title": "QuerySet.union(QuerySet.none()) results in an empty queryset, should be the original queryset",
+      "issue_body": "Tested on Django 1.11.2.\nAs\nQuerySet.union()\nuses the SQL\nUNION\noperator, I would expect \"SET1 UNION <EMPTY SET>\" to result in SET1. Currently it results in the empty set.\n>>> from django.contrib.auth.models import User\n>>> User.objects.count()\n100\n>>> list(User.objects.all().union(User.objects.none()))\n[]\nFrom\n​\nhttps://www.postgresql.org/docs/current/static/queries-union.html\nUNION effectively appends the result of query2 to the result of query1 ...\nQuerySet.difference()\nlooks to suffer from the same issue.",
+      "issue_closed_at": "2017-06-13T01:16:29",
+      "base_commit": "9dc83c356d363c090f3351c908cad6f823aeb7bf",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_combinator_query",
+          "class_name": "QuerySet",
+          "code": "def _combinator_query(self, combinator, *other_qs, all=False):\n        # Clone the query to inherit the select list and everything\n        clone = self._clone()\n        # Clear limits and ordering so they can be reapplied\n        clone.query.clear_ordering(True)\n        clone.query.clear_limits()\n        clone.query.combined_queries = (self.query,) + tuple(qs.query for qs in other_qs)\n        clone.query.combinator = combinator\n        clone.query.combinator_all = all\n        return clone"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = (compiler.as_sql() for compiler in compilers)\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    }
+  ]
+}

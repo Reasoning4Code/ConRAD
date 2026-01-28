@@ -1,0 +1,274 @@
+{
+  "instance_id": "pytest-dev__pytest-5692",
+  "repo": "pytest-dev/pytest",
+  "created_at": "2019-08-03T14:15:04Z",
+  "problem_statement": "Hostname and timestamp properties in generated JUnit XML reports\nPytest enables generating JUnit XML reports of the tests.\r\n\r\nHowever, there are some properties missing, specifically `hostname` and `timestamp` from the `testsuite` XML element. Is there an option to include them?\r\n\r\nExample of a pytest XML report:\r\n```xml\r\n<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<testsuite errors=\"0\" failures=\"2\" name=\"check\" skipped=\"0\" tests=\"4\" time=\"0.049\">\r\n\t<testcase classname=\"test_sample.TestClass\" file=\"test_sample.py\" line=\"3\" name=\"test_addOne_normal\" time=\"0.001\"></testcase>\r\n\t<testcase classname=\"test_sample.TestClass\" file=\"test_sample.py\" line=\"6\" name=\"test_addOne_edge\" time=\"0.001\"></testcase>\r\n</testsuite>\r\n```\r\n\r\nExample of a junit XML report:\r\n```xml\r\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<testsuite name=\"location.GeoLocationTest\" tests=\"2\" skipped=\"0\" failures=\"0\" errors=\"0\" timestamp=\"2019-04-22T10:32:27\" hostname=\"Anass-MacBook-Pro.local\" time=\"0.048\">\r\n  <properties/>\r\n  <testcase name=\"testIoException()\" classname=\"location.GeoLocationTest\" time=\"0.044\"/>\r\n  <testcase name=\"testJsonDeserialization()\" classname=\"location.GeoLocationTest\" time=\"0.003\"/>\r\n  <system-out><![CDATA[]]></system-out>\r\n  <system-err><![CDATA[]]></system-err>\r\n</testsuite>\r\n```\n",
+  "patch": "diff --git a/src/_pytest/junitxml.py b/src/_pytest/junitxml.py\n--- a/src/_pytest/junitxml.py\n+++ b/src/_pytest/junitxml.py\n@@ -10,9 +10,11 @@\n \"\"\"\n import functools\n import os\n+import platform\n import re\n import sys\n import time\n+from datetime import datetime\n \n import py\n \n@@ -666,6 +668,8 @@ def pytest_sessionfinish(self):\n             skipped=self.stats[\"skipped\"],\n             tests=numtests,\n             time=\"%.3f\" % suite_time_delta,\n+            timestamp=datetime.fromtimestamp(self.suite_start_time).isoformat(),\n+            hostname=platform.node(),\n         )\n         logfile.write(Junit.testsuites([suite_node]).unicode(indent=0))\n         logfile.close()\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 4749,
+      "pr_title": "Merge master into features",
+      "pr_body": "",
+      "issue_id": 2895,
+      "issue_title": "pytest_report_collectionfinish does not execute with --collect-only",
+      "issue_body": "As commented [here](https://github.com/pytest-dev/pytest/pull/2623#issuecomment-341478287).",
+      "issue_closed_at": "2019-02-06T22:38:12Z",
+      "base_commit": "4cd268dc5d19a5ac362785d3068229559e69ddd7",
+      "changes": [
+        {
+          "file": "src/_pytest/config/__init__.py",
+          "type": "function",
+          "name": "_get_plugin_specs_as_list",
+          "class_name": null,
+          "code": "def _get_plugin_specs_as_list(specs):\n    \"\"\"\n    Parses a list of \"plugin specs\" and returns a list of plugin names.\n\n    Plugin specs can be given as a list of strings separated by \",\" or already as a list/tuple in\n    which case it is returned as a list. Specs can also be `None` in which case an\n    empty list is returned.\n    \"\"\"\n    if specs is not None:\n        if isinstance(specs, str):\n            specs = specs.split(\",\") if specs else []\n        if not isinstance(specs, (list, tuple)):\n            raise UsageError(\n                \"Plugin specs must be a ','-separated string or a \"\n                \"list/tuple of strings for plugin names. Given: %r\" % specs\n            )\n        return list(specs)\n    return []"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "get_actual_log_level",
+          "class_name": null,
+          "code": "def get_actual_log_level(config, *setting_names):\n    \"\"\"Return the actual logging level.\"\"\"\n\n    for setting_name in setting_names:\n        log_level = config.getoption(setting_name)\n        if log_level is None:\n            log_level = config.getini(setting_name)\n        if log_level:\n            break\n    else:\n        return\n\n    if isinstance(log_level, six.string_types):\n        log_level = log_level.upper()\n    try:\n        return int(getattr(logging, log_level, log_level))\n    except ValueError:\n        # Python logging does not recognise this as a logging level\n        raise pytest.UsageError(\n            \"'{}' is not recognized as a logging level name for \"\n            \"'{}'. Please consider passing the \"\n            \"logging level num instead.\".format(log_level, setting_name)\n        )"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "_LiveLoggingStreamHandler",
+          "code": "def __init__(self, terminal_reporter, capture_manager):\n        \"\"\"\n        :param _pytest.terminal.TerminalReporter terminal_reporter:\n        :param _pytest.capture.CaptureManager capture_manager:\n        \"\"\"\n        logging.StreamHandler.__init__(self, stream=terminal_reporter)\n        self.capture_manager = capture_manager\n        self.reset()\n        self.set_when(None)\n        self._test_outcome_written = False"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "_LiveLoggingStreamHandler",
+          "code": "def __init__(self, terminal_reporter, capture_manager):\n        \"\"\"\n        :param _pytest.terminal.TerminalReporter terminal_reporter:\n        :param _pytest.capture.CaptureManager capture_manager:\n        \"\"\"\n        logging.StreamHandler.__init__(self, stream=terminal_reporter)\n        self.capture_manager = capture_manager\n        self.reset()\n        self.set_when(None)\n        self._test_outcome_written = False"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "_log_cli_enabled",
+          "class_name": "LoggingPlugin",
+          "code": "def _log_cli_enabled(self):\n        \"\"\"Return True if log_cli should be considered enabled, either explicitly\n        or because --log-cli-level was given in the command-line.\n        \"\"\"\n        return self._config.getoption(\n            \"--log-cli-level\"\n        ) is not None or self._config.getini(\"log_cli\")"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "pytest_sessionfinish",
+          "class_name": "LoggingPlugin",
+          "code": "def pytest_sessionfinish(self):\n        with self.live_logs_context():\n            if self.log_cli_handler:\n                self.log_cli_handler.set_when(\"sessionfinish\")\n            if self.log_file_handler is not None:\n                with catching_logs(self.log_file_handler, level=self.log_file_level):\n                    yield\n            else:\n                yield"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "pytest_runtestloop",
+          "class_name": "LoggingPlugin",
+          "code": "def pytest_runtestloop(self, session):\n        \"\"\"Runs all collected test items.\"\"\"\n        with self.live_logs_context():\n            if self.log_file_handler is not None:\n                with catching_logs(self.log_file_handler, level=self.log_file_level):\n                    yield  # run all the tests\n            else:\n                yield"
+        },
+        {
+          "file": "src/_pytest/main.py",
+          "type": "function",
+          "name": "filter_",
+          "class_name": "Session",
+          "code": "def filter_(f):\n                    return f.check(file=1)"
+        },
+        {
+          "file": "src/_pytest/python.py",
+          "type": "function",
+          "name": "gethookproxy",
+          "class_name": "Package",
+          "code": "def gethookproxy(self, fspath):\n        # check if we have the common case of running\n        # hooks with all conftest.py filesall conftest.py\n        pm = self.config.pluginmanager\n        my_conftestmodules = pm._getconftestmodules(fspath)\n        remove_mods = pm._conftest_plugins.difference(my_conftestmodules)\n        if remove_mods:\n            # one or more conftests are not in use at this fspath\n            proxy = FSHookProxy(fspath, pm, remove_mods)\n        else:\n            # all plugis are active for this fspath\n            proxy = self.config.hook\n        return proxy"
+        },
+        {
+          "file": "src/_pytest/python.py",
+          "type": "function",
+          "name": "collect",
+          "class_name": "Instance",
+          "code": "def collect(self):\n        self.session._fixturemanager.parsefactories(self)\n        return super(Instance, self).collect()"
+        },
+        {
+          "file": "src/_pytest/python.py",
+          "type": "function",
+          "name": "_find_parametrized_scope",
+          "class_name": null,
+          "code": "def _find_parametrized_scope(argnames, arg2fixturedefs, indirect):\n    \"\"\"Find the most appropriate scope for a parametrized call based on its arguments.\n\n    When there's at least one direct argument, always use \"function\" scope.\n\n    When a test function is parametrized and all its arguments are indirect\n    (e.g. fixtures), return the most narrow scope based on the fixtures used.\n\n    Related to issue #1832, based on code posted by @Kingdread.\n    \"\"\"\n    from _pytest.fixtures import scopes\n\n    if isinstance(indirect, (list, tuple)):\n        all_arguments_are_fixtures = len(indirect) == len(argnames)\n    else:\n        all_arguments_are_fixtures = bool(indirect)\n\n    if all_arguments_are_fixtures:\n        fixturedefs = arg2fixturedefs or {}\n        used_scopes = [\n            fixturedef[0].scope\n            for name, fixturedef in fixturedefs.items()\n            if name in argnames\n        ]\n        if used_scopes:\n            # Takes the most narrow scope from used fixtures\n            for scope in reversed(scopes):\n                if scope in used_scopes:\n                    return scope\n\n    return \"function\""
+        },
+        {
+          "file": "src/_pytest/python.py",
+          "type": "function",
+          "name": "_idval",
+          "class_name": null,
+          "code": "def _idval(val, argname, idx, idfn, item, config):\n    if idfn:\n        s = None\n        try:\n            s = idfn(val)\n        except Exception as e:\n            # See issue https://github.com/pytest-dev/pytest/issues/2169\n            msg = \"{}: error raised while trying to determine id of parameter '{}' at position {}\\n\"\n            msg = msg.format(item.nodeid, argname, idx)\n            # we only append the exception type and message because on Python 2 reraise does nothing\n            msg += \"  {}: {}\\n\".format(type(e).__name__, e)\n            six.raise_from(ValueError(msg), e)\n        if s:\n            return ascii_escaped(s)\n\n    if config:\n        hook_id = config.hook.pytest_make_parametrize_id(\n            config=config, val=val, argname=argname\n        )\n        if hook_id:\n            return hook_id\n\n    if isinstance(val, STRING_TYPES):\n        return ascii_escaped(val)\n    elif isinstance(val, (float, int, bool, NoneType)):\n        return str(val)\n    elif isinstance(val, REGEX_TYPE):\n        return ascii_escaped(val.pattern)\n    elif enum is not None and isinstance(val, enum.Enum):\n        return str(val)\n    elif (isclass(val) or isfunction(val)) and hasattr(val, \"__name__\"):\n        return val.__name__\n    return str(argname) + str(idx)"
+        },
+        {
+          "file": "src/_pytest/python_api.py",
+          "type": "function",
+          "name": "raises",
+          "class_name": null,
+          "code": "def raises(expected_exception, *args, **kwargs):\n    r\"\"\"\n    Assert that a code block/function call raises ``expected_exception``\n    or raise a failure exception otherwise.\n\n    :kwparam match: if specified, asserts that the exception matches a text or regex\n\n    :kwparam message: **(deprecated since 4.1)** if specified, provides a custom failure message\n        if the exception is not raised\n\n    .. currentmodule:: _pytest._code\n\n    Use ``pytest.raises`` as a context manager, which will capture the exception of the given\n    type::\n\n        >>> with raises(ZeroDivisionError):\n        ...    1/0\n\n    If the code block does not raise the expected exception (``ZeroDivisionError`` in the example\n    above), or no exception at all, the check will fail instead.\n\n    You can also use the keyword argument ``match`` to assert that the\n    exception matches a text or regex::\n\n        >>> with raises(ValueError, match='must be 0 or None'):\n        ...     raise ValueError(\"value must be 0 or None\")\n\n        >>> with raises(ValueError, match=r'must be \\d+$'):\n        ...     raise ValueError(\"value must be 42\")\n\n    The context manager produces an :class:`ExceptionInfo` object which can be used to inspect the\n    details of the captured exception::\n\n        >>> with raises(ValueError) as exc_info:\n        ...     raise ValueError(\"value must be 42\")\n        >>> assert exc_info.type is ValueError\n        >>> assert exc_info.value.args[0] == \"value must be 42\"\n\n    .. deprecated:: 4.1\n\n        In the context manager form you may use the keyword argument\n        ``message`` to specify a custom failure message that will be displayed\n        in case the ``pytest.raises`` check fails. This has been deprecated as it\n        is considered error prone as users often mean to use ``match`` instead.\n\n    .. note::\n\n       When using ``pytest.raises`` as a context manager, it's worthwhile to\n       note that normal context manager rules apply and that the exception\n       raised *must* be the final line in the scope of the context manager.\n       Lines of code after that, within the scope of the context manager will\n       not be executed. For example::\n\n           >>> value = 15\n           >>> with raises(ValueError) as exc_info:\n           ...     if value > 10:\n           ...         raise ValueError(\"value must be <= 10\")\n           ...     assert exc_info.type is ValueError  # this will not execute\n\n       Instead, the following approach must be taken (note the difference in\n       scope)::\n\n           >>> with raises(ValueError) as exc_info:\n           ...     if value > 10:\n           ...         raise ValueError(\"value must be <= 10\")\n           ...\n           >>> assert exc_info.type is ValueError\n\n    **Legacy form**\n\n    It is possible to specify a callable by passing a to-be-called lambda::\n\n        >>> raises(ZeroDivisionError, lambda: 1/0)\n        <ExceptionInfo ...>\n\n    or you can specify an arbitrary callable with arguments::\n\n        >>> def f(x): return 1/x\n        ...\n        >>> raises(ZeroDivisionError, f, 0)\n        <ExceptionInfo ...>\n        >>> raises(ZeroDivisionError, f, x=0)\n        <ExceptionInfo ...>\n\n    The form above is fully supported but discouraged for new code because the\n    context manager form is regarded as more readable and less error-prone.\n\n    .. note::\n        Similar to caught exception objects in Python, explicitly clearing\n        local references to returned ``ExceptionInfo`` objects can\n        help the Python interpreter speed up its garbage collection.\n\n        Clearing those references breaks a reference cycle\n        (``ExceptionInfo`` --> caught exception --> frame stack raising\n        the exception --> current frame stack --> local variables -->\n        ``ExceptionInfo``) which makes Python keep all objects referenced\n        from that cycle (including all local variables in the current\n        frame) alive until the next cyclic garbage collection run. See the\n        official Python ``try`` statement documentation for more detailed\n        information.\n\n    \"\"\"\n    __tracebackhide__ = True\n    for exc in filterfalse(isclass, always_iterable(expected_exception, BASE_TYPE)):\n        msg = (\n            \"exceptions must be old-style classes or\"\n            \" derived from BaseException, not %s\"\n        )\n        raise TypeError(msg % type(exc))\n\n    message = \"DID NOT RAISE {}\".format(expected_exception)\n    match_expr = None\n\n    if not args:\n        if \"message\" in kwargs:\n            message = kwargs.pop(\"message\")\n            warnings.warn(deprecated.RAISES_MESSAGE_PARAMETER, stacklevel=2)\n        if \"match\" in kwargs:\n            match_expr = kwargs.pop(\"match\")\n        if kwargs:\n            msg = \"Unexpected keyword arguments passed to pytest.raises: \"\n            msg += \", \".join(kwargs.keys())\n            raise TypeError(msg)\n        return RaisesContext(expected_exception, message, match_expr)\n    elif isinstance(args[0], str):\n        warnings.warn(deprecated.RAISES_EXEC, stacklevel=2)\n        code, = args\n        assert isinstance(code, str)\n        frame = sys._getframe(1)\n        loc = frame.f_locals.copy()\n        loc.update(kwargs)\n        # print \"raises frame scope: %r\" % frame.f_locals\n        try:\n            code = _pytest._code.Source(code).compile(_genframe=frame)\n            six.exec_(code, frame.f_globals, loc)\n            # XXX didn't mean f_globals == f_locals something special?\n            #     this is destroyed here ...\n        except expected_exception:\n            return _pytest._code.ExceptionInfo.from_current()\n    else:\n        func = args[0]\n        try:\n            func(*args[1:], **kwargs)\n        except expected_exception:\n            return _pytest._code.ExceptionInfo.from_current()\n    fail(message)"
+        },
+        {
+          "file": "src/_pytest/terminal.py",
+          "type": "function",
+          "name": "pytest_report_header",
+          "class_name": "TerminalReporter",
+          "code": "def pytest_report_header(self, config):\n        inifile = \"\"\n        if config.inifile:\n            inifile = \" \" + config.rootdir.bestrelpath(config.inifile)\n        lines = [\"rootdir: %s, inifile:%s\" % (config.rootdir, inifile)]\n\n        plugininfo = config.pluginmanager.list_plugin_distinfo()\n        if plugininfo:\n\n            lines.append(\"plugins: %s\" % \", \".join(_plugin_nameversions(plugininfo)))\n        return lines"
+        },
+        {
+          "file": "src/_pytest/unittest.py",
+          "type": "function",
+          "name": "_make_xunit_fixture",
+          "class_name": null,
+          "code": "def _make_xunit_fixture(obj, setup_name, teardown_name, scope, pass_self):\n    setup = getattr(obj, setup_name, None)\n    teardown = getattr(obj, teardown_name, None)\n    if setup is None and teardown is None:\n        return None\n\n    @pytest.fixture(scope=scope, autouse=True)\n    def fixture(self, request):\n        if setup is not None:\n            if pass_self:\n                setup(self, request.function)\n            else:\n                setup()\n        yield\n        if teardown is not None:\n            if pass_self:\n                teardown(self, request.function)\n            else:\n                teardown()\n\n    return fixture"
+        }
+      ]
+    },
+    {
+      "pr_number": 5539,
+      "pr_title": "Replace importlib_metadata with importlib.metadata on Python 3.8+",
+      "pr_body": "Fixes https://github.com/pytest-dev/pytest/issues/5537\r\n\r\n<!--\r\nThanks for submitting a PR, your contribution is really appreciated!\r\n\r\nHere is a quick checklist that should be present in PRs.\r\n(please delete this text from the final description, this is just a guideline)\r\n-->\r\n\r\n- [x] Target the `features` branch\r\n\r\nUnless your change is trivial or a small documentation fix (e.g.,  a typo or reword of a small section) please:\r\n\r\n- [x] Create a new changelog file in the `changelog` folder, with a name like `<ISSUE NUMBER>.<TYPE>.rst`. See [changelog/README.rst](https://github.com/pytest-dev/pytest/blob/master/changelog/README.rst) for details.\r\n- [x] Add yourself to `AUTHORS` in alphabetical order;\r\n\r\n\r\nI'm still running tox locally, there are some 3.8 failures, not yet sure if related.",
+      "issue_id": 5523,
+      "issue_title": "Command line parsing error with Python 3.8",
+      "issue_body": "- [X] a detailed description of the bug or suggestion\r\nCommand line parsing error with Python 3.8 when concatenating short options\r\n- [X] pytest and operating system versions\r\nPytest 5.0.0, Python 3.8.0b1, Windows 10\r\n- [X] minimal example if possible\r\n```\r\n> pytest -vx\r\nERROR: usage: pytest [options] [file_or_dir] [file_or_dir] [...]\r\npytest: error: unrecognized arguments: -vx\r\n  inifile: None\r\n  rootdir: F:\\Documents\\Scripts\\Runscript\r\n```\r\n`pytest -v -x` works\r\n",
+      "issue_closed_at": "2019-06-29T15:33:00Z",
+      "base_commit": "4f9bf028f503dbf99a5339db8466757e71647918",
+      "changes": [
+        {
+          "file": "setup.py",
+          "type": "line",
+          "name": "line 11",
+          "code": "    'pathlib2>=2.2.0;python_version<\"3.6\"',\n    'colorama;sys_platform==\"win32\"',\n    \"pluggy>=0.12,<1.0\",\n    \"importlib-metadata>=0.12\",\n    \"wcwidth\",\n]\n"
+        },
+        {
+          "file": "src/_pytest/compat.py",
+          "type": "line",
+          "name": "line 26",
+          "code": ")\n\n\ndef _format_args(func):\n    return str(signature(func))\n"
+        },
+        {
+          "file": "src/_pytest/config/__init__.py",
+          "type": "line",
+          "name": "line 9",
+          "code": "import warnings\nfrom functools import lru_cache\n\nimport importlib_metadata\nimport py\nfrom packaging.version import Version\nfrom pluggy import HookimplMarker"
+        },
+        {
+          "file": "src/_pytest/config/__init__.py",
+          "type": "line",
+          "name": "line 25",
+          "code": "from .findpaths import exists\nfrom _pytest._code import ExceptionInfo\nfrom _pytest._code import filter_traceback\nfrom _pytest.outcomes import fail\nfrom _pytest.outcomes import Skipped\nfrom _pytest.warning_types import PytestConfigWarning"
+        },
+        {
+          "file": "src/_pytest/config/argparsing.py",
+          "type": "function",
+          "name": "parse_args",
+          "class_name": "MyOptionParser",
+          "code": "def parse_args(self, args=None, namespace=None):\n        \"\"\"allow splitting of positional arguments\"\"\"\n        args, argv = self.parse_known_args(args, namespace)\n        if argv:\n            for arg in argv:\n                if arg and arg[0] == \"-\":\n                    lines = [\"unrecognized arguments: %s\" % (\" \".join(argv))]\n                    for k, v in sorted(self.extra_info.items()):\n                        lines.append(\"  {}: {}\".format(k, v))\n                    self.error(\"\\n\".join(lines))\n            getattr(args, FILE_OR_DIR).extend(argv)\n        return args"
+        }
+      ]
+    },
+    {
+      "pr_number": 5559,
+      "pr_title": "Merge master into features",
+      "pr_body": "",
+      "issue_id": 5547,
+      "issue_title": "pytest stepwise doesn't work with xfail strict failures",
+      "issue_body": "```\r\ngraingert@onomastic:~/projects/foo$ cat tests/test_foo.py \r\nimport pytest\r\n\r\n\r\n@pytest.mark.xfail(reason=\"pass\")\r\ndef test_a():\r\n    pass\r\n\r\n\r\n@pytest.mark.xfail(reason=\"pass\")\r\ndef test_b():\r\n    pass\r\ngraingert@onomastic:~/projects/foo$ cat tests/pytest.ini \r\n[pytest]\r\naddopts = --strict\r\nxfail_strict=true\r\ngraingert@onomastic:~/projects/foo$ pytest --sw tests/\r\n================================ test session starts ================================\r\nplatform linux -- Python 3.7.3, pytest-5.0.0, py-1.8.0, pluggy-0.12.0\r\nrootdir: /home/graingert/projects/foo/tests, inifile: pytest.ini\r\ncollected 2 items                                                                   \r\nstepwise: no previously failed tests, not skipping.\r\n\r\ntests/test_foo.py FF                                                          [100%]\r\n\r\n===================================== FAILURES ======================================\r\n______________________________________ test_a _______________________________________\r\n[XPASS(strict)] pass\r\n______________________________________ test_b _______________________________________\r\n[XPASS(strict)] pass\r\n============================= 2 failed in 0.01 seconds ==============================\r\n```",
+      "issue_closed_at": "2019-07-04T23:50:34Z",
+      "base_commit": "60a358fa2dc82a571c68d1be2d25703b51351538",
+      "changes": [
+        {
+          "file": "doc/en/example/nonpython/conftest.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "\n\ndef pytest_collect_file(parent, path):\n    if path.ext == \".yml\" and path.basename.startswith(\"test\"):\n        return YamlFile(path, parent)\n\n"
+        },
+        {
+          "file": "src/_pytest/_code/code.py",
+          "type": "function",
+          "name": "match",
+          "class_name": "ExceptionInfo",
+          "code": "def match(self, regexp):\n        \"\"\"\n        Check whether the regular expression 'regexp' is found in the string\n        representation of the exception using ``re.search``. If it matches\n        then True is returned (so that it is possible to write\n        ``assert excinfo.match()``). If it doesn't match an AssertionError is\n        raised.\n        \"\"\"\n        __tracebackhide__ = True\n        if not re.search(regexp, str(self.value)):\n            assert 0, \"Pattern '{!s}' not found in '{!s}'\".format(regexp, self.value)\n        return True"
+        },
+        {
+          "file": "src/_pytest/stepwise.py",
+          "type": "function",
+          "name": "pytest_collection_modifyitems",
+          "class_name": "StepwisePlugin",
+          "code": "def pytest_collection_modifyitems(self, session, config, items):\n        if not self.active:\n            return\n        if not self.lastfailed:\n            self.report_status = \"no previously failed tests, not skipping.\"\n            return\n\n        already_passed = []\n        found = False\n\n        # Make a list of all tests that have been run before the last failing one.\n        for item in items:\n            if item.nodeid == self.lastfailed:\n                found = True\n                break\n            else:\n                already_passed.append(item)\n\n        # If the previously failed test was not found among the test items,\n        # do not skip any tests.\n        if not found:\n            self.report_status = \"previously failed test not found, not skipping.\"\n            already_passed = []\n        else:\n            self.report_status = \"skipping {} already passed items.\".format(\n                len(already_passed)\n            )\n\n        for item in already_passed:\n            items.remove(item)\n\n        config.hook.pytest_deselected(items=already_passed)"
+        }
+      ]
+    },
+    {
+      "pr_number": 1071,
+      "pr_title": "Wrong xml report when used with pytest-xdist",
+      "pr_body": "Fixes #1064 \n",
+      "issue_id": 1064,
+      "issue_title": "pytest 2.8.0 + xdist-1.13.1 writes incorrect junit-xml",
+      "issue_body": "Using python 2.7.10, pytest 2.8.0 and pytest-xdist 1.13.1.\n\nTestcase:\n\n```\nimport pytest, time\n\n@pytest.mark.parametrize('i', list(range(100)))\ndef test_x(i):\n    print(i)\n    time.sleep(i/300.0)\n    assert i != 42\n```\n\nRun with `pytest -n 8 --junit-xml=junit.xml`.\nThe output on the command line looks fine, showing the `test_x[42]` failure.\nBut look at the resulting `junit.xml` file: the failure appears in the wrong `<testcase>` node:\n\n```\n<testcase classname=\"test_x\" file=\"test_x.py\" line=\"2\" name=\"test_x[54]\" time=\"0.141129970551\"><failure message=\"i = 42 [...]</failure><system-out>42\n</system-out></testcase>\n```\n\nThis causes test failures to be listed incorrectly in our Jenkins CI.\nThe other `<system-out>` nodes also appear in the wrong `<testcase>` nodes.\n\nThe bug disappears when downgrading pytest to 2.7.3.\n",
+      "issue_closed_at": "2015-09-26T07:05:25Z",
+      "base_commit": "bc501a28afc5463ae6729928101780182fb1637e",
+      "changes": [
+        {
+          "file": "_pytest/junitxml.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "LogXML",
+          "code": "def __init__(self, logfile, prefix):\n        logfile = os.path.expanduser(os.path.expandvars(logfile))\n        self.logfile = os.path.normpath(os.path.abspath(logfile))\n        self.prefix = prefix\n        self.tests = []\n        self.passed = self.skipped = 0\n        self.failed = self.errors = 0\n        self.custom_properties = {}"
+        },
+        {
+          "file": "_pytest/junitxml.py",
+          "type": "function",
+          "name": "_opentestcase",
+          "class_name": "LogXML",
+          "code": "def _opentestcase(self, report):\n        names = mangle_testnames(report.nodeid.split(\"::\"))\n        classnames = names[:-1]\n        if self.prefix:\n            classnames.insert(0, self.prefix)\n        attrs = {\n            \"classname\": \".\".join(classnames),\n            \"name\": bin_xml_escape(names[-1]),\n            \"file\": report.location[0],\n            \"time\": 0,\n        }\n        if report.location[1] is not None:\n            attrs[\"line\"] = report.location[1]\n        self.tests.append(Junit.testcase(**attrs))"
+        },
+        {
+          "file": "_pytest/junitxml.py",
+          "type": "function",
+          "name": "_write_captured_output",
+          "class_name": "LogXML",
+          "code": "def _write_captured_output(self, report):\n        for capname in ('out', 'err'):\n            allcontent = \"\"\n            for name, content in report.get_sections(\"Captured std%s\" %\n                                                    capname):\n                allcontent += content\n            if allcontent:\n                tag = getattr(Junit, 'system-'+capname)\n                self.append(tag(bin_xml_escape(allcontent)))"
+        },
+        {
+          "file": "_pytest/junitxml.py",
+          "type": "function",
+          "name": "append_skipped",
+          "class_name": "LogXML",
+          "code": "def append_skipped(self, report):\n        if hasattr(report, \"wasxfail\"):\n            self.append(Junit.skipped(bin_xml_escape(report.wasxfail),\n                                      message=\"expected test failure\"))\n        else:\n            filename, lineno, skipreason = report.longrepr\n            if skipreason.startswith(\"Skipped: \"):\n                skipreason = bin_xml_escape(skipreason[9:])\n            self.append(\n                Junit.skipped(\"%s:%s: %s\" % (filename, lineno, skipreason),\n                              type=\"pytest.skip\",\n                              message=skipreason\n                ))\n        self.skipped += 1\n        self._write_captured_output(report)"
+        }
+      ]
+    },
+    {
+      "pr_number": 5205,
+      "pr_title": "Introduce record_testsuite_property fixture",
+      "pr_body": "This exposes the functionality introduced in fa6acdc as a session-scoped fixture.\r\n\r\nPlugins that want to remain compatible with the `xunit2`\r\nstandard should use this fixture instead of `record_property`.\r\n\r\nFix #5202\r\n\r\n@Zac-HD Hypothesis might want to use this fixture to produce `xunit2`-compatible reports according to #5202.\r\n\r\ncc @danilomendesdias",
+      "issue_id": 5202,
+      "issue_title": "Invalid XML schema for <properties> tags in JUnit reports ",
+      "issue_body": "The problem:\r\n\r\nJUnit breaks when it reads an XML generated by pytest if plugins make use of  `record-property`. This behavior happens with newer versions of  hypothesis (https://github.com/HypothesisWorks/hypothesis/issues/1935).\r\n\r\n```\r\n[xUnit] [ERROR] - The result file '/somewhere/tests/pytests.xml' for the metric 'JUnit' is not valid. The result file has been skipped.\r\n```\r\n\r\nIn fact, as already mentioned in https://github.com/pytest-dev/pytest/issues/1126#issuecomment-484581283,  `record-property` is adding `<properties>` inside `<testcase>` which seems to be wrong (it should be inside `<testsuite>`). See: https://github.com/windyroad/JUnit-Schema/blob/master/JUnit.xsd .\r\n\r\nIt happens with all junit families.\r\n\r\nReproducing:\r\n\r\n```\r\n$ pip list\r\nPackage        Version \r\n-------------- --------\r\napipkg         1.5     \r\natomicwrites   1.3.0   \r\nattrs          19.1.0  \r\ncertifi        2019.3.9\r\nexecnet        1.6.0   \r\nhypothesis     4.18.3  \r\nmore-itertools 4.3.0   \r\npip            19.1    \r\npluggy         0.9.0   \r\npy             1.8.0   \r\npytest         4.4.1   \r\npytest-forked  1.0.2   \r\npytest-xdist   1.28.0  \r\nsetuptools     41.0.1  \r\nsix            1.12.0  \r\nwheel          0.33.1 \r\n```\r\n\r\n`test_xml_generation.py`\r\n```\r\nfrom hypothesis import given, strategies\r\n\r\n\r\n@given(x=strategies.integers(1, 10,))\r\ndef test_xml_generation(x):\r\n    assert 1 <= x <= 10\r\n```\r\n\r\n```\r\n$ pytest --junitxml=report.xml\r\n```\r\n\r\n`report.xml`\r\n```\r\n<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<testsuite errors=\"0\" failures=\"0\" name=\"pytest\" skipped=\"0\" tests=\"1\" time=\"0.211\">\r\n    <testcase classname=\"test_xml_generation\" file=\"test_xml_generation.py\" line=\"3\" name=\"test_xml_generation\"\r\n              time=\"0.074\">\r\n        <properties>\r\n            <property name=\"hypothesis-stats\"\r\n                      value=\"[&apos;test_xml_generation.py::test_xml_generation:&apos;, &apos;&apos;, &apos;  - 100 passing examples, 0 failing examples, 0 invalid examples&apos;, &apos;  - Typical runtimes: &lt; 1ms&apos;, &apos;  - Fraction of time spent in data generation: ~ 49%&apos;, &apos;  - Stopped because settings.max_examples=100&apos;, &apos;&apos;]\"/>\r\n        </properties>\r\n    </testcase>\r\n</testsuite>\r\n```\r\n\r\nI was trying to create a PR to fix this, but when I saw https://github.com/pytest-dev/pytest/blob/7dcd9bf5add337686ec6f2ee81b24e8424319dba/src/_pytest/junitxml.py code I realized that what is needed to do could have more implications that I though. I think that nobody uses this feature with JUnit (as it breaks) and removing that is something to think about.\r\n\r\n",
+      "issue_closed_at": "2019-05-11T16:27:27Z",
+      "base_commit": "3a4a815c41badd1a6bac958aa18ddeb0c16cd202",
+      "changes": [
+        {
+          "file": "src/_pytest/junitxml.py",
+          "type": "function",
+          "name": "add_attr_noop",
+          "class_name": null,
+          "code": "def add_attr_noop(name, value):\n        pass"
+        },
+        {
+          "file": "src/_pytest/junitxml.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "LogXML",
+          "code": "def __init__(\n        self,\n        logfile,\n        prefix,\n        suite_name=\"pytest\",\n        logging=\"no\",\n        report_duration=\"total\",\n        family=\"xunit1\",\n    ):\n        logfile = os.path.expanduser(os.path.expandvars(logfile))\n        self.logfile = os.path.normpath(os.path.abspath(logfile))\n        self.prefix = prefix\n        self.suite_name = suite_name\n        self.logging = logging\n        self.report_duration = report_duration\n        self.family = family\n        self.stats = dict.fromkeys([\"error\", \"passed\", \"failure\", \"skipped\"], 0)\n        self.node_reporters = {}  # nodeid -> _NodeReporter\n        self.node_reporters_ordered = []\n        self.global_properties = []\n        # List of reports that failed on call but teardown is pending.\n        self.open_reports = []\n        self.cnt_double_fail_tests = 0\n\n        # Replaces convenience family with real family\n        if self.family == \"legacy\":\n            self.family = \"xunit1\""
+        },
+        {
+          "file": "src/_pytest/junitxml.py",
+          "type": "function",
+          "name": "pytest_terminal_summary",
+          "class_name": "LogXML",
+          "code": "def pytest_terminal_summary(self, terminalreporter):\n        terminalreporter.write_sep(\"-\", \"generated xml file: %s\" % (self.logfile))"
+        }
+      ]
+    }
+  ]
+}

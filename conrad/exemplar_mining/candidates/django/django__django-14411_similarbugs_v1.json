@@ -1,0 +1,159 @@
+{
+  "instance_id": "django__django-14411",
+  "repo": "django/django",
+  "created_at": "2021-05-19T04:05:47Z",
+  "problem_statement": "Label for ReadOnlyPasswordHashWidget points to non-labelable element.\nDescription\n\t \n\t\t(last modified by David Sanders)\n\t \nIn the admin, the label element for the ReadOnlyPasswordHashWidget widget has a 'for' attribute which points to a non-labelable element, since the widget just renders text, not an input. There's no labelable element for the widget, so the label shouldn't have a 'for' attribute.\n",
+  "patch": "diff --git a/django/contrib/auth/forms.py b/django/contrib/auth/forms.py\n--- a/django/contrib/auth/forms.py\n+++ b/django/contrib/auth/forms.py\n@@ -50,6 +50,9 @@ def get_context(self, name, value, attrs):\n         context['summary'] = summary\n         return context\n \n+    def id_for_label(self, id_):\n+        return None\n+\n \n class ReadOnlyPasswordHashField(forms.Field):\n     widget = ReadOnlyPasswordHashWidget\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8401,
+      "pr_title": "Fixed #28040 -- Updated SplitArrayWidget to use template-based widget rendering.",
+      "pr_body": "https://code.djangoproject.com/ticket/28040",
+      "issue_id": 28040,
+      "issue_title": "Update SplitArrayWidget to use template-based widget rendering",
+      "issue_body": "Error:\nAttributeError: 'SplitArrayWidget' object has no attribute 'template_name'\n.\nTraceback:\nTemplate error:\nIn template /home/vagrant/apps/pg/python/templates/shared/partials/structure.html, error at line 0\n   'SplitArrayWidget' object has no attribute 'template_name'   1 : {% load static_files %}\n   2 : {% spaceless %}\n   3 : <!DOCTYPE html>\n   4 : <html lang=\"pl\" itemscope itemtype=\"http://schema.org/Organization\" {% block html_attrs %}{% endblock html_attrs %} {% block tracking_scripts %}data-pg=\"google-tag-manager\" data-config-google-tag-manager=\"googleTagManager\"{% endblock tracking_scripts %}>\n   5 :     <head prefix=\"og: http://ogp.me/ns# fb: http://ogp.me/ns/fb#\">\n   6 :         <meta charset=\"utf-8\">\n   7 :         <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">\n   8 :         {% block head %}\n   9 : \n   10 :             {% block meta %}\n\n\nTraceback:\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/core/handlers/exception.py\" in inner\n  41.             response = get_response(request)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/core/handlers/base.py\" in _get_response\n  217.                 response = self.process_exception_by_middleware(e, request)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/core/handlers/base.py\" in _get_response\n  215.                 response = response.render()\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/response.py\" in render\n  107.             self.content = self.rendered_content\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/response.py\" in rendered_content\n  84.         content = template.render(context, self._request)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/backends/django.py\" in render\n  66.             return self.template.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render\n  207.                     return self._render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in _render\n  199.         return self.nodelist.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render\n  990.                 bit = node.render_annotated(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render_annotated\n  957.             return self.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/loader_tags.py\" in render\n  177.             return compiled_parent._render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in _render\n  199.         return self.nodelist.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render\n  990.                 bit = node.render_annotated(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render_annotated\n  957.             return self.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/loader_tags.py\" in render\n  177.             return compiled_parent._render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in _render\n  199.         return self.nodelist.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render\n  990.                 bit = node.render_annotated(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render_annotated\n  957.             return self.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/loader_tags.py\" in render\n  177.             return compiled_parent._render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in _render\n  199.         return self.nodelist.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render\n  990.                 bit = node.render_annotated(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render_annotated\n  957.             return self.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/defaulttags.py\" in render\n  411.         return strip_spaces_between_tags(self.nodelist.render(context).strip())\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render\n  990.                 bit = node.render_annotated(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render_annotated\n  957.             return self.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/loader_tags.py\" in render\n  72.                 result = block.nodelist.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render\n  990.                 bit = node.render_annotated(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render_annotated\n  957.             return self.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/loader_tags.py\" in render\n  72.                 result = block.nodelist.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render\n  990.                 bit = node.render_annotated(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/base.py\" in render_annotated\n  957.             return self.render(context)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/template/library.py\" in render\n  225.         _dict = self.func(*resolved_args, **resolved_kwargs)\n\nFile \"/home/vagrant/apps/pg/python/apps/shared/forms/templatetags/forms.py\" in render_field\n  85.     if not field:\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/forms/boundfield.py\" in __len__\n  64.         return len(self.subwidgets)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/utils/functional.py\" in __get__\n  35.         res = instance.__dict__[self.name] = self.func(instance)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/forms/boundfield.py\" in subwidgets\n  57.             for widget in self.field.widget.subwidgets(self.html_name, self.value(), attrs=attrs)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/forms/boundfield.py\" in <genexpr>\n  56.             BoundWidget(self.field.widget, widget, self.form.renderer)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/forms/widgets.py\" in subwidgets\n  191.         context = self.get_context(name, value, attrs)\n\nFile \"/usr/local/lib/python3.4/dist-packages/django/forms/widgets.py\" in get_context\n  212.             'template_name': self.template_name,\n\nException Type: AttributeError at /xxxx/\nException Value: 'SplitArrayWidget' object has no attribute 'template_name'\nI'm temporary fix this in my app by subclass django Widget and add template_name property\nfrom django.contrib.postgres import forms as postgres_forms\n\n\nclass SplitArrayWidget(postgres_forms.SplitArrayWidget):\n    template_name = ''",
+      "issue_closed_at": "2017-04-29T18:00:32",
+      "base_commit": "c920db1e57bf6bec65b075fd0baac72e13db9919",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/forms/array.py",
+          "type": "line",
+          "name": "line 6",
+          "code": "    ArrayMaxLengthValidator, ArrayMinLengthValidator,\n)\nfrom django.core.exceptions import ValidationError\nfrom django.utils.safestring import mark_safe\nfrom django.utils.translation import gettext_lazy as _\n\nfrom ..utils import prefix_validation_error"
+        },
+        {
+          "file": "django/contrib/postgres/forms/array.py",
+          "type": "function",
+          "name": "run_validators",
+          "class_name": "SimpleArrayField",
+          "code": "def run_validators(self, value):\n        super().run_validators(value)\n        errors = []\n        for index, item in enumerate(value):\n            try:\n                self.base_field.run_validators(item)\n            except ValidationError as error:\n                errors.append(prefix_validation_error(\n                    error,\n                    prefix=self.error_messages['item_invalid'],\n                    code='item_invalid',\n                    params={'nth': index},\n                ))\n        if errors:\n            raise ValidationError(errors)"
+        },
+        {
+          "file": "django/contrib/postgres/forms/array.py",
+          "type": "function",
+          "name": "id_for_label",
+          "class_name": "SplitArrayWidget",
+          "code": "def id_for_label(self, id_):\n        # See the comment for RadioSelect.id_for_label()\n        if id_:\n            id_ += '_0'\n        return id_"
+        },
+        {
+          "file": "django/contrib/postgres/forms/array.py",
+          "type": "function",
+          "name": "render",
+          "class_name": "SplitArrayWidget",
+          "code": "def render(self, name, value, attrs=None, renderer=None):\n        if self.is_localized:\n            self.widget.is_localized = self.is_localized\n        value = value or []\n        output = []\n        final_attrs = self.build_attrs(attrs)\n        id_ = final_attrs.get('id')\n        for i in range(max(len(value), self.size)):\n            try:\n                widget_value = value[i]\n            except IndexError:\n                widget_value = None\n            if id_:\n                final_attrs = dict(final_attrs, id='%s_%s' % (id_, i))\n            output.append(self.widget.render(name + '_%s' % i, widget_value, final_attrs, renderer))\n        return mark_safe(self.format_output(output))"
+        }
+      ]
+    },
+    {
+      "pr_number": 11034,
+      "pr_title": "Fixed #30221 -- Made label suffix of admin's read-only fields translatable.",
+      "pr_body": "https://code.djangoproject.com/ticket/30221",
+      "issue_id": 30221,
+      "issue_title": "Disabled field in admin use hard coded label_suffix",
+      "issue_body": "In the class\nhelpers.AdminReadonlyField\n, the\nlabel_tag\nmethod has hard coded \"\n:\n\" It is nor configurable neither able to tranlate (in French we use a space before \"\n:\n\").",
+      "issue_closed_at": "2019-02-28T11:36:52",
+      "base_commit": "25e724a5d6e331d2d73050d6dcdf2e8593c3aebf",
+      "changes": [
+        {
+          "file": "django/contrib/admin/helpers.py",
+          "type": "function",
+          "name": "label_tag",
+          "class_name": "AdminReadonlyField",
+          "code": "def label_tag(self):\n        attrs = {}\n        if not self.is_first:\n            attrs[\"class\"] = \"inline\"\n        label = self.field['label']\n        return format_html('<label{}>{}:</label>', flatatt(attrs), capfirst(label))"
+        }
+      ]
+    },
+    {
+      "pr_number": 3503,
+      "pr_title": "Fixed #23795 -- Fixed a regression in custom form fields",
+      "pr_body": "Custom form fields having a `queryset` attribute but no\n`limit_choices_to` could no longer be used in ModelForms.\n\nRefs #2445.\n\nThanks to @artscoop for the report.\n",
+      "issue_id": 23795,
+      "issue_title": "Django form fields : limit_choices_to should not be mandatory with queryset",
+      "issue_body": "Hi,\nI've found something that might be a bug, and which didn't happen with Django 1.6.\nI have an admin definition which uses a custom form field (an ajax field for ForeignKey lookups which inherits from\nCharField\n), and changes the form as follows:\ndef get_form(self, request, obj=None, **kwargs):\n        form = super(ProfileAdmin, self).get_form(request, obj, **kwargs)\n        if obj is not None:\n            form.base_fields['picture'].queryset = obj.pictures.all()\n        return form\nThis works well with Django 1.6 (and the queryset filtering is ok), but clashes with Django 1.7 code (*django/forms/models.py, 333, in BaseModelForm.\ninit\n*)\nif hasattr(formfield, 'queryset'):\n                limit_choices_to = formfield.limit_choices_to  # this attribute might not be a member of the field\n                if limit_choices_to is not None:\n                    if callable(limit_choices_to):\n                        limit_choices_to = limit_choices_to()\n                    formfield.queryset = formfield.queryset.complex_filter(limit_choices_to)\nThis fails with an\nAttributeError\nbecause Django assumes, without checking, that when a formfield is altered to use a queryset, it also uses a\nlimit_choices_to\nattribute. This is not always true, it seems.\nI see no error when instead of the custom field, I use a\nModelChoiceField\n(this makes sense,\nModelChoiceField\nalways has a\nlimit_choices_to\nfield).\nlimit_choices_to = formfield.limit_choices_to\nshould be\nlimit_choices_to = getattr(formfield, 'limit_choices_to', None)",
+      "issue_closed_at": "2014-11-12T15:39:19",
+      "base_commit": "11b7680d0e640a7d4b1c942f74e9197b6ec924b1",
+      "changes": [
+        {
+          "file": "django/forms/fields.py",
+          "type": "function",
+          "name": "widget_attrs",
+          "class_name": "DecimalField",
+          "code": "def widget_attrs(self, widget):\n        attrs = super(DecimalField, self).widget_attrs(widget)\n        if isinstance(widget, NumberInput) and 'step' not in widget.attrs:\n            if self.decimal_places is not None:\n                # Use exponential notation for small values since they might\n                # be parsed as 0 otherwise. ref #20765\n                step = str(Decimal('1') / 10 ** self.decimal_places).lower()\n            else:\n                step = 'any'\n            attrs.setdefault('step', step)\n        return attrs"
+        },
+        {
+          "file": "django/forms/models.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "ModelMultipleChoiceField",
+          "code": "def __init__(self, queryset, cache_choices=None, required=True,\n                 widget=None, label=None, initial=None,\n                 help_text='', *args, **kwargs):\n        super(ModelMultipleChoiceField, self).__init__(queryset, None,\n            cache_choices, required, widget, label, initial, help_text,\n            *args, **kwargs)"
+        },
+        {
+          "file": "django/forms/models.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "ModelMultipleChoiceField",
+          "code": "def __init__(self, queryset, cache_choices=None, required=True,\n                 widget=None, label=None, initial=None,\n                 help_text='', *args, **kwargs):\n        super(ModelMultipleChoiceField, self).__init__(queryset, None,\n            cache_choices, required, widget, label, initial, help_text,\n            *args, **kwargs)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8362,
+      "pr_title": "Fixed #28058 -- Restored empty BoundFields evaluating to True.",
+      "pr_body": "https://code.djangoproject.com/ticket/28058",
+      "issue_id": 28058,
+      "issue_title": "Empty Select widget (no choices) evaluates to False",
+      "issue_body": "Hey guys,\nI'm not sure I catched a bug, but I discovered a change between\nDjango==1.10.6\nand 1.11.\nWhen you initialize a form with a\nSelect\nwidget, and the select widget has no choices (basically an empty tuple), when evaluating the field with\nbool()\n, it will evaluate to\nFalse\n. This causes the\ndjango_widget_tweaks\nmodule not to render a widget when trying to modify it from within a template, as it uses a bool-like evaluation to check if anything is passed to the set_attr.\ncode to reproduce:\nfrom django import forms\n\nclass MyForm(forms.Form):\n    select = forms.ChoiceField(choices=())\n\nx = MyForm()\n\nfor item in x:\n    print(bool(item))\nIt will print\nTrue\nwith\nDjango==1.10.6\n, and\nFalse\nwith\nDjango==1.11\n.\nThe underlying problem is that\nlen()\nfor a Boundfield with no choices will return 0 in the newer version, whereas it returns 1 in the older version.\nthe template code that fails to render with\nDjango==1.11\n{{ widget|set_attr('style:width: 100%') }}\nLike I said, I'm not sure if this change is intended, nevertheless I reported it. Please let me know if this is intended, so I can let the creator of\ndjango_widget_tweaks\nknow.\nCheers",
+      "issue_closed_at": "2017-04-17T07:49:12",
+      "base_commit": "e5dce7b0fbd2965e524ce97114f501319ec2bb6f",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "subwidgets",
+          "class_name": "BoundField",
+          "code": "def subwidgets(self):\n        \"\"\"\n        Most widgets yield a single subwidget, but others like RadioSelect and\n        CheckboxSelectMultiple produce one subwidget for each choice.\n\n        This property is cached so that only one database query occurs when\n        rendering ModelChoiceFields.\n        \"\"\"\n        id_ = self.field.widget.attrs.get('id') or self.auto_id\n        attrs = {'id': id_} if id_ else {}\n        attrs = self.build_widget_attrs(attrs)\n        return list(\n            BoundWidget(self.field.widget, widget, self.form.renderer)\n            for widget in self.field.widget.subwidgets(self.html_name, self.value(), attrs=attrs)\n        )"
+        }
+      ]
+    },
+    {
+      "pr_number": 6309,
+      "pr_title": "Fixed #25232, #24987 -- Made ModelBackend reject inactive users.",
+      "pr_body": "https://code.djangoproject.com/ticket/25232\nhttps://code.djangoproject.com/ticket/24987\n\nUpdated from https://github.com/django/django/pull/6090\n",
+      "issue_id": 24987,
+      "issue_title": "Remove test client login()'s hardcoded rejection of inactive users",
+      "issue_body": "According to the documentation on the\nUser\nattribute\nis_active\n:\n​\nhttps://docs.djangoproject.com/en/dev/ref/contrib/auth/\nThis doesn’t necessarily control whether or not the user can log in. Authentication backends aren’t required to check for the is_active flag, and the default backends do not. If you want to reject a login based on is_active being False, it’s up to you to check that in your own login view or a custom authentication backend. However, the AuthenticationForm used by the login() view (which is the default) does perform this check, as do the permission-checking methods such as has_perm() and the authentication in the Django admin. All of those functions/methods will return False for inactive users.\nMy auth system takes advantage of this by allowing inactive user to login.\nHowever, if I try to login an inactive user in a test, the login fails. This happens due to the code in Client.login() in client.py:\nuser = authenticate(**credentials)\n        if (user and user.is_active and\n                apps.is_installed('django.contrib.sessions')):\n            ...\n            return True\n        else:\n            return False\nThat is, after a successful authentication in a test, inactive users are rejected. This seems to contradict the documentation.\nHow would you feel about dropping the\nuser.is_active\ncheck in\nClient.login()\n?",
+      "issue_closed_at": "2016-03-23T08:21:35",
+      "base_commit": "1555d50ea40f22524b58e71bf15f3fc69a7c9591",
+      "changes": [
+        {
+          "file": "django/contrib/auth/backends.py",
+          "type": "function",
+          "name": "authenticate",
+          "class_name": "RemoteUserBackend",
+          "code": "def authenticate(self, remote_user):\n        \"\"\"\n        The username passed as ``remote_user`` is considered trusted.  This\n        method simply returns the ``User`` object with the given username,\n        creating a new ``User`` object if ``create_unknown_user`` is ``True``.\n\n        Returns None if ``create_unknown_user`` is ``False`` and a ``User``\n        object with the given username is not found in the database.\n        \"\"\"\n        if not remote_user:\n            return\n        user = None\n        username = self.clean_username(remote_user)\n\n        UserModel = get_user_model()\n\n        # Note that this could be accomplished in one try-except clause, but\n        # instead we use get_or_create when creating unknown users since it has\n        # built-in safeguards for multiple threads.\n        if self.create_unknown_user:\n            user, created = UserModel._default_manager.get_or_create(**{\n                UserModel.USERNAME_FIELD: username\n            })\n            if created:\n                user = self.configure_user(user)\n        else:\n            try:\n                user = UserModel._default_manager.get_by_natural_key(username)\n            except UserModel.DoesNotExist:\n                pass\n        return user"
+        },
+        {
+          "file": "django/contrib/auth/backends.py",
+          "type": "function",
+          "name": "has_module_perms",
+          "class_name": "ModelBackend",
+          "code": "def has_module_perms(self, user_obj, app_label):\n        \"\"\"\n        Returns True if user_obj has any permissions in the given app_label.\n        \"\"\"\n        if not user_obj.is_active:\n            return False\n        for perm in self.get_all_permissions(user_obj):\n            if perm[:perm.index('.')] == app_label:\n                return True\n        return False"
+        },
+        {
+          "file": "django/contrib/auth/backends.py",
+          "type": "function",
+          "name": "authenticate",
+          "class_name": "RemoteUserBackend",
+          "code": "def authenticate(self, remote_user):\n        \"\"\"\n        The username passed as ``remote_user`` is considered trusted.  This\n        method simply returns the ``User`` object with the given username,\n        creating a new ``User`` object if ``create_unknown_user`` is ``True``.\n\n        Returns None if ``create_unknown_user`` is ``False`` and a ``User``\n        object with the given username is not found in the database.\n        \"\"\"\n        if not remote_user:\n            return\n        user = None\n        username = self.clean_username(remote_user)\n\n        UserModel = get_user_model()\n\n        # Note that this could be accomplished in one try-except clause, but\n        # instead we use get_or_create when creating unknown users since it has\n        # built-in safeguards for multiple threads.\n        if self.create_unknown_user:\n            user, created = UserModel._default_manager.get_or_create(**{\n                UserModel.USERNAME_FIELD: username\n            })\n            if created:\n                user = self.configure_user(user)\n        else:\n            try:\n                user = UserModel._default_manager.get_by_natural_key(username)\n            except UserModel.DoesNotExist:\n                pass\n        return user"
+        },
+        {
+          "file": "django/contrib/auth/backends.py",
+          "type": "function",
+          "name": "configure_user",
+          "class_name": "RemoteUserBackend",
+          "code": "def configure_user(self, user):\n        \"\"\"\n        Configures a user after creation and returns the updated user.\n\n        By default, returns the user unmodified.\n        \"\"\"\n        return user"
+        }
+      ]
+    }
+  ]
+}

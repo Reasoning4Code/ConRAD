@@ -1,0 +1,118 @@
+{
+  "instance_id": "sympy__sympy-13146",
+  "repo": "sympy/sympy",
+  "created_at": "2017-08-18T05:51:45Z",
+  "problem_statement": "Exponent doesn't fully simplify\nSay I have code like this:\n\n```\nimport sympy\nfrom sympy import *\nx=Symbol('x')\nexpr1 = S(1)/2*x**2.5\nexpr2 = S(1)*x**(S(5)/2)/2\nres = expr1-expr2\nres= simplify(res.evalf(5))\nprint res\n```\n\nThe output is\n`-0.5*x**2.5 + 0.5*x**2.5`\nHow do I simplify it to 0?\n\n",
+  "patch": "diff --git a/sympy/core/operations.py b/sympy/core/operations.py\n--- a/sympy/core/operations.py\n+++ b/sympy/core/operations.py\n@@ -332,9 +332,7 @@ def _eval_evalf(self, prec):\n                         args.append(a)\n                     else:\n                         args.append(newa)\n-                if not _aresame(tuple(args), tail_args):\n-                    tail = self.func(*args)\n-                return self.func(x, tail)\n+                return self.func(x, *args)\n \n         # this is the same as above, but there were no pure-number args to\n         # deal with\n@@ -345,9 +343,7 @@ def _eval_evalf(self, prec):\n                 args.append(a)\n             else:\n                 args.append(newa)\n-        if not _aresame(tuple(args), self.args):\n-            return self.func(*args)\n-        return self\n+        return self.func(*args)\n \n     @classmethod\n     def make_args(cls, expr):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8223,
+      "pr_title": "Add _eval_simplify helper for AlgebraicNumber",
+      "pr_body": "fixes #4401\n",
+      "issue_id": 4401,
+      "issue_title": "Raising complex numbers to fractional powers",
+      "issue_body": "bc.. >>> simplify((3+4_I)__(Rational(3,2)))\n(3 + 4_I)**(3/2)\n\n> > > expand(_)\n> > > (3 + 4_I)_*(3/2)\n\nMathematica gives: 2 + 11 \\* I as the answer. Would be good if Sympy could do the same (so far as \nmathematics allows ;)\n\np. Original issue for \"#4401\":https://github.com/sympy/sympy/issues/4401: \"http://code.google.com/p/sympy/issues/detail?id=1302\":http://code.google.com/p/sympy/issues/detail?id=1302\n\np. Original author: \"https://code.google.com/u/111560553046880738986/\":https://code.google.com/u/111560553046880738986/\n\np. Original owner: \"https://code.google.com/u/111560553046880738986/\":https://code.google.com/u/111560553046880738986/\n",
+      "issue_closed_at": "2014-11-06T01:06:09Z",
+      "base_commit": "0cd829dc3e88d5b1f0fa76a73360f94d58926008",
+      "changes": [
+        {
+          "file": "sympy/core/numbers.py",
+          "type": "function",
+          "name": "to_algebraic_integer",
+          "class_name": "AlgebraicNumber",
+          "code": "def to_algebraic_integer(self):\n        \"\"\"Convert ``self`` to an algebraic integer. \"\"\"\n        f = self.minpoly\n\n        if f.LC() == 1:\n            return self\n\n        coeff = f.LC()**(f.degree() - 1)\n        poly = f.compose(C.Poly(f.gen/f.LC()))\n\n        minpoly = poly*coeff\n        root = f.LC()*self.root\n\n        return AlgebraicNumber((minpoly, root), self.coeffs())"
+        }
+      ]
+    },
+    {
+      "pr_number": 8627,
+      "pr_title": "Bug Fix #8626",
+      "pr_body": "Let me know if a test case is needed\n",
+      "issue_id": 8626,
+      "issue_title": "bug in physics/mechanics/lagrange.py",
+      "issue_body": "When providing a `forcelist` with more than one force, not all terms are computed,\nthis comes from the fact that the iterator `flist = zip(*_f_list_parser(self.forcelist, N))` is consumed in the first iteration of the loop.\n\nI propose a following PR that fixes the bug, let me know if I need to also provide a test case.\n\nBest,\nGuillaume\n",
+      "issue_closed_at": "2015-01-06T16:57:16Z",
+      "base_commit": "65f7c8c2c9c1927eaa8520c4ce06864f93a20ad1",
+      "changes": [
+        {
+          "file": "sympy/physics/mechanics/lagrange.py",
+          "type": "function",
+          "name": "form_lagranges_equations",
+          "class_name": "LagrangesMethod",
+          "code": "def form_lagranges_equations(self):\n        \"\"\"Method to form Lagrange's equations of motion.\n\n        Returns a vector of equations of motion using Lagrange's equations of\n        the second kind.\n        \"\"\"\n\n        qds = self._qdots\n        qdd_zero = dict((i, 0) for i in self._qdoubledots)\n        n = len(self.q)\n\n        # Internally we represent the EOM as four terms:\n        # EOM = term1 - term2 - term3 - term4 = 0\n\n        # First term\n        self._term1 = self._L.jacobian(qds)\n        self._term1 = self._term1.diff(dynamicsymbols._t).T\n\n        # Second term\n        self._term2 = self._L.jacobian(self.q).T\n\n        # Third term\n        if self.coneqs:\n            coneqs = self.coneqs\n            m = len(coneqs)\n            # Creating the multipliers\n            self.lam_vec = Matrix(dynamicsymbols('lam1:' + str(m + 1)))\n            self.lam_coeffs = -coneqs.jacobian(qds)\n            self._term3 = self.lam_coeffs.T * self.lam_vec\n            # Extracting the coeffecients of the qdds from the diff coneqs\n            diffconeqs = coneqs.diff(dynamicsymbols._t)\n            self._m_cd = diffconeqs.jacobian(self._qdoubledots)\n            # The remaining terms i.e. the 'forcing' terms in diff coneqs\n            self._f_cd = -diffconeqs.subs(qdd_zero)\n        else:\n            self._term3 = zeros(n, 1)\n\n        # Fourth term\n        if self.forcelist:\n            N = self.inertial\n            self._term4 = zeros(n, 1)\n            flist = zip(*_f_list_parser(self.forcelist, N))\n            for i, qd in enumerate(qds):\n                for obj, force in self.forcelist:\n                    self._term4[i] = sum(v.diff(qd, N) & f for (v, f) in flist)\n        else:\n            self._term4 = zeros(n, 1)\n\n        # Form the dynamic mass and forcing matrices\n        without_lam = self._term1 - self._term2 - self._term4\n        self._m_d = without_lam.jacobian(self._qdoubledots)\n        self._f_d = -without_lam.subs(qdd_zero)\n\n        # Form the EOM\n        self.eom = without_lam - self._term3\n        return self.eom"
+        }
+      ]
+    },
+    {
+      "pr_number": 12920,
+      "pr_title": "fix Piecewise assumptions",
+      "pr_body": "fixes #10258\r\n",
+      "issue_id": 10258,
+      "issue_title": "Relational involving Piecewise evaluates incorrectly as True",
+      "issue_body": "``` python\n>>> p = Piecewise((1,x<0),(0,True)); p\nPiecewise((1, x < 0), (0, True))\n>>> p > 0\nTrue  <---- should not evaluate since if x >= 0, the value of the Piecewise is 0 which is not gt 0\n```\n",
+      "issue_closed_at": "2017-07-12T13:10:41Z",
+      "base_commit": "3a771edb034c81957c0975ca06f0e0d51ab3741b",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/piecewise.py",
+          "type": "function",
+          "name": "_eval_subs",
+          "class_name": "Piecewise",
+          "code": "def _eval_subs(self, old, new):\n        \"\"\"\n        Piecewise conditions may contain bool which are not of Basic type.\n        \"\"\"\n        args = list(self.args)\n        for i, (e, c) in enumerate(args):\n            if isinstance(c, bool):\n                pass\n            elif isinstance(c, Basic):\n                c = c._subs(old, new)\n            if c != False:\n                e = e._subs(old, new)\n            args[i] = e, c\n            if c == True:\n                return self.func(*args)\n\n        return self.func(*args)"
+        },
+        {
+          "file": "sympy/functions/elementary/piecewise.py",
+          "type": "function",
+          "name": "_eval_template_is_attr",
+          "class_name": "Piecewise",
+          "code": "def _eval_template_is_attr(self, is_attr, when_multiple=None):\n        b = None\n        for expr, _ in self.args:\n            a = getattr(expr, is_attr)\n            if a is None:\n                return None\n            if b is None:\n                b = a\n            elif b is not a:\n                return when_multiple\n        return b"
+        }
+      ]
+    },
+    {
+      "pr_number": 8548,
+      "pr_title": "Issue #6988: expand_log(exp(x), force=True) = x",
+      "pr_body": "This is a try to fix issue #6988. If I made some mistake just let me know, as I'm still new to sympy development.\n\n```\nIn [9]: expand_log(log(exp(x)), force=True)\nOut[9]: x\n\nIn [10]: expand_log(log(y**(x)), force=True)\nOut[10]: x\u22c5log(y)\n```\n",
+      "issue_id": 6988,
+      "issue_title": "expand_log(exp(x), force=True) should give x",
+      "issue_body": "```\nIn [5]: expand_log(log(exp(x)), force=True)\nOut[5]:\n   \u239b x\u239e\nlog\u239d\u212f \u23a0\n\nIn [6]: expand_log(log(y**(x)), force=True)\nOut[6]: x\u22c5log(y) Issue 1799 is probably to blame.\n```\n\nOriginal issue for #6988: http://code.google.com/p/sympy/issues/detail?id=3889\nOriginal author: https://code.google.com/u/asmeurer@gmail.com/\n",
+      "issue_closed_at": "2014-12-03T13:34:14Z",
+      "base_commit": "e6fc53f27ee872b27bc79b96529fc4bf34d4f023",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/exponential.py",
+          "type": "function",
+          "name": "_eval_expand_log",
+          "class_name": "log",
+          "code": "def _eval_expand_log(self, deep=True, **hints):\n        from sympy import unpolarify\n        from sympy.concrete import Sum, Product\n        force = hints.get('force', False)\n        arg = self.args[0]\n        if arg.is_Integer:\n            # remove perfect powers\n            p = perfect_power(int(arg))\n            if p is not False:\n                return p[1]*self.func(p[0])\n        elif arg.is_Mul:\n            expr = []\n            nonpos = []\n            for x in arg.args:\n                if force or x.is_positive or x.is_polar:\n                    a = self.func(x)\n                    if isinstance(a, log):\n                        expr.append(self.func(x)._eval_expand_log(**hints))\n                    else:\n                        expr.append(a)\n                elif x.is_negative:\n                    a = self.func(-x)\n                    expr.append(a)\n                    nonpos.append(S.NegativeOne)\n                else:\n                    nonpos.append(x)\n            return Add(*expr) + log(Mul(*nonpos))\n        elif arg.is_Pow:\n            if force or (arg.exp.is_real and arg.base.is_positive) or \\\n                    arg.base.is_polar:\n                b = arg.base\n                e = arg.exp\n                a = self.func(b)\n                if isinstance(a, log):\n                    return unpolarify(e) * a._eval_expand_log(**hints)\n                else:\n                    return unpolarify(e) * a\n        elif isinstance(arg, Product):\n            if arg.function.is_positive:\n                return Sum(log(arg.function), *arg.limits)\n\n        return self.func(arg)"
+        }
+      ]
+    },
+    {
+      "pr_number": 10889,
+      "pr_title": "Fixed bug in Latex printing",
+      "pr_body": "This should fix #10821; the Latex _print_Mul function was inserting a negative sign at the beginning of a negative expression without worrying about parenthesis.\n",
+      "issue_id": 10821,
+      "issue_title": "latex bug for commutator output",
+      "issue_body": "There is a latex bug in the output of the function sympy.physics.quantum.commutator.doit that gives incorrect result if there is overall negative sign involved. For example, the following code does not give the correct expression for the latex output.\n\n``` python\nfrom sympy.physics.quantum import Commutator, Operator\nimport sympy\nA = Operator('A')\nB = Operator('B')\ncomm = Commutator(B, A)\nprint comm.doit()\nsympy.latex(comm.doit())\n```\n",
+      "issue_closed_at": "2016-03-23T20:40:37Z",
+      "base_commit": "f7a8dbec25b04767a3a6996c11a03781184d45d7",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Float",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Float(self, expr):\n        # Based off of that in StrPrinter\n        dps = prec_to_dps(expr._prec)\n        str_real = mlib.to_str(expr._mpf_, dps, strip_zeros=True)\n\n        # Must always have a mul symbol (as 2.5 10^{20} just looks odd)\n        # thus we use the number separator\n        separator = self._settings['mul_symbol_latex_numbers']\n\n        if 'e' in str_real:\n            (mant, exp) = str_real.split('e')\n\n            if exp[0] == '+':\n                exp = exp[1:]\n\n            return r\"%s%s10^{%s}\" % (mant, separator, exp)\n        elif str_real == \"+inf\":\n            return r\"\\infty\"\n        elif str_real == \"-inf\":\n            return r\"- \\infty\"\n        else:\n            return str_real"
+        },
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "convert",
+          "class_name": "LatexPrinter",
+          "code": "def convert(expr):\n            if not expr.is_Mul:\n                return str(self._print(expr))\n            else:\n                _tex = last_term_tex = \"\"\n\n                if self.order not in ('old', 'none'):\n                    args = expr.as_ordered_factors()\n                else:\n                    args = expr.args\n\n                for i, term in enumerate(args):\n                    term_tex = self._print(term)\n\n                    if self._needs_mul_brackets(term, first=(i == 0),\n                                                last=(i == len(args) - 1)):\n                        term_tex = r\"\\left(%s\\right)\" % term_tex\n\n                    if re.search(\"[0-9][} ]*$\", last_term_tex) and \\\n                            re.match(\"[{ ]*[-+0-9]\", term_tex):\n                        # between two numbers\n                        _tex += numbersep\n                    elif _tex:\n                        _tex += separator\n\n                    _tex += term_tex\n                    last_term_tex = term_tex\n                return _tex"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+{
+  "instance_id": "django__django-14155",
+  "repo": "django/django",
+  "created_at": "2021-03-19T15:44:25Z",
+  "problem_statement": "ResolverMatch.__repr__() doesn't handle functools.partial() nicely.\nDescription\n\t \n\t\t(last modified by Nick Pope)\n\t \nWhen a partial function is passed as the view, the __repr__ shows the func argument as functools.partial which isn't very helpful, especially as it doesn't reveal the underlying function or arguments provided.\nBecause a partial function also has arguments provided up front, we need to handle those specially so that they are accessible in __repr__.\nISTM that we can simply unwrap functools.partial objects in ResolverMatch.__init__().\n",
+  "patch": "diff --git a/django/urls/resolvers.py b/django/urls/resolvers.py\n--- a/django/urls/resolvers.py\n+++ b/django/urls/resolvers.py\n@@ -59,9 +59,16 @@ def __getitem__(self, index):\n         return (self.func, self.args, self.kwargs)[index]\n \n     def __repr__(self):\n-        return \"ResolverMatch(func=%s, args=%s, kwargs=%s, url_name=%s, app_names=%s, namespaces=%s, route=%s)\" % (\n-            self._func_path, self.args, self.kwargs, self.url_name,\n-            self.app_names, self.namespaces, self.route,\n+        if isinstance(self.func, functools.partial):\n+            func = repr(self.func)\n+        else:\n+            func = self._func_path\n+        return (\n+            'ResolverMatch(func=%s, args=%r, kwargs=%r, url_name=%r, '\n+            'app_names=%r, namespaces=%r, route=%r)' % (\n+                func, self.args, self.kwargs, self.url_name,\n+                self.app_names, self.namespaces, self.route,\n+            )\n         )\n \n \n",
+  "similar_bug_items": [
+    {
+      "pr_number": 3792,
+      "pr_title": "Fixed #24054 -- Enabled sqlsequencereset for apps with migrations.",
+      "pr_body": "https://code.djangoproject.com/ticket/24054\n",
+      "issue_id": 24054,
+      "issue_title": "Enable sqlsequencereset for apps with migrations",
+      "issue_body": "The command doesn't depend on the\nDatabaseCreation\nclass and it doesn't seem that the problem the command aims to solve is obsoleted by migrations.",
+      "issue_closed_at": "2014-12-26T14:56:14",
+      "base_commit": "1729a5250b052832540cd696df3ff0a0a77baddf",
+      "changes": [
+        {
+          "file": "django/core/management/commands/sqlsequencereset.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from __future__ import unicode_literals\n\nfrom django.core.management.base import AppCommand\nfrom django.core.management.sql import check_for_migrations\nfrom django.db import connections, DEFAULT_DB_ALIAS\n\n"
+        },
+        {
+          "file": "django/core/management/commands/sqlsequencereset.py",
+          "type": "function",
+          "name": "handle_app_config",
+          "class_name": "Command",
+          "code": "def handle_app_config(self, app_config, **options):\n        if app_config.models_module is None:\n            return\n        connection = connections[options.get('database')]\n        check_for_migrations(app_config, connection)\n        models = app_config.get_models(include_auto_created=True)\n        statements = connection.ops.sequence_reset_sql(self.style, models)\n        return '\\n'.join(statements)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6802,
+      "pr_title": "Fixed #26778 -- Fixed ModelSignal.connect() weak argument.",
+      "pr_body": "https://code.djangoproject.com/ticket/26778\n",
+      "issue_id": 26778,
+      "issue_title": "ModelSignal.connect() does not work when 'weak' is set to False and receiver is a local function",
+      "issue_body": "Since\n#26642\nthere seems to be a regression.\nModelSignal.connect\ndoesn't take into account 'weak' argument.\nQuick fix might look like this:\ndjango/db/models/signals.py\na\nb\nclass ModelSignal(Signal):\n27\n27\nreturn partial_method(sender)\n28\n28\n29\n29\ndef connect(self, receiver, sender=None, weak=True, dispatch_uid=None, apps=None):\n30\nself._lazy_method(super(ModelSignal, self).connect, apps, receiver, sender,\ndispatch_uid=dispatch_uid)\n30\nself._lazy_method(super(ModelSignal, self).connect, apps, receiver, sender,\nweak=weak,\ndispatch_uid=dispatch_uid)\n31\n31\n32\n32\ndef disconnect(self, receiver=None, sender=None, weak=None, dispatch_uid=None, apps=None):\n33\n33\nif weak is not None:",
+      "issue_closed_at": "2016-06-18T19:42:54",
+      "base_commit": "8ba44ecda024050c219e7cbc1f16c2d56fa258ac",
+      "changes": [
+        {
+          "file": "django/db/models/signals.py",
+          "type": "function",
+          "name": "_lazy_method",
+          "class_name": "ModelSignal",
+          "code": "def _lazy_method(self, method, apps, receiver, sender, **kwargs):\n        from django.db.models.options import Options\n\n        # This partial takes a single optional argument named \"sender\".\n        partial_method = partial(method, receiver, **kwargs)\n        if isinstance(sender, six.string_types):\n            apps = apps or Options.default_apps\n            apps.lazy_model_operation(partial_method, make_model_tuple(sender))\n        else:\n            return partial_method(sender)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8629,
+      "pr_title": "Fixed #28293 -- Fixed union(), intersection(), and difference() when combining with an EmptyQuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/28293",
+      "issue_id": 28293,
+      "issue_title": "QuerySet.union(QuerySet.none()) results in an empty queryset, should be the original queryset",
+      "issue_body": "Tested on Django 1.11.2.\nAs\nQuerySet.union()\nuses the SQL\nUNION\noperator, I would expect \"SET1 UNION <EMPTY SET>\" to result in SET1. Currently it results in the empty set.\n>>> from django.contrib.auth.models import User\n>>> User.objects.count()\n100\n>>> list(User.objects.all().union(User.objects.none()))\n[]\nFrom\n​\nhttps://www.postgresql.org/docs/current/static/queries-union.html\nUNION effectively appends the result of query2 to the result of query1 ...\nQuerySet.difference()\nlooks to suffer from the same issue.",
+      "issue_closed_at": "2017-06-13T01:16:29",
+      "base_commit": "9dc83c356d363c090f3351c908cad6f823aeb7bf",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_combinator_query",
+          "class_name": "QuerySet",
+          "code": "def _combinator_query(self, combinator, *other_qs, all=False):\n        # Clone the query to inherit the select list and everything\n        clone = self._clone()\n        # Clear limits and ordering so they can be reapplied\n        clone.query.clear_ordering(True)\n        clone.query.clear_limits()\n        clone.query.combined_queries = (self.query,) + tuple(qs.query for qs in other_qs)\n        clone.query.combinator = combinator\n        clone.query.combinator_all = all\n        return clone"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = (compiler.as_sql() for compiler in compilers)\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 14267,
+      "pr_title": "[3.2.x] Fixed #32548 -- Fixed crash when combining Q() objects with boolean expressions.",
+      "pr_body": "See [comment](https://code.djangoproject.com/ticket/32651#comment:4).\r\n\r\nBackport of 00b0786de533dbb3f6208d8d5eaddbf765b4e5b8 from main.\r\n\r\nRegression in 466920f6d726eee90d5566e0a9948e92b33a122e.\r\n\r\nI will forwardport release notes.",
+      "issue_id": 32548,
+      "issue_title": "Combining Q() objects with boolean expressions crashes.",
+      "issue_body": "Currently Q objects with 1 child are treated differently during deconstruct.\n>>> from django.db.models import Q\n>>> Q(x=1).deconstruct()\n('django.db.models.Q', (), {'x': 1})\n>>> Q(x=1, y=2).deconstruct()\n('django.db.models.Q', (('x', 1), ('y', 2)), {})\nThis causes issues when deconstructing Q objects with a non-subscriptable child.\n>>> from django.contrib.auth import get_user_model\n>>> from django.db.models import Exists\n>>> Q(Exists(get_user_model().objects.filter(username='jim'))).deconstruct()\nTraceback (most recent call last):\n  File \"<console>\", line 1, in <module>\n  File \"...\", line 90, in deconstruct\n    kwargs = {child[0]: child[1]}\nTypeError: 'Exists' object is not subscriptable\nPatch\n​\nhttps://github.com/django/django/pull/14126\nremoves the special case, meaning single-child Q objects deconstruct into args instead of kwargs. A more backward-compatible approach would be to keep the special case and explicitly check that the child is a length-2 tuple, but it's unlikely that anyone is relying on this undocumented behavior.",
+      "issue_closed_at": "2021-03-18T00:11:10",
+      "base_commit": "65dfb06a1ab56c238cc80f5e1c31f61210c4577d",
+      "changes": [
+        {
+          "file": "django/db/models/query_utils.py",
+          "type": "function",
+          "name": "deconstruct",
+          "class_name": "Q",
+          "code": "def deconstruct(self):\n        path = '%s.%s' % (self.__class__.__module__, self.__class__.__name__)\n        if path.startswith('django.db.models.query_utils'):\n            path = path.replace('django.db.models.query_utils', 'django.db.models')\n        args, kwargs = (), {}\n        if len(self.children) == 1 and not isinstance(self.children[0], Q):\n            child = self.children[0]\n            kwargs = {child[0]: child[1]}\n        else:\n            args = tuple(self.children)\n            if self.connector != self.default:\n                kwargs = {'_connector': self.connector}\n        if self.negated:\n            kwargs['_negated'] = True\n        return path, args, kwargs"
+        }
+      ]
+    },
+    {
+      "pr_number": 9861,
+      "pr_title": "Fixed #29296 -- Fix handling of callable object views in admindocs",
+      "pr_body": "See https://code.djangoproject.com/ticket/29296\r\n\r\nI'm not sure how you normally handle backports, but a backported version of this commit can be found here:\r\nhttps://github.com/PaulSD/django/commit/b2128a2afa14c64b39a5fae1f9a63b2959c4f752",
+      "issue_id": 29296,
+      "issue_title": "admindocs ViewIndexView crashes if a syndication Feed (or something without __qualname__) is configured",
+      "issue_body": "If a Feed (\n​\nhttps://docs.djangoproject.com/en/2.0/ref/contrib/syndication/\n) is configured anywhere in the project, then /admin/doc/views/ (\n​\nhttps://docs.djangoproject.com/en/2.0/ref/contrib/admin/admindocs/\n) crashes with AttributeError:\n'GlobalFeed' object has no attribute '__qualname__'\nThe problem is that Feed is a callable object (\n​\nhttps://github.com/django/django/blob/master/django/contrib/syndication/views.py#L34\n) and the documentation uses that class directly as a View (\npath('latest/feed/', LatestEntriesFeed()),\n), but admindocs assumes that all views are functions and it does not work properly with a callable object (\n​\nhttps://github.com/django/django/blob/master/django/contrib/admindocs/views.py#L130\n).\nIn Django 1.11 and earlier, admindocs supported callable objects on Python 2 because it fell back to\nview.__class__.__name__\n, but it appears that the Python 3 code in admindocs has not supported this since it was added in\n​\nhttps://github.com/django/django/commit/ae0f55eb491255217d6df31296ec8102007224a6\n(\nhttps://code.djangoproject.com/ticket/27018\n).\nAs a work-around,\n__qualname__\ncan be manually defined on Feed objects:\nclass MyFeed(Feed):\n    def __init__(self):\n        super().__init__()\n        self.__qualname__ = self.__class__.__name__\nWithout knowing Django's opinion of the use of callable objects as views, I don't know the appropriate way to fix this: Should admindocs support callable objects as views, or should Feed not use a callable object as a view?",
+      "issue_closed_at": "2018-04-12T12:34:31",
+      "base_commit": "ee17bb8a67a9e7e688da6e6f4b3be1b3a69c09b0",
+      "changes": [
+        {
+          "file": "django/contrib/admindocs/middleware.py",
+          "type": "line",
+          "name": "line 2",
+          "code": "from django.http import HttpResponse\nfrom django.utils.deprecation import MiddlewareMixin\n\n\nclass XViewMiddleware(MiddlewareMixin):\n    \"\"\""
+        },
+        {
+          "file": "django/contrib/admindocs/middleware.py",
+          "type": "function",
+          "name": "process_view",
+          "class_name": "XViewMiddleware",
+          "code": "def process_view(self, request, view_func, view_args, view_kwargs):\n        \"\"\"\n        If the request method is HEAD and either the IP is internal or the\n        user is a logged-in staff member, return a responsewith an x-view\n        header indicating the view function. This is used to lookup the view\n        function for an arbitrary page.\n        \"\"\"\n        assert hasattr(request, 'user'), (\n            \"The XView middleware requires authentication middleware to be \"\n            \"installed. Edit your MIDDLEWARE%s setting to insert \"\n            \"'django.contrib.auth.middleware.AuthenticationMiddleware'.\" % (\n                \"_CLASSES\" if settings.MIDDLEWARE is None else \"\"\n            )\n        )\n        if request.method == 'HEAD' and (request.META.get('REMOTE_ADDR') in settings.INTERNAL_IPS or\n                                         (request.user.is_active and request.user.is_staff)):\n            response = HttpResponse()\n            response['X-View'] = \"%s.%s\" % (view_func.__module__, view_func.__name__)\n            return response"
+        },
+        {
+          "file": "django/contrib/admindocs/utils.py",
+          "type": "line",
+          "name": "line 18",
+          "code": "    docutils_is_available = True\n\n\ndef trim_docstring(docstring):\n    \"\"\"\n    Uniformly trim leading/trailing whitespace from docstrings."
+        },
+        {
+          "file": "django/contrib/admindocs/views.py",
+          "type": "line",
+          "name": "line 23",
+          "code": "from django.utils.translation import gettext as _\nfrom django.views.generic import TemplateView\n\n# Exclude methods starting with these strings from documentation\nMODEL_METHODS_EXCLUDE = ('_', 'add_', 'delete', 'save', 'set_')\n"
+        },
+        {
+          "file": "django/contrib/admindocs/views.py",
+          "type": "function",
+          "name": "get_context_data",
+          "class_name": "TemplateDetailView",
+          "code": "def get_context_data(self, **kwargs):\n        template = self.kwargs['template']\n        templates = []\n        try:\n            default_engine = Engine.get_default()\n        except ImproperlyConfigured:\n            # Non-trivial TEMPLATES settings aren't supported (#24125).\n            pass\n        else:\n            # This doesn't account for template loaders (#24128).\n            for index, directory in enumerate(default_engine.dirs):\n                template_file = os.path.join(directory, template)\n                if os.path.exists(template_file):\n                    with open(template_file) as f:\n                        template_contents = f.read()\n                else:\n                    template_contents = ''\n                templates.append({\n                    'file': template_file,\n                    'exists': os.path.exists(template_file),\n                    'contents': template_contents,\n                    'order': index,\n                })\n        return super().get_context_data(**{\n            **kwargs,\n            'name': template,\n            'templates': templates,\n        })"
+        }
+      ]
+    }
+  ]
+}

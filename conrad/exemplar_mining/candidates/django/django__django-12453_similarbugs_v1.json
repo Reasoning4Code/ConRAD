@@ -1,0 +1,181 @@
+{
+  "instance_id": "django__django-12453",
+  "repo": "django/django",
+  "created_at": "2020-02-13T20:03:27Z",
+  "problem_statement": "`TransactionTestCase.serialized_rollback` fails to restore objects due to ordering constraints\nDescription\n\t\nI hit this problem in a fairly complex projet and haven't had the time to write a minimal reproduction case. I think it can be understood just by inspecting the code so I'm going to describe it while I have it in mind.\nSetting serialized_rollback = True on a TransactionTestCase triggers ​rollback emulation. In practice, for each database:\nBaseDatabaseCreation.create_test_db calls connection._test_serialized_contents = connection.creation.serialize_db_to_string()\nTransactionTestCase._fixture_setup calls connection.creation.deserialize_db_from_string(connection._test_serialized_contents)\n(The actual code isn't written that way; it's equivalent but the symmetry is less visible.)\nserialize_db_to_string orders models with serializers.sort_dependencies and serializes them. The sorting algorithm only deals with natural keys. It doesn't do anything to order models referenced by foreign keys before models containing said foreign keys. That wouldn't be possible in general because circular foreign keys are allowed.\ndeserialize_db_from_string deserializes and saves models without wrapping in a transaction. This can result in integrity errors if an instance containing a foreign key is saved before the instance it references. I'm suggesting to fix it as follows:\ndiff --git a/django/db/backends/base/creation.py b/django/db/backends/base/creation.py\nindex bca8376..7bed2be 100644\n--- a/django/db/backends/base/creation.py\n+++ b/django/db/backends/base/creation.py\n@@ -4,7 +4,7 @@ import time\n from django.apps import apps\n from django.conf import settings\n from django.core import serializers\n-from django.db import router\n+from django.db import router, transaction\n from django.utils.six import StringIO\n from django.utils.six.moves import input\n \n@@ -128,8 +128,9 @@ class BaseDatabaseCreation(object):\n\t\t the serialize_db_to_string method.\n\t\t \"\"\"\n\t\t data = StringIO(data)\n-\t\tfor obj in serializers.deserialize(\"json\", data, using=self.connection.alias):\n-\t\t\tobj.save()\n+\t\twith transaction.atomic(using=self.connection.alias):\n+\t\t\tfor obj in serializers.deserialize(\"json\", data, using=self.connection.alias):\n+\t\t\t\tobj.save()\n \n\t def _get_database_display_str(self, verbosity, database_name):\n\t\t \"\"\"\nNote that loaddata doesn't have this problem because it wraps everything in a transaction:\n\tdef handle(self, *fixture_labels, **options):\n\t\t# ...\n\t\twith transaction.atomic(using=self.using):\n\t\t\tself.loaddata(fixture_labels)\n\t\t# ...\nThis suggest that the transaction was just forgotten in the implementation of deserialize_db_from_string.\nIt should be possible to write a deterministic test for this bug because the order in which serialize_db_to_string serializes models depends on the app registry, and the app registry uses OrderedDict to store apps and models in a deterministic order.\n",
+  "patch": "diff --git a/django/db/backends/base/creation.py b/django/db/backends/base/creation.py\n--- a/django/db/backends/base/creation.py\n+++ b/django/db/backends/base/creation.py\n@@ -6,6 +6,7 @@\n from django.conf import settings\n from django.core import serializers\n from django.db import router\n+from django.db.transaction import atomic\n \n # The prefix to put on the default database name when creating\n # the test database.\n@@ -126,8 +127,16 @@ def deserialize_db_from_string(self, data):\n         the serialize_db_to_string() method.\n         \"\"\"\n         data = StringIO(data)\n-        for obj in serializers.deserialize(\"json\", data, using=self.connection.alias):\n-            obj.save()\n+        # Load data in a transaction to handle forward references and cycles.\n+        with atomic(using=self.connection.alias):\n+            # Disable constraint checks, because some databases (MySQL) doesn't\n+            # support deferred checks.\n+            with self.connection.constraint_checks_disabled():\n+                for obj in serializers.deserialize('json', data, using=self.connection.alias):\n+                    obj.save()\n+            # Manually check for any invalid keys that might have been added,\n+            # because constraint checks were disabled.\n+            self.connection.check_constraints()\n \n     def _get_database_display_str(self, verbosity, database_name):\n         \"\"\"\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 9112,
+      "pr_title": "Fixed #27846 -- clear all cached reverse relationships on refresh_from_db()",
+      "pr_body": "https://code.djangoproject.com/ticket/27846",
+      "issue_id": 27846,
+      "issue_title": "refresh_from_db() doesn't clear reverse OneToOneFields",
+      "issue_body": "Sorry for the poor summary, it is difficult to explain in words. I have a project to demo this bug attached to this ticket, but I will try to explain the bug anyway in steps and the setup.\nSetup:\n2 models (A and B)\nB has a OneToOne to A\nBoth A and B have a field (ie TextField)\nSetup either a signal or override save() for A to update B's TextField to equal that of A's on save() or post_save for signals\nSteps:\nCreate instance of A\nGet another copy of the instance of A via A.objects.get()\nCreate instance of B using the copy of the instance of A\nDo refresh_from_db() on original instance of A\nTry to access B from A\nThe project I have provided is a slim version of this problem that demonstrates it with signals, overriden save(), and basic set and save inside the test. The basic set and save works, but the other two fail when using the above steps. Run the test suite to see.",
+      "issue_closed_at": "2017-10-12T16:25:22",
+      "base_commit": "df0aebc893973c78d7d2cda712ba4133dbe29b6e",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "refresh_from_db",
+          "class_name": "Model",
+          "code": "def refresh_from_db(self, using=None, fields=None):\n        \"\"\"\n        Reload field values from the database.\n\n        By default, the reloading happens from the database this instance was\n        loaded from, or by the read router if this instance wasn't loaded from\n        any database. The using parameter will override the default.\n\n        Fields can be used to specify which fields to reload. The fields\n        should be an iterable of field attnames. If fields is None, then\n        all non-deferred fields are reloaded.\n\n        When accessing deferred fields of an instance, the deferred loading\n        of the field will call this method.\n        \"\"\"\n        if fields is not None:\n            if len(fields) == 0:\n                return\n            if any(LOOKUP_SEP in f for f in fields):\n                raise ValueError(\n                    'Found \"%s\" in fields argument. Relations and transforms '\n                    'are not allowed in fields.' % LOOKUP_SEP)\n\n        db = using if using is not None else self._state.db\n        db_instance_qs = self.__class__._default_manager.using(db).filter(pk=self.pk)\n\n        # Use provided fields, if not set then reload all non-deferred fields.\n        deferred_fields = self.get_deferred_fields()\n        if fields is not None:\n            fields = list(fields)\n            db_instance_qs = db_instance_qs.only(*fields)\n        elif deferred_fields:\n            fields = [f.attname for f in self._meta.concrete_fields\n                      if f.attname not in deferred_fields]\n            db_instance_qs = db_instance_qs.only(*fields)\n\n        db_instance = db_instance_qs.get()\n        non_loaded_fields = db_instance.get_deferred_fields()\n        for field in self._meta.concrete_fields:\n            if field.attname in non_loaded_fields:\n                # This field wasn't refreshed - skip ahead.\n                continue\n            setattr(self, field.attname, getattr(db_instance, field.attname))\n            # Throw away stale foreign key references.\n            if field.is_relation and field.is_cached(self):\n                rel_instance = field.get_cached_value(self)\n                local_val = getattr(db_instance, field.attname)\n                related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)\n                if local_val != related_val or (local_val is None and related_val is None):\n                    field.delete_cached_value(self)\n        self._state.db = db_instance._state.db"
+        }
+      ]
+    },
+    {
+      "pr_number": 6754,
+      "pr_title": "Fixed #26736 -- Improved unicode handling for SpatialReference.",
+      "pr_body": "https://code.djangoproject.com/ticket/26736\n",
+      "issue_id": 26736,
+      "issue_title": "SpatialReference crashes when initialized with WKT containining unicode characters",
+      "issue_body": "from\ndjango.contrib.gis.db.backends.spatialite.models\nimport\nSpatialiteSpatialRefSys\nas\nSpatialRefSys\nfrom\ndjango.contrib.gis.gdal.srs\nimport\nSpatialReference\nSpatialReference\n(\nSpatialRefSys\n.\nobjects\n.\nget\n(\nsrid\n=\n187939\n)\n.\nsrtext\n)\n/home/sergey/dev/django/django/contrib/gis/gdal/srs.py in __init__(self, srs_input, srs_type)\n     58             # Encoding to ASCII if unicode passed in.\n     59             if isinstance(srs_input, six.text_type):\n---> 60                 srs_input = srs_input.encode('ascii')\n     61             try:\n     62                 # If SRID is a string, e.g., '4326', then make acceptable\n\nUnicodeEncodeError: 'ascii' codec can't encode character u'\\xdf' in position 34: ordinal not in range(128)",
+      "issue_closed_at": "2016-06-11T20:00:40",
+      "base_commit": "0451dcc2eb2449a988ade8e603846f0508ce76b4",
+      "changes": [
+        {
+          "file": "django/contrib/gis/gdal/prototypes/srs.py",
+          "type": "function",
+          "name": "units_func",
+          "class_name": null,
+          "code": "def units_func(f):\n    \"\"\"\n    Creates a ctypes function prototype for OSR units functions, e.g.,\n    OSRGetAngularUnits, OSRGetLinearUnits.\n    \"\"\"\n    return double_output(f, [c_void_p, POINTER(c_char_p)], strarg=True)"
+        },
+        {
+          "file": "django/contrib/gis/gdal/srs.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "CoordTransform",
+          "code": "def __init__(self, source, target):\n        \"Initializes on a source and target SpatialReference objects.\"\n        if not isinstance(source, SpatialReference) or not isinstance(target, SpatialReference):\n            raise TypeError('source and target must be of type SpatialReference')\n        self.ptr = capi.new_ct(source._ptr, target._ptr)\n        self._srs1_name = source.name\n        self._srs2_name = target.name"
+        },
+        {
+          "file": "django/contrib/gis/gdal/srs.py",
+          "type": "function",
+          "name": "import_user_input",
+          "class_name": "SpatialReference",
+          "code": "def import_user_input(self, user_input):\n        \"Imports the Spatial Reference from the given user input string.\"\n        capi.from_user_input(self.ptr, force_bytes(user_input))"
+        },
+        {
+          "file": "django/contrib/gis/gdal/srs.py",
+          "type": "function",
+          "name": "proj4",
+          "class_name": "SpatialReference",
+          "code": "def proj4(self):\n        \"Alias for proj().\"\n        return self.proj"
+        }
+      ]
+    },
+    {
+      "pr_number": 9421,
+      "pr_title": "Fixed #28884 -- Fixed crash in renames of fields of tables referenced by m2ms on SQlite.",
+      "pr_body": "https://code.djangoproject.com/ticket/28884\r\n\r\nIntrospected database constraints instead of relying on `_meta.related_objects` to determine whether or not a table or a column is referenced on rename operations.\r\n\r\nThis has the side effect of ignoring both ``db_constraint=False`` and virtual fields such as ``GenericRelation`` which are not backend by database level constraints and thus shouldn't prevent the rename operations from being performed in a transaction.\r\n\r\nThis also highlighted false negatives in the existing schema and migrations tests where `_meta.related_objects` was not appropriately populated.",
+      "issue_id": 28884,
+      "issue_title": "RenameField crashes with AttributeError when renaming a ManyToManyField (sqlite3)",
+      "issue_body": "Original issue:\n​\nhttps://groups.google.com/forum/#!topic/django-users/O7s658gIHTE\nWith Django 2.0, a\nRenameField\non a model which has a reverse many to many relationship raises an exception:\nAttributeError: 'ManyToManyRel' object has no attribute 'field_name'\n.\nThis is a regression in Django 2.0: the same migration with Django 1.11 terminates successfully\nBelow the code and the commands to reproduce the problem:\n# myapp/models.py\n\nfrom django.db import models\n\n\nclass ModelA(models.Model):\n    new_name = models.IntegerField()\n\n\nclass ModelB(models.Model):\n    model_as = models.ManyToManyField('ModelA')\n\n# myapp/migrations/0001_initial.py\n\nfrom django.db import migrations, models\n\n\nclass Migration(migrations.Migration):\n\n    initial = True\n\n    dependencies = [\n    ]\n\n    operations = [\n        migrations.CreateModel(\n            name='ModelA',\n            fields=[\n                ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),\n                ('old_name', models.IntegerField()),\n            ],\n        ),\n        migrations.CreateModel(\n            name='ModelB',\n            fields=[\n                ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),\n                ('model_as', models.ManyToManyField(to='myapp.ModelA')),\n            ],\n        ),\n    ]\n\n# myapp/migrations/0002_auto_20171204_1012.py\n\nfrom django.db import migrations\n\n\nclass Migration(migrations.Migration):\n\n    dependencies = [\n        ('myapp', '0001_initial'),\n    ]\n\n    operations = [\n        migrations.RenameField(\n            model_name='modela',\n            old_name='old_name',\n            new_name='new_name',\n        ),\n    ]\n\n$ ./manage.py migrate\nOperations to perform:\n  Apply all migrations: admin, auth, contenttypes, myapp, sessions\nRunning migrations:\n  Applying contenttypes.0001_initial... OK\n  Applying auth.0001_initial... OK\n  Applying admin.0001_initial... OK\n  Applying admin.0002_logentry_remove_auto_add... OK\n  Applying contenttypes.0002_remove_content_type_name... OK\n  Applying auth.0002_alter_permission_name_max_length... OK\n  Applying auth.0003_alter_user_email_max_length... OK\n  Applying auth.0004_alter_user_username_opts... OK\n  Applying auth.0005_alter_user_last_login_null... OK\n  Applying auth.0006_require_contenttypes_0002... OK\n  Applying auth.0007_alter_validators_add_error_messages... OK\n  Applying auth.0008_alter_user_username_max_length... OK\n  Applying auth.0009_alter_user_last_name_max_length... OK\n  Applying myapp.0001_initial... OK\n  Applying myapp.0002_auto_20171204_1012...Traceback (most recent call last):\n  File \"./manage.py\", line 15, in <module>\n    execute_from_command_line(sys.argv)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/__init__.py\", line 371, in execute_from_command_line\n    utility.execute()\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/__init__.py\", line 365, in execute\n    self.fetch_command(subcommand).run_from_argv(self.argv)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/base.py\", line 288, in run_from_argv\n    self.execute(*args, **cmd_options)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/base.py\", line 335, in execute\n    output = self.handle(*args, **options)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/commands/migrate.py\", line 200, in handle\n    fake_initial=fake_initial,\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/executor.py\", line 117, in migrate\n    state = self._migrate_all_forwards(state, plan, full_plan, fake=fake, fake_initial=fake_initial)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/executor.py\", line 147, in _migrate_all_forwards\n    state = self.apply_migration(state, migration, fake=fake, fake_initial=fake_initial)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/executor.py\", line 244, in apply_migration\n    state = migration.apply(state, schema_editor)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/migration.py\", line 122, in apply\n    operation.database_forwards(self.app_label, schema_editor, old_state, project_state)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/operations/fields.py\", line 304, in database_forwards\n    to_model._meta.get_field(self.new_name),\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/backends/sqlite3/schema.py\", line 81, in alter_field\n    any(r.field_name == old_field.name for r in model._meta.related_objects)):\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/backends/sqlite3/schema.py\", line 81, in <genexpr>\n    any(r.field_name == old_field.name for r in model._meta.related_objects)):\nAttributeError: 'ManyToManyRel' object has no attribute 'field_name'\n\n$ pip freeze\nDjango==2.0\npytz==2017.3",
+      "issue_closed_at": "2017-12-22T15:09:50",
+      "base_commit": "f3a98224e6dd5f8846008512f281e452dc3b1909",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "_table_info",
+          "class_name": "DatabaseIntrospection",
+          "code": "def _table_info(self, cursor, name):\n        cursor.execute('PRAGMA table_info(%s)' % self.connection.ops.quote_name(name))\n        # cid, name, type, notnull, default_value, pk\n        return [{\n            'name': field[1],\n            'type': field[2],\n            'size': get_field_size(field[2]),\n            'null_ok': not field[3],\n            'default': field[4],\n            'pk': field[5],  # undocumented\n        } for field in cursor.fetchall()]"
+        },
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "get_constraints",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_constraints(self, cursor, table_name):\n        \"\"\"\n        Retrieve any constraints or keys (unique, pk, fk, check, index) across\n        one or more columns.\n        \"\"\"\n        constraints = {}\n        # Get the index info\n        cursor.execute(\"PRAGMA index_list(%s)\" % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Sqlite3 3.8.9+ has 5 columns, however older versions only give 3\n            # columns. Discard last 2 columns if there.\n            number, index, unique = row[:3]\n            # Get the index info for that index\n            cursor.execute('PRAGMA index_info(%s)' % self.connection.ops.quote_name(index))\n            for index_rank, column_rank, column in cursor.fetchall():\n                if index not in constraints:\n                    constraints[index] = {\n                        \"columns\": [],\n                        \"primary_key\": False,\n                        \"unique\": bool(unique),\n                        \"foreign_key\": False,\n                        \"check\": False,\n                        \"index\": True,\n                    }\n                constraints[index]['columns'].append(column)\n            # Add type and column orders for indexes\n            if constraints[index]['index'] and not constraints[index]['unique']:\n                # SQLite doesn't support any index type other than b-tree\n                constraints[index]['type'] = Index.suffix\n                cursor.execute(\n                    \"SELECT sql FROM sqlite_master \"\n                    \"WHERE type='index' AND name=%s\" % self.connection.ops.quote_name(index)\n                )\n                orders = []\n                # There would be only 1 row to loop over\n                for sql, in cursor.fetchall():\n                    order_info = sql.split('(')[-1].split(')')[0].split(',')\n                    orders = ['DESC' if info.endswith('DESC') else 'ASC' for info in order_info]\n                constraints[index]['orders'] = orders\n        # Get the PK\n        pk_column = self.get_primary_key_column(cursor, table_name)\n        if pk_column:\n            # SQLite doesn't actually give a name to the PK constraint,\n            # so we invent one. This is fine, as the SQLite backend never\n            # deletes PK constraints by name, as you can't delete constraints\n            # in SQLite; we remake the table with a new PK instead.\n            constraints[\"__primary__\"] = {\n                \"columns\": [pk_column],\n                \"primary_key\": True,\n                \"unique\": False,  # It's not actually a unique constraint.\n                \"foreign_key\": False,\n                \"check\": False,\n                \"index\": False,\n            }\n        # Get foreign keys\n        cursor.execute('PRAGMA foreign_key_list(%s)' % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Remaining on_update/on_delete/match values are of no interest here\n            id_, seq, table, from_, to = row[:5]\n            constraints['fk_%d' % id_] = {\n                'columns': [from_],\n                'primary_key': False,\n                'unique': False,\n                'foreign_key': (table, to),\n                'check': False,\n                'index': False,\n            }\n        return constraints"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "quote_value",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def quote_value(self, value):\n        # The backend \"mostly works\" without this function and there are use\n        # cases for compiling Python without the sqlite3 libraries (e.g.\n        # security hardening).\n        try:\n            import sqlite3\n            value = sqlite3.adapt(value)\n        except ImportError:\n            pass\n        except sqlite3.ProgrammingError:\n            pass\n        # Manual emulation of SQLite parameter quoting\n        if isinstance(value, bool):\n            return str(int(value))\n        elif isinstance(value, (Decimal, float, int)):\n            return str(value)\n        elif isinstance(value, str):\n            return \"'%s'\" % value.replace(\"\\'\", \"\\'\\'\")\n        elif value is None:\n            return \"NULL\"\n        elif isinstance(value, (bytes, bytearray, memoryview)):\n            # Bytes are only allowed for BLOB fields, encoded as string\n            # literals containing hexadecimal data and preceded by a single \"X\"\n            # character.\n            return \"X'%s'\" % value.hex()\n        else:\n            raise ValueError(\"Cannot quote parameter value %r of type %s\" % (value, type(value)))"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_db_table",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_db_table(self, model, old_db_table, new_db_table, disable_constraints=True):\n        if model._meta.related_objects and disable_constraints:\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r table while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % old_db_table)\n            self.connection.enable_constraint_checking()\n            super().alter_db_table(model, old_db_table, new_db_table)\n            self.connection.disable_constraint_checking()\n        else:\n            super().alter_db_table(model, old_db_table, new_db_table)"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_field(self, model, old_field, new_field, strict=False):\n        old_field_name = old_field.name\n        if (new_field.name != old_field_name and\n                any(r.field_name == old_field.name for r in model._meta.related_objects)):\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r.%r column while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % (model._meta.db_table, old_field_name))\n            with atomic(self.connection.alias):\n                super().alter_field(model, old_field, new_field, strict=strict)\n                # Follow SQLite's documented procedure for performing changes\n                # that don't affect the on-disk content.\n                # https://sqlite.org/lang_altertable.html#otheralter\n                with self.connection.cursor() as cursor:\n                    schema_version = cursor.execute('PRAGMA schema_version').fetchone()[0]\n                    cursor.execute('PRAGMA writable_schema = 1')\n                    table_name = model._meta.db_table\n                    references_template = ' REFERENCES \"%s\" (\"%%s\") ' % table_name\n                    old_column_name = old_field.get_attname_column()[1]\n                    new_column_name = new_field.get_attname_column()[1]\n                    search = references_template % old_column_name\n                    replacement = references_template % new_column_name\n                    cursor.execute('UPDATE sqlite_master SET sql = replace(sql, %s, %s)', (search, replacement))\n                    cursor.execute('PRAGMA schema_version = %d' % (schema_version + 1))\n                    cursor.execute('PRAGMA writable_schema = 0')\n                    # The integrity check will raise an exception and rollback\n                    # the transaction if the sqlite_master updates corrupt the\n                    # database.\n                    cursor.execute('PRAGMA integrity_check')\n            # Perform a VACUUM to refresh the database representation from\n            # the sqlite_master table.\n            with self.connection.cursor() as cursor:\n                cursor.execute('VACUUM')\n        else:\n            super().alter_field(model, old_field, new_field, strict=strict)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6802,
+      "pr_title": "Fixed #26778 -- Fixed ModelSignal.connect() weak argument.",
+      "pr_body": "https://code.djangoproject.com/ticket/26778\n",
+      "issue_id": 26778,
+      "issue_title": "ModelSignal.connect() does not work when 'weak' is set to False and receiver is a local function",
+      "issue_body": "Since\n#26642\nthere seems to be a regression.\nModelSignal.connect\ndoesn't take into account 'weak' argument.\nQuick fix might look like this:\ndjango/db/models/signals.py\na\nb\nclass ModelSignal(Signal):\n27\n27\nreturn partial_method(sender)\n28\n28\n29\n29\ndef connect(self, receiver, sender=None, weak=True, dispatch_uid=None, apps=None):\n30\nself._lazy_method(super(ModelSignal, self).connect, apps, receiver, sender,\ndispatch_uid=dispatch_uid)\n30\nself._lazy_method(super(ModelSignal, self).connect, apps, receiver, sender,\nweak=weak,\ndispatch_uid=dispatch_uid)\n31\n31\n32\n32\ndef disconnect(self, receiver=None, sender=None, weak=None, dispatch_uid=None, apps=None):\n33\n33\nif weak is not None:",
+      "issue_closed_at": "2016-06-18T19:42:54",
+      "base_commit": "8ba44ecda024050c219e7cbc1f16c2d56fa258ac",
+      "changes": [
+        {
+          "file": "django/db/models/signals.py",
+          "type": "function",
+          "name": "_lazy_method",
+          "class_name": "ModelSignal",
+          "code": "def _lazy_method(self, method, apps, receiver, sender, **kwargs):\n        from django.db.models.options import Options\n\n        # This partial takes a single optional argument named \"sender\".\n        partial_method = partial(method, receiver, **kwargs)\n        if isinstance(sender, six.string_types):\n            apps = apps or Options.default_apps\n            apps.lazy_model_operation(partial_method, make_model_tuple(sender))\n        else:\n            return partial_method(sender)"
+        }
+      ]
+    },
+    {
+      "pr_number": 7097,
+      "pr_title": "Fixed #27068 -- Unified form field initial data retrieval.",
+      "pr_body": "https://code.djangoproject.com/ticket/27068\n",
+      "issue_id": 27068,
+      "issue_title": "Acquire form's initial data more consistently",
+      "issue_body": "In\nBoundField\n, sometimes initial data\n​\nhandles callables\n. While other times,\n​\nit doesn't\n. This can lead to a theoretical bug when the initial data is a callable, but the field is disabled.\nOther times, the initial callable is handled, but microseconds are\n​\nnot chopped\nleading to theoretical false positives that data has changed.\nInitial data should be handled more consistently across all cases.\nMarking as a bug due to the theoretical edge cases that can produce unexpected results. Noticed these inconsistencies while working on\n#27037\n.",
+      "issue_closed_at": "2016-08-18T19:51:32",
+      "base_commit": "13857b45ca54a519a58361238442af84262c0d23",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "value",
+          "class_name": "BoundField",
+          "code": "def value(self):\n        \"\"\"\n        Returns the value for this BoundField, using the initial value if\n        the form is not bound or the data otherwise.\n        \"\"\"\n        if not self.form.is_bound:\n            data = self.initial\n        else:\n            data = self.field.bound_data(\n                self.data, self.form.initial.get(self.name, self.field.initial)\n            )\n        return self.field.prepare_value(data)"
+        },
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "id_for_label",
+          "class_name": "BoundField",
+          "code": "def id_for_label(self):\n        \"\"\"\n        Wrapper around the field widget's `id_for_label` method.\n        Useful, for example, for focusing on this field regardless of whether\n        it has a single widget or a MultiWidget.\n        \"\"\"\n        widget = self.field.widget\n        id_ = widget.attrs.get('id') or self.auto_id\n        return widget.id_for_label(id_)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "_clean_fields",
+          "class_name": "BaseForm",
+          "code": "def _clean_fields(self):\n        for name, field in self.fields.items():\n            # value_from_datadict() gets the data from the data dictionaries.\n            # Each widget type knows how to retrieve its own data, because some\n            # widgets split data over several HTML fields.\n            if field.disabled:\n                value = self.initial.get(name, field.initial)\n            else:\n                value = field.widget.value_from_datadict(self.data, self.files, self.add_prefix(name))\n            try:\n                if isinstance(field, FileField):\n                    initial = self.initial.get(name, field.initial)\n                    value = field.clean(value, initial)\n                else:\n                    value = field.clean(value)\n                self.cleaned_data[name] = value\n                if hasattr(self, 'clean_%s' % name):\n                    value = getattr(self, 'clean_%s' % name)()\n                    self.cleaned_data[name] = value\n            except ValidationError as e:\n                self.add_error(name, e)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "changed_data",
+          "class_name": "BaseForm",
+          "code": "def changed_data(self):\n        data = []\n        for name, field in self.fields.items():\n            prefixed_name = self.add_prefix(name)\n            data_value = field.widget.value_from_datadict(self.data, self.files, prefixed_name)\n            if not field.show_hidden_initial:\n                initial_value = self.initial.get(name, field.initial)\n                if callable(initial_value):\n                    initial_value = initial_value()\n            else:\n                initial_prefixed_name = self.add_initial_prefix(name)\n                hidden_widget = field.hidden_widget()\n                try:\n                    initial_value = field.to_python(hidden_widget.value_from_datadict(\n                        self.data, self.files, initial_prefixed_name))\n                except ValidationError:\n                    # Always assume data has changed if validation fails.\n                    data.append(name)\n                    continue\n            if field.has_changed(initial_value, data_value):\n                data.append(name)\n        return data"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "visible_fields",
+          "class_name": "BaseForm",
+          "code": "def visible_fields(self):\n        \"\"\"\n        Returns a list of BoundField objects that aren't hidden fields.\n        The opposite of the hidden_fields() method.\n        \"\"\"\n        return [field for field in self if not field.is_hidden]"
+        }
+      ]
+    }
+  ]
+}

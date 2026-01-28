@@ -1,0 +1,153 @@
+{
+  "instance_id": "django__django-11049",
+  "repo": "django/django",
+  "created_at": "2019-03-03T09:56:16Z",
+  "problem_statement": "Correct expected format in invalid DurationField error message\nDescription\n\t\nIf you enter a duration \"14:00\" into a duration field, it translates to \"00:14:00\" which is 14 minutes.\nThe current error message for invalid DurationField says that this should be the format of durations: \"[DD] [HH:[MM:]]ss[.uuuuuu]\". But according to the actual behaviour, it should be: \"[DD] [[HH:]MM:]ss[.uuuuuu]\", because seconds are mandatory, minutes are optional, and hours are optional if minutes are provided.\nThis seems to be a mistake in all Django versions that support the DurationField.\nAlso the duration fields could have a default help_text with the requested format, because the syntax is not self-explanatory.\n",
+  "patch": "diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py\n--- a/django/db/models/fields/__init__.py\n+++ b/django/db/models/fields/__init__.py\n@@ -1587,7 +1587,7 @@ class DurationField(Field):\n     empty_strings_allowed = False\n     default_error_messages = {\n         'invalid': _(\"'%(value)s' value has an invalid format. It must be in \"\n-                     \"[DD] [HH:[MM:]]ss[.uuuuuu] format.\")\n+                     \"[DD] [[HH:]MM:]ss[.uuuuuu] format.\")\n     }\n     description = _(\"Duration\")\n \n",
+  "similar_bug_items": [
+    {
+      "pr_number": 6263,
+      "pr_title": "Fixed #26324 -- Fixed DurationField with fractional seconds on SQLite.",
+      "pr_body": "https://code.djangoproject.com/ticket/26324\n",
+      "issue_id": 26324,
+      "issue_title": "DurationField stores certain values incorrectly in sqlite",
+      "issue_body": "",
+      "issue_closed_at": "2016-03-10T18:15:57",
+      "base_commit": "85a4844f8a8e628b90fa30ba7074f162a2d188ef",
+      "changes": [
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "get_db_prep_value",
+          "class_name": "UUIDField",
+          "code": "def get_db_prep_value(self, value, connection, prepared=False):\n        if value is None:\n            return None\n        if not isinstance(value, uuid.UUID):\n            try:\n                value = uuid.UUID(value)\n            except AttributeError:\n                raise TypeError(self.error_messages['invalid'] % {'value': value})\n\n        if connection.features.has_native_uuid_field:\n            return value\n        return value.hex"
+        }
+      ]
+    },
+    {
+      "pr_number": 9421,
+      "pr_title": "Fixed #28884 -- Fixed crash in renames of fields of tables referenced by m2ms on SQlite.",
+      "pr_body": "https://code.djangoproject.com/ticket/28884\r\n\r\nIntrospected database constraints instead of relying on `_meta.related_objects` to determine whether or not a table or a column is referenced on rename operations.\r\n\r\nThis has the side effect of ignoring both ``db_constraint=False`` and virtual fields such as ``GenericRelation`` which are not backend by database level constraints and thus shouldn't prevent the rename operations from being performed in a transaction.\r\n\r\nThis also highlighted false negatives in the existing schema and migrations tests where `_meta.related_objects` was not appropriately populated.",
+      "issue_id": 28884,
+      "issue_title": "RenameField crashes with AttributeError when renaming a ManyToManyField (sqlite3)",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-22T15:09:50",
+      "base_commit": "f3a98224e6dd5f8846008512f281e452dc3b1909",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "_table_info",
+          "class_name": "DatabaseIntrospection",
+          "code": "def _table_info(self, cursor, name):\n        cursor.execute('PRAGMA table_info(%s)' % self.connection.ops.quote_name(name))\n        # cid, name, type, notnull, default_value, pk\n        return [{\n            'name': field[1],\n            'type': field[2],\n            'size': get_field_size(field[2]),\n            'null_ok': not field[3],\n            'default': field[4],\n            'pk': field[5],  # undocumented\n        } for field in cursor.fetchall()]"
+        },
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "get_constraints",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_constraints(self, cursor, table_name):\n        \"\"\"\n        Retrieve any constraints or keys (unique, pk, fk, check, index) across\n        one or more columns.\n        \"\"\"\n        constraints = {}\n        # Get the index info\n        cursor.execute(\"PRAGMA index_list(%s)\" % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Sqlite3 3.8.9+ has 5 columns, however older versions only give 3\n            # columns. Discard last 2 columns if there.\n            number, index, unique = row[:3]\n            # Get the index info for that index\n            cursor.execute('PRAGMA index_info(%s)' % self.connection.ops.quote_name(index))\n            for index_rank, column_rank, column in cursor.fetchall():\n                if index not in constraints:\n                    constraints[index] = {\n                        \"columns\": [],\n                        \"primary_key\": False,\n                        \"unique\": bool(unique),\n                        \"foreign_key\": False,\n                        \"check\": False,\n                        \"index\": True,\n                    }\n                constraints[index]['columns'].append(column)\n            # Add type and column orders for indexes\n            if constraints[index]['index'] and not constraints[index]['unique']:\n                # SQLite doesn't support any index type other than b-tree\n                constraints[index]['type'] = Index.suffix\n                cursor.execute(\n                    \"SELECT sql FROM sqlite_master \"\n                    \"WHERE type='index' AND name=%s\" % self.connection.ops.quote_name(index)\n                )\n                orders = []\n                # There would be only 1 row to loop over\n                for sql, in cursor.fetchall():\n                    order_info = sql.split('(')[-1].split(')')[0].split(',')\n                    orders = ['DESC' if info.endswith('DESC') else 'ASC' for info in order_info]\n                constraints[index]['orders'] = orders\n        # Get the PK\n        pk_column = self.get_primary_key_column(cursor, table_name)\n        if pk_column:\n            # SQLite doesn't actually give a name to the PK constraint,\n            # so we invent one. This is fine, as the SQLite backend never\n            # deletes PK constraints by name, as you can't delete constraints\n            # in SQLite; we remake the table with a new PK instead.\n            constraints[\"__primary__\"] = {\n                \"columns\": [pk_column],\n                \"primary_key\": True,\n                \"unique\": False,  # It's not actually a unique constraint.\n                \"foreign_key\": False,\n                \"check\": False,\n                \"index\": False,\n            }\n        # Get foreign keys\n        cursor.execute('PRAGMA foreign_key_list(%s)' % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Remaining on_update/on_delete/match values are of no interest here\n            id_, seq, table, from_, to = row[:5]\n            constraints['fk_%d' % id_] = {\n                'columns': [from_],\n                'primary_key': False,\n                'unique': False,\n                'foreign_key': (table, to),\n                'check': False,\n                'index': False,\n            }\n        return constraints"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "quote_value",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def quote_value(self, value):\n        # The backend \"mostly works\" without this function and there are use\n        # cases for compiling Python without the sqlite3 libraries (e.g.\n        # security hardening).\n        try:\n            import sqlite3\n            value = sqlite3.adapt(value)\n        except ImportError:\n            pass\n        except sqlite3.ProgrammingError:\n            pass\n        # Manual emulation of SQLite parameter quoting\n        if isinstance(value, bool):\n            return str(int(value))\n        elif isinstance(value, (Decimal, float, int)):\n            return str(value)\n        elif isinstance(value, str):\n            return \"'%s'\" % value.replace(\"\\'\", \"\\'\\'\")\n        elif value is None:\n            return \"NULL\"\n        elif isinstance(value, (bytes, bytearray, memoryview)):\n            # Bytes are only allowed for BLOB fields, encoded as string\n            # literals containing hexadecimal data and preceded by a single \"X\"\n            # character.\n            return \"X'%s'\" % value.hex()\n        else:\n            raise ValueError(\"Cannot quote parameter value %r of type %s\" % (value, type(value)))"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_db_table",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_db_table(self, model, old_db_table, new_db_table, disable_constraints=True):\n        if model._meta.related_objects and disable_constraints:\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r table while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % old_db_table)\n            self.connection.enable_constraint_checking()\n            super().alter_db_table(model, old_db_table, new_db_table)\n            self.connection.disable_constraint_checking()\n        else:\n            super().alter_db_table(model, old_db_table, new_db_table)"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_field(self, model, old_field, new_field, strict=False):\n        old_field_name = old_field.name\n        if (new_field.name != old_field_name and\n                any(r.field_name == old_field.name for r in model._meta.related_objects)):\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r.%r column while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % (model._meta.db_table, old_field_name))\n            with atomic(self.connection.alias):\n                super().alter_field(model, old_field, new_field, strict=strict)\n                # Follow SQLite's documented procedure for performing changes\n                # that don't affect the on-disk content.\n                # https://sqlite.org/lang_altertable.html#otheralter\n                with self.connection.cursor() as cursor:\n                    schema_version = cursor.execute('PRAGMA schema_version').fetchone()[0]\n                    cursor.execute('PRAGMA writable_schema = 1')\n                    table_name = model._meta.db_table\n                    references_template = ' REFERENCES \"%s\" (\"%%s\") ' % table_name\n                    old_column_name = old_field.get_attname_column()[1]\n                    new_column_name = new_field.get_attname_column()[1]\n                    search = references_template % old_column_name\n                    replacement = references_template % new_column_name\n                    cursor.execute('UPDATE sqlite_master SET sql = replace(sql, %s, %s)', (search, replacement))\n                    cursor.execute('PRAGMA schema_version = %d' % (schema_version + 1))\n                    cursor.execute('PRAGMA writable_schema = 0')\n                    # The integrity check will raise an exception and rollback\n                    # the transaction if the sqlite_master updates corrupt the\n                    # database.\n                    cursor.execute('PRAGMA integrity_check')\n            # Perform a VACUUM to refresh the database representation from\n            # the sqlite_master table.\n            with self.connection.cursor() as cursor:\n                cursor.execute('VACUUM')\n        else:\n            super().alter_field(model, old_field, new_field, strict=strict)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9874,
+      "pr_title": "Fixed #29322 -- Made admin check all ModelAdmin fieldsets for duplicates.",
+      "pr_body": "Duplicate fields were only detected if they were in the same fieldset.\r\n\r\nhttp://code.djangoproject.com/ticket/29322",
+      "issue_id": 29322,
+      "issue_title": "admin.E012: Duplicate fields in admin fieldset only recognizes duplicates if they are in the same fieldset",
+      "issue_body": "",
+      "issue_closed_at": "2018-04-13T10:09:11",
+      "base_commit": "0b66c3b442875627fa6daef4ac1e90900d74290b",
+      "changes": [
+        {
+          "file": "django/contrib/admin/checks.py",
+          "type": "function",
+          "name": "_check_fieldsets",
+          "class_name": "BaseModelAdminChecks",
+          "code": "def _check_fieldsets(self, obj):\n        \"\"\" Check that fieldsets is properly formatted and doesn't contain\n        duplicates. \"\"\"\n\n        if obj.fieldsets is None:\n            return []\n        elif not isinstance(obj.fieldsets, (list, tuple)):\n            return must_be('a list or tuple', option='fieldsets', obj=obj, id='admin.E007')\n        else:\n            return list(chain.from_iterable(\n                self._check_fieldsets_item(obj, obj.model, fieldset, 'fieldsets[%d]' % index)\n                for index, fieldset in enumerate(obj.fieldsets)\n            ))"
+        },
+        {
+          "file": "django/contrib/admin/checks.py",
+          "type": "function",
+          "name": "_check_fieldsets_item",
+          "class_name": "BaseModelAdminChecks",
+          "code": "def _check_fieldsets_item(self, obj, model, fieldset, label):\n        \"\"\" Check an item of `fieldsets`, i.e. check that this is a pair of a\n        set name and a dictionary containing \"fields\" key. \"\"\"\n\n        if not isinstance(fieldset, (list, tuple)):\n            return must_be('a list or tuple', option=label, obj=obj, id='admin.E008')\n        elif len(fieldset) != 2:\n            return must_be('of length 2', option=label, obj=obj, id='admin.E009')\n        elif not isinstance(fieldset[1], dict):\n            return must_be('a dictionary', option='%s[1]' % label, obj=obj, id='admin.E010')\n        elif 'fields' not in fieldset[1]:\n            return [\n                checks.Error(\n                    \"The value of '%s[1]' must contain the key 'fields'.\" % label,\n                    obj=obj.__class__,\n                    id='admin.E011',\n                )\n            ]\n        elif not isinstance(fieldset[1]['fields'], (list, tuple)):\n            return must_be('a list or tuple', option=\"%s[1]['fields']\" % label, obj=obj, id='admin.E008')\n\n        fields = flatten(fieldset[1]['fields'])\n        if len(fields) != len(set(fields)):\n            return [\n                checks.Error(\n                    \"There are duplicate field(s) in '%s[1]'.\" % label,\n                    obj=obj.__class__,\n                    id='admin.E012',\n                )\n            ]\n        return list(chain.from_iterable(\n            self._check_field_spec(obj, model, fieldset_fields, '%s[1][\"fields\"]' % label)\n            for fieldset_fields in fieldset[1]['fields']\n        ))"
+        }
+      ]
+    },
+    {
+      "pr_number": 9528,
+      "pr_title": " Fixed #28811 -- fixes KeyError when combining regular and group by-annotations",
+      "pr_body": "https://code.djangoproject.com/ticket/28811",
+      "issue_id": 28811,
+      "issue_title": "KeyError when using a regular annotation inside an F-statement in a group by annotation",
+      "issue_body": "",
+      "issue_closed_at": "2018-01-03T08:12:31",
+      "base_commit": "2cb6b7732dc7b172797cebb1e8f19be2de89e264",
+      "changes": [
+        {
+          "file": "django/db/models/sql/query.py",
+          "type": "function",
+          "name": "resolve_ref",
+          "class_name": "Query",
+          "code": "def resolve_ref(self, name, allow_joins=True, reuse=None, summarize=False):\n        if not allow_joins and LOOKUP_SEP in name:\n            raise FieldError(\"Joined field references are not permitted in this query\")\n        if name in self.annotations:\n            if summarize:\n                # Summarize currently means we are doing an aggregate() query\n                # which is executed as a wrapped subquery if any of the\n                # aggregate() elements reference an existing annotation. In\n                # that case we need to return a Ref to the subquery's annotation.\n                return Ref(name, self.annotation_select[name])\n            else:\n                return self.annotation_select[name]\n        else:\n            field_list = name.split(LOOKUP_SEP)\n            join_info = self.setup_joins(field_list, self.get_meta(), self.get_initial_alias(), can_reuse=reuse)\n            targets, _, join_list = self.trim_joins(join_info.targets, join_info.joins, join_info.path)\n            if len(targets) > 1:\n                raise FieldError(\"Referencing multicolumn fields with F() objects \"\n                                 \"isn't supported\")\n            if reuse is not None:\n                reuse.update(join_list)\n            col = targets[0].get_col(join_list[-1], join_info.targets[0])\n            return col"
+        }
+      ]
+    },
+    {
+      "pr_number": 9406,
+      "pr_title": "Fixed #28871 -- Fixed initialization of autocomplete widgets in \"Add another\" inlines.",
+      "pr_body": "https://code.djangoproject.com/ticket/28871",
+      "issue_id": 28871,
+      "issue_title": "Autocomplete select for new lines in inline model do not open",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-01T21:42:03",
+      "base_commit": "095c1aaa898bed40568009db836aa8434f1b983d",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "formfield_for_foreignkey",
+          "class_name": "BaseModelAdmin",
+          "code": "def formfield_for_foreignkey(self, db_field, request, **kwargs):\n        \"\"\"\n        Get a form Field for a ForeignKey.\n        \"\"\"\n        db = kwargs.get('using')\n\n        if db_field.name in self.get_autocomplete_fields(request):\n            kwargs['widget'] = AutocompleteSelect(db_field.remote_field, using=db)\n        elif db_field.name in self.raw_id_fields:\n            kwargs['widget'] = widgets.ForeignKeyRawIdWidget(db_field.remote_field, self.admin_site, using=db)\n        elif db_field.name in self.radio_fields:\n            kwargs['widget'] = widgets.AdminRadioSelect(attrs={\n                'class': get_ul_class(self.radio_fields[db_field.name]),\n            })\n            kwargs['empty_label'] = _('None') if db_field.blank else None\n\n        if 'queryset' not in kwargs:\n            queryset = self.get_field_queryset(db, db_field, request)\n            if queryset is not None:\n                kwargs['queryset'] = queryset\n\n        return db_field.formfield(**kwargs)"
+        },
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "formfield_for_manytomany",
+          "class_name": "BaseModelAdmin",
+          "code": "def formfield_for_manytomany(self, db_field, request, **kwargs):\n        \"\"\"\n        Get a form Field for a ManyToManyField.\n        \"\"\"\n        # If it uses an intermediary model that isn't auto created, don't show\n        # a field in admin.\n        if not db_field.remote_field.through._meta.auto_created:\n            return None\n        db = kwargs.get('using')\n\n        autocomplete_fields = self.get_autocomplete_fields(request)\n        if db_field.name in autocomplete_fields:\n            kwargs['widget'] = AutocompleteSelectMultiple(db_field.remote_field, using=db)\n        elif db_field.name in self.raw_id_fields:\n            kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.remote_field, self.admin_site, using=db)\n        elif db_field.name in list(self.filter_vertical) + list(self.filter_horizontal):\n            kwargs['widget'] = widgets.FilteredSelectMultiple(\n                db_field.verbose_name,\n                db_field.name in self.filter_vertical\n            )\n\n        if 'queryset' not in kwargs:\n            queryset = self.get_field_queryset(db, db_field, request)\n            if queryset is not None:\n                kwargs['queryset'] = queryset\n\n        form_field = db_field.formfield(**kwargs)\n        if (isinstance(form_field.widget, SelectMultiple) and\n                not isinstance(form_field.widget, (CheckboxSelectMultiple, AutocompleteSelectMultiple))):\n            msg = _('Hold down \"Control\", or \"Command\" on a Mac, to select more than one.')\n            help_text = form_field.help_text\n            form_field.help_text = format_lazy('{} {}', help_text, msg) if help_text else msg\n        return form_field"
+        },
+        {
+          "file": "django/contrib/admin/widgets.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "AutocompleteMixin",
+          "code": "def __init__(self, rel, attrs=None, choices=(), using=None):\n        self.rel = rel\n        self.db = using\n        self.choices = choices\n        if attrs is not None:\n            self.attrs = attrs.copy()\n        else:\n            self.attrs = {}"
+        }
+      ]
+    }
+  ]
+}

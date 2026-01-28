@@ -1,0 +1,138 @@
+{
+  "instance_id": "django__django-17087",
+  "repo": "django/django",
+  "created_at": "2023-07-17T20:28:41Z",
+  "problem_statement": "Class methods from nested classes cannot be used as Field.default.\nDescription\n\t \n\t\t(last modified by Mariusz Felisiak)\n\t \nGiven the following model:\n \nclass Profile(models.Model):\n\tclass Capability(models.TextChoices):\n\t\tBASIC = (\"BASIC\", \"Basic\")\n\t\tPROFESSIONAL = (\"PROFESSIONAL\", \"Professional\")\n\t\t\n\t\t@classmethod\n\t\tdef default(cls) -> list[str]:\n\t\t\treturn [cls.BASIC]\n\tcapabilities = ArrayField(\n\t\tmodels.CharField(choices=Capability.choices, max_length=30, blank=True),\n\t\tnull=True,\n\t\tdefault=Capability.default\n\t)\nThe resulting migration contained the following:\n # ...\n\t migrations.AddField(\n\t\t model_name='profile',\n\t\t name='capabilities',\n\t\t field=django.contrib.postgres.fields.ArrayField(base_field=models.CharField(blank=True, choices=[('BASIC', 'Basic'), ('PROFESSIONAL', 'Professional')], max_length=30), default=appname.models.Capability.default, null=True, size=None),\n\t ),\n # ...\nAs you can see, migrations.AddField is passed as argument \"default\" a wrong value \"appname.models.Capability.default\", which leads to an error when trying to migrate. The right value should be \"appname.models.Profile.Capability.default\".\n",
+  "patch": "diff --git a/django/db/migrations/serializer.py b/django/db/migrations/serializer.py\n--- a/django/db/migrations/serializer.py\n+++ b/django/db/migrations/serializer.py\n@@ -168,7 +168,7 @@ def serialize(self):\n         ):\n             klass = self.value.__self__\n             module = klass.__module__\n-            return \"%s.%s.%s\" % (module, klass.__name__, self.value.__name__), {\n+            return \"%s.%s.%s\" % (module, klass.__qualname__, self.value.__name__), {\n                 \"import %s\" % module\n             }\n         # Further error checking\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 14935,
+      "pr_title": "Fixed #23408 -- Added migrations questioner prompt for adding unique fields with a callable default.",
+      "pr_body": "ticket-23408",
+      "issue_id": 23408,
+      "issue_title": "Add makemigrations warning for unique fields with callable defaults",
+      "issue_body": "Callables on properties for ModelFields are used for various reasons. One use case is to autocreate random file names or user passwords if not present.\nThe migration seems to call them only once because after the migration every \"Buchung\" has the same wlan_password.\nMy Model:\ndef random_wlan_key():\n    return ''.join(random.SystemRandom().choice(\"1234567890abcdefghkmnpqrstuvwxyz\") for i in range(9))\n\nclass Buchung(models.Model):\n    [...]\n    wlan_passwort = models.CharField(max_length=10, default=random_wlan_key)\nThe generated migration:\n# -*- coding: utf-8 -*-\nfrom __future__ import unicode_literals\n\nfrom django.db import models, migrations\nimport main.models\n\n\nclass Migration(migrations.Migration):\n\n    dependencies = [\n        ('main', '0001_initial'),\n    ]\n\n    operations = [\n        migrations.AddField(\n            model_name='buchung',\n            name='wlan_passwort',\n            field=models.CharField(default=main.models.random_wlan_key, max_length=10),\n            preserve_default=True,\n        ),\n    ]",
+      "issue_closed_at": "2021-10-06T01:58:38",
+      "base_commit": "0f3e1a54bfa19f034f88bf3c25c67402d19e906c",
+      "changes": [
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "_generate_added_field",
+          "class_name": "MigrationAutodetector",
+          "code": "def _generate_added_field(self, app_label, model_name, field_name):\n        field = self.to_state.models[app_label, model_name].get_field(field_name)\n        # Fields that are foreignkeys/m2ms depend on stuff\n        dependencies = []\n        if field.remote_field and field.remote_field.model:\n            dependencies.extend(self._get_dependencies_for_foreign_key(\n                app_label, model_name, field, self.to_state,\n            ))\n        # You can't just add NOT NULL fields with no default or fields\n        # which don't allow empty strings as default.\n        time_fields = (models.DateField, models.DateTimeField, models.TimeField)\n        preserve_default = (\n            field.null or field.has_default() or field.many_to_many or\n            (field.blank and field.empty_strings_allowed) or\n            (isinstance(field, time_fields) and field.auto_now)\n        )\n        if not preserve_default:\n            field = field.clone()\n            if isinstance(field, time_fields) and field.auto_now_add:\n                field.default = self.questioner.ask_auto_now_add_addition(field_name, model_name)\n            else:\n                field.default = self.questioner.ask_not_null_addition(field_name, model_name)\n        self.add_operation(\n            app_label,\n            operations.AddField(\n                model_name=model_name,\n                name=field_name,\n                field=field,\n                preserve_default=preserve_default,\n            ),\n            dependencies=dependencies,\n        )"
+        },
+        {
+          "file": "django/db/migrations/questioner.py",
+          "type": "line",
+          "name": "line 6",
+          "code": "from django.apps import apps\nfrom django.db.models import NOT_PROVIDED\nfrom django.utils import timezone\n\nfrom .loader import MigrationLoader\n"
+        },
+        {
+          "file": "django/db/migrations/questioner.py",
+          "type": "function",
+          "name": "ask_auto_now_add_addition",
+          "class_name": "NonInteractiveMigrationQuestioner",
+          "code": "def ask_auto_now_add_addition(self, field_name, model_name):\n        # We can't ask the user, so act like the user aborted.\n        sys.exit(3)"
+        },
+        {
+          "file": "django/db/migrations/questioner.py",
+          "type": "function",
+          "name": "ask_auto_now_add_addition",
+          "class_name": "NonInteractiveMigrationQuestioner",
+          "code": "def ask_auto_now_add_addition(self, field_name, model_name):\n        # We can't ask the user, so act like the user aborted.\n        sys.exit(3)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9406,
+      "pr_title": "Fixed #28871 -- Fixed initialization of autocomplete widgets in \"Add another\" inlines.",
+      "pr_body": "https://code.djangoproject.com/ticket/28871",
+      "issue_id": 28871,
+      "issue_title": "Autocomplete select for new lines in inline model do not open",
+      "issue_body": "When a model has an Inline model, autocomplete select does not show for new rows.\nSelect box is is replaced with Select2 style, but clicking it does not show the select list.\nmodel.py\nclass\nItem\n(\nmodels\n.\nModel\n):\nname\n=\nmodels\n.\nCharField\n(\nmax_length\n=\n100\n)\nclass\nCategory\n(\nmodels\n.\nModel\n):\nname\n=\nmodels\n.\nCharField\n(\nmax_length\n=\n100\n)\ndef\n__str__\n(\nself\n):\nreturn\nself\n.\nname\nclass\nLineItem\n(\nmodels\n.\nModel\n):\nitem\n=\nmodels\n.\nForeignKey\n(\n'Item'\n,\non_delete\n=\nmodels\n.\nCASCADE\n)\ncategory\n=\nmodels\n.\nForeignKey\n(\n'Category'\n,\non_delete\n=\nmodels\n.\nCASCADE\n)\nadmin.py\nclass\nLineItemInline\n(\nadmin\n.\nTabularInline\n):\nmodel\n=\nLineItem\nextra\n=\n1\nautocomplete_fields\n=\n(\n'category'\n,)\n@admin\n.\nregister\n(\nItem\n)\nclass\nItemAdmin\n(\nadmin\n.\nModelAdmin\n):\nlist_display\n=\n(\n'name'\n,)\nsearch_fields\n=\n(\n'name'\n,)\ninlines\n=\n[\nLineItemInline\n]\n@admin\n.\nregister\n(\nCategory\n)\nclass\nCategoryAdmin\n(\nadmin\n.\nModelAdmin\n):\nlist_display\n=\n(\n'name'\n,)\nsearch_fields\n=\n(\n'name'\n,)\nGithub repo\nWith demo and instructions on how to reproduce\n​\nhttps://github.com/gotling/bug-django2-autocomplete",
+      "issue_closed_at": "2017-12-01T21:42:03",
+      "base_commit": "095c1aaa898bed40568009db836aa8434f1b983d",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "formfield_for_foreignkey",
+          "class_name": "BaseModelAdmin",
+          "code": "def formfield_for_foreignkey(self, db_field, request, **kwargs):\n        \"\"\"\n        Get a form Field for a ForeignKey.\n        \"\"\"\n        db = kwargs.get('using')\n\n        if db_field.name in self.get_autocomplete_fields(request):\n            kwargs['widget'] = AutocompleteSelect(db_field.remote_field, using=db)\n        elif db_field.name in self.raw_id_fields:\n            kwargs['widget'] = widgets.ForeignKeyRawIdWidget(db_field.remote_field, self.admin_site, using=db)\n        elif db_field.name in self.radio_fields:\n            kwargs['widget'] = widgets.AdminRadioSelect(attrs={\n                'class': get_ul_class(self.radio_fields[db_field.name]),\n            })\n            kwargs['empty_label'] = _('None') if db_field.blank else None\n\n        if 'queryset' not in kwargs:\n            queryset = self.get_field_queryset(db, db_field, request)\n            if queryset is not None:\n                kwargs['queryset'] = queryset\n\n        return db_field.formfield(**kwargs)"
+        },
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "formfield_for_manytomany",
+          "class_name": "BaseModelAdmin",
+          "code": "def formfield_for_manytomany(self, db_field, request, **kwargs):\n        \"\"\"\n        Get a form Field for a ManyToManyField.\n        \"\"\"\n        # If it uses an intermediary model that isn't auto created, don't show\n        # a field in admin.\n        if not db_field.remote_field.through._meta.auto_created:\n            return None\n        db = kwargs.get('using')\n\n        autocomplete_fields = self.get_autocomplete_fields(request)\n        if db_field.name in autocomplete_fields:\n            kwargs['widget'] = AutocompleteSelectMultiple(db_field.remote_field, using=db)\n        elif db_field.name in self.raw_id_fields:\n            kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.remote_field, self.admin_site, using=db)\n        elif db_field.name in list(self.filter_vertical) + list(self.filter_horizontal):\n            kwargs['widget'] = widgets.FilteredSelectMultiple(\n                db_field.verbose_name,\n                db_field.name in self.filter_vertical\n            )\n\n        if 'queryset' not in kwargs:\n            queryset = self.get_field_queryset(db, db_field, request)\n            if queryset is not None:\n                kwargs['queryset'] = queryset\n\n        form_field = db_field.formfield(**kwargs)\n        if (isinstance(form_field.widget, SelectMultiple) and\n                not isinstance(form_field.widget, (CheckboxSelectMultiple, AutocompleteSelectMultiple))):\n            msg = _('Hold down \"Control\", or \"Command\" on a Mac, to select more than one.')\n            help_text = form_field.help_text\n            form_field.help_text = format_lazy('{} {}', help_text, msg) if help_text else msg\n        return form_field"
+        },
+        {
+          "file": "django/contrib/admin/widgets.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "AutocompleteMixin",
+          "code": "def __init__(self, rel, attrs=None, choices=(), using=None):\n        self.rel = rel\n        self.db = using\n        self.choices = choices\n        if attrs is not None:\n            self.attrs = attrs.copy()\n        else:\n            self.attrs = {}"
+        }
+      ]
+    },
+    {
+      "pr_number": 16532,
+      "pr_title": "Fixed #34250 -- Fixed renaming model with m2m relation to a model with the same name.",
+      "pr_body": "[Ticket #34250](https://code.djangoproject.com/ticket/34250)",
+      "issue_id": 34250,
+      "issue_title": "Duplicate model names in M2M relationship causes RenameModel migration failure",
+      "issue_body": "Example code is here:\n​\nhttps://github.com/jzmiller1/edemo\nI have a django project with two apps, incidents and vault, that both have a model named Incident.  The vault Incident model has an M2M involving the incidents Incident model.  When the table is created for this M2M relationship the automatic field names are \"from_incident_id\" and \"to_incident_id\" since models have the same names.\nIf I then try to use a RenameModel in a migration...\noperations = [\n        migrations.RenameModel(\n            old_name='Incident',\n            new_name='Folder',\n        ),\n    ]\nit fails with this traceback:\nTracking file by folder pattern:  migrations\nOperations to perform:\n  Apply all migrations: admin, auth, contenttypes, incidents, sessions, vault\nRunning migrations:\n  Applying vault.0002_rename_incident_folder...Traceback (most recent call last):\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/db/models/options.py\", line 668, in get_field\n    return self.fields_map[field_name]\nKeyError: 'incident'\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/Users/zacmiller/Library/Application Support/JetBrains/Toolbox/apps/PyCharm-P/ch-0/222.4345.23/PyCharm.app/Contents/plugins/python/helpers/pycharm/django_manage.py\", line 52, in <module>\n    run_command()\n  File \"/Users/zacmiller/Library/Application Support/JetBrains/Toolbox/apps/PyCharm-P/ch-0/222.4345.23/PyCharm.app/Contents/plugins/python/helpers/pycharm/django_manage.py\", line 46, in run_command\n    run_module(manage_file, None, '__main__', True)\n  File \"/Library/Frameworks/Python.framework/Versions/3.10/lib/python3.10/runpy.py\", line 209, in run_module\n    return _run_module_code(code, init_globals, run_name, mod_spec)\n  File \"/Library/Frameworks/Python.framework/Versions/3.10/lib/python3.10/runpy.py\", line 96, in _run_module_code\n    _run_code(code, mod_globals, init_globals,\n  File \"/Library/Frameworks/Python.framework/Versions/3.10/lib/python3.10/runpy.py\", line 86, in _run_code\n    exec(code, run_globals)\n  File \"/Users/zacmiller/PycharmProjects/edemo/manage.py\", line 22, in <module>\n    main()\n  File \"/Users/zacmiller/PycharmProjects/edemo/manage.py\", line 18, in main\n    execute_from_command_line(sys.argv)\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/core/management/__init__.py\", line 446, in execute_from_command_line\n    utility.execute()\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/core/management/__init__.py\", line 440, in execute\n    self.fetch_command(subcommand).run_from_argv(self.argv)\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/core/management/base.py\", line 402, in run_from_argv\n    self.execute(*args, **cmd_options)\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/core/management/base.py\", line 448, in execute\n    output = self.handle(*args, **options)\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/core/management/base.py\", line 96, in wrapped\n    res = handle_func(*args, **kwargs)\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/core/management/commands/migrate.py\", line 349, in handle\n    post_migrate_state = executor.migrate(\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/db/migrations/executor.py\", line 135, in migrate\n    state = self._migrate_all_forwards(\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/db/migrations/executor.py\", line 167, in _migrate_all_forwards\n    state = self.apply_migration(\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/db/migrations/executor.py\", line 252, in apply_migration\n    state = migration.apply(state, schema_editor)\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/db/migrations/migration.py\", line 130, in apply\n    operation.database_forwards(\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/db/migrations/operations/models.py\", line 422, in database_forwards\n    old_m2m_model._meta.get_field(old_model._meta.model_name),\n  File \"/Users/zacmiller/PycharmProjects/virtualenvs/edemo/lib/python3.10/site-packages/django/db/models/options.py\", line 670, in get_field\n    raise FieldDoesNotExist(\ndjango.core.exceptions.FieldDoesNotExist: Incident_incidents has no field named 'incident'",
+      "issue_closed_at": "2023-02-14T07:35:22",
+      "base_commit": "ce8189eea007882bbe6db22f86b0965e718bd341",
+      "changes": [
+        {
+          "file": "django/db/migrations/operations/models.py",
+          "type": "function",
+          "name": "database_forwards",
+          "class_name": "RemoveConstraint",
+          "code": "def database_forwards(self, app_label, schema_editor, from_state, to_state):\n        model = to_state.apps.get_model(app_label, self.model_name)\n        if self.allow_migrate_model(schema_editor.connection.alias, model):\n            from_model_state = from_state.models[app_label, self.model_name_lower]\n            constraint = from_model_state.get_constraint_by_name(self.name)\n            schema_editor.remove_constraint(model, constraint)"
+        }
+      ]
+    },
+    {
+      "pr_number": 13109,
+      "pr_title": "Fixed #31596 -- Changed ForeignKey.validate() to use the base manager.",
+      "pr_body": "Follow up from #12923 for which ~~GH seems~~ I seem to have _had a moment_...\r\n\r\n\r\ncc @jdufresne ",
+      "issue_id": 31596,
+      "issue_title": "ForeignKey.validate() should validate using the base manager.",
+      "issue_body": "ForeignKey.validate()\nshould validate using the base manager instead of the default manager.\nConsider the models:\nclass ArticleManager(models.Manage):\n    def get_queryset(self):\n        qs = super().get_queryset()\n        return qs.filter(archived=False)\n\nclass Article(models.Model):\n    title = models.CharField(max_length=100)\n    archived = models.BooleanField(default=False)\n\n    # Don't include archived articles by default.\n    objects = ArticleManager()\n\nclass FavoriteAricles(models.Model):\n    article = models.ForeignKey(Article, on_delete=models.CASCADE)\nIn the example, now consider a form that allows users to pick a favorite article including archived articles.\nclass FavoriteAriclesForm(forms.ModelForm):\n    class Meta:\n        model = FavoriteArticle\n        fields = '__all__'\n\n    def __init__(self, *args, **kwargs):\n        super().__init__(*args, **kwargs)\n        # Use the base manager instead of the default manager to allow archived articles.\n        self.fields['article'].queryset = Article._base_manager.all()\nThe above form will never validate as\nTrue\nwhen a user selects an archived article. This is because the ForeignKey validation always uses\n_default_manager\ninstead of\n_base_manager\n. The user facing error message is \"article instance with id 123 does not exist.\" (quite confusing to typical users). The code for this validation is here:\n​\nhttps://github.com/django/django/blob/94f63b926fd32d7a7b6e2591ef72aa8f040f25cc/django/db/models/fields/related.py#L917-L919\nThe\nFavoriteAriclesForm\nis specifically designed to use a different manager, but the ForeignKey validation makes this difficult.\nIn this example scenario, it is not acceptable to change the model's default manager as the default should avoid archived articles in other typical scenarios.\nSuggested solution: the ForeignKey validation should use the\n_base_manager\ninstead which does not include the default filters.",
+      "issue_closed_at": "2020-06-25T04:36:37",
+      "base_commit": "fbe82f82555bc25dccb476c749ca062f0b522be3",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "validate",
+          "class_name": "ForeignKey",
+          "code": "def validate(self, value, model_instance):\n        if self.remote_field.parent_link:\n            return\n        super().validate(value, model_instance)\n        if value is None:\n            return\n\n        using = router.db_for_read(self.remote_field.model, instance=model_instance)\n        qs = self.remote_field.model._default_manager.using(using).filter(\n            **{self.remote_field.field_name: value}\n        )\n        qs = qs.complex_filter(self.get_limit_choices_to())\n        if not qs.exists():\n            raise exceptions.ValidationError(\n                self.error_messages['invalid'],\n                code='invalid',\n                params={\n                    'model': self.remote_field.model._meta.verbose_name, 'pk': value,\n                    'field': self.remote_field.field_name, 'value': value,\n                },  # 'pk' is included for backwards compatibility\n            )"
+        }
+      ]
+    },
+    {
+      "pr_number": 5139,
+      "pr_title": "Fixed #19263 -- Fixed crash when filtering using __in and an empty QuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/19263\n",
+      "issue_id": 19263,
+      "issue_title": "Filtering __in a sliced queryset with a 0 limit raises an error",
+      "issue_body": "I've noticed that after upgrading to Django 1.4,\n__in\nqueries really don't like empty sets. Simple queries still work, like\nUser.objects.filter(groups__in=[])\n, but most failures I've seen are with Paginators. I think this is the minimum set to cause a DatabaseError, create any app, add a models.py with:\nfrom\ndjango.db\nimport\nmodels\nclass\nAuthor\n(\nmodels\n.\nModel\n):\npass\nclass\nBook\n(\nmodels\n.\nModel\n):\nauthor\n=\nmodels\n.\nForeignKey\n(\nAuthor\n)\ndef\ncrash\n():\nfrom\ndjango.core.paginator\nimport\nPaginator\npages\n=\nPaginator\n(\nAuthor\n.\nobjects\n.\nall\n(),\n25\n)\npage\n=\npages\n.\npage\n(\n1\n)\nbooks\n=\nBook\n.\nobjects\n.\nfilter\n(\nauthor__in\n=\npage\n.\nobject_list\n)\nprint\nbooks\ncalling crash() will cause this stack trace:\nC:\\Workspace\\someproject\\src\\someproject\\test.py in <module>()\n      6\n      7 books = Book.objects.filter(author__in=page.object_list)\n----> 8 print books\n      9\n\nC:\\Dev\\Python27\\lib\\site-packages\\django\\db\\models\\query.pyc in __repr__(self)\n     70\n     71     def __repr__(self):\n---> 72         data = list(self[:REPR_OUTPUT_SIZE + 1])\n     73         if len(data) > REPR_OUTPUT_SIZE:\n     74             data[-1] = \"...(remaining elements truncated)...\"\n\nC:\\Dev\\Python27\\lib\\site-packages\\django\\db\\models\\query.pyc in __len__(self)\n     85                 self._result_cache = list(self.iterator())\n     86         elif self._iter:\n---> 87             self._result_cache.extend(self._iter)\n     88         if self._prefetch_related_lookups and not self._prefetch_done:\n     89             self._prefetch_related_objects()\n\nC:\\Dev\\Python27\\lib\\site-packages\\django\\db\\models\\query.pyc in iterator(self)\n    289             klass_info = get_klass_info(model, max_depth=max_depth,\n    290                                         requested=requested, only_load=only_load)\n--> 291         for row in compiler.results_iter():\n    292             if fill_cache:\n    293                 obj, _ = get_cached_row(row, index_start, db, klass_info,\n\nC:\\Dev\\Python27\\lib\\site-packages\\django\\db\\models\\sql\\compiler.pyc in results_iter(self)\n    761         if self.query.select_for_update and transaction.is_managed(self.using):\n    762             transaction.set_dirty(self.using)\n--> 763         for rows in self.execute_sql(MULTI):\n    764             for row in rows:\n    765                 if resolve_columns:\n\nC:\\Dev\\Python27\\lib\\site-packages\\django\\db\\models\\sql\\compiler.pyc in execute_sql(self, result_type)\n    816\n    817         cursor = self.connection.cursor()\n--> 818         cursor.execute(sql, params)\n    819\n    820         if not result_type:\n\nC:\\Dev\\Python27\\lib\\site-packages\\django\\db\\backends\\util.pyc in execute(self, sql, params)\n     38         start = time()\n     39         try:\n---> 40             return self.cursor.execute(sql, params)\n     41         finally:\n     42             stop = time()\n\nC:\\Dev\\Python27\\lib\\site-packages\\django\\db\\backends\\postgresql_psycopg2\\base.pyc in execute(self, query, args)\n     50     def execute(self, query, args=None):\n     51         try:\n---> 52             return self.cursor.execute(query, args)\n     53         except Database.IntegrityError, e:\n     54             raise utils.IntegrityError, utils.IntegrityError(*tuple(e)), sys.exc_info()[2]\n\nDatabaseError: syntax error at or near \")\"\nLINE 1: ...ugtest_book\" WHERE \"bugtest_book\".\"author_id\" IN () LIMIT 21\nThe SQL statement created is:\nSELECT \"bugtest_book\".\"id\", \"bugtest_book\".\"author_id\" FROM \"bugtest_book\" WHERE \"bugtest_book\".\"author_id\" IN () LIMIT 21",
+      "issue_closed_at": "2015-09-04T07:00:51",
+      "base_commit": "7c0850028f25eebaa9b521b5d02afac084ff2c6f",
+      "changes": [
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "as_nested_sql",
+          "class_name": "SQLCompiler",
+          "code": "def as_nested_sql(self):\n        \"\"\"\n        Perform the same functionality as the as_sql() method, returning an\n        SQL string and parameters. However, the alias prefixes are bumped\n        beforehand (in a copy -- the current query isn't changed), and any\n        ordering is removed if the query is unsliced.\n\n        Used when nesting this query inside another.\n        \"\"\"\n        obj = self.query.clone()\n        if obj.low_mark == 0 and obj.high_mark is None and not self.query.distinct_fields:\n            # If there is no slicing in use, then we can safely drop all ordering\n            obj.clear_ordering(True)\n        return obj.get_compiler(connection=self.connection).as_sql(subquery=True)"
+        }
+      ]
+    }
+  ]
+}

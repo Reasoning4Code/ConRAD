@@ -1,0 +1,172 @@
+{
+  "instance_id": "django__django-14999",
+  "repo": "django/django",
+  "created_at": "2021-10-16T09:31:21Z",
+  "problem_statement": "RenameModel with db_table should be a noop.\nDescription\n\t\nA RenameModel operation that already has db_table defined must be a noop.\nIn Postgres, it drops and recreates foreign key constraints. In sqlite it recreates the table (as expected for a table renaming).\n",
+  "patch": "diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py\n--- a/django/db/migrations/operations/models.py\n+++ b/django/db/migrations/operations/models.py\n@@ -320,12 +320,13 @@ def database_forwards(self, app_label, schema_editor, from_state, to_state):\n         new_model = to_state.apps.get_model(app_label, self.new_name)\n         if self.allow_migrate_model(schema_editor.connection.alias, new_model):\n             old_model = from_state.apps.get_model(app_label, self.old_name)\n+            old_db_table = old_model._meta.db_table\n+            new_db_table = new_model._meta.db_table\n+            # Don't alter when a table name is not changed.\n+            if old_db_table == new_db_table:\n+                return\n             # Move the main table\n-            schema_editor.alter_db_table(\n-                new_model,\n-                old_model._meta.db_table,\n-                new_model._meta.db_table,\n-            )\n+            schema_editor.alter_db_table(new_model, old_db_table, new_db_table)\n             # Alter the fields pointing to us\n             for related_object in old_model._meta.related_objects:\n                 if related_object.related_model == old_model:\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 9421,
+      "pr_title": "Fixed #28884 -- Fixed crash in renames of fields of tables referenced by m2ms on SQlite.",
+      "pr_body": "https://code.djangoproject.com/ticket/28884\r\n\r\nIntrospected database constraints instead of relying on `_meta.related_objects` to determine whether or not a table or a column is referenced on rename operations.\r\n\r\nThis has the side effect of ignoring both ``db_constraint=False`` and virtual fields such as ``GenericRelation`` which are not backend by database level constraints and thus shouldn't prevent the rename operations from being performed in a transaction.\r\n\r\nThis also highlighted false negatives in the existing schema and migrations tests where `_meta.related_objects` was not appropriately populated.",
+      "issue_id": 28884,
+      "issue_title": "RenameField crashes with AttributeError when renaming a ManyToManyField (sqlite3)",
+      "issue_body": "Original issue:\n​\nhttps://groups.google.com/forum/#!topic/django-users/O7s658gIHTE\nWith Django 2.0, a\nRenameField\non a model which has a reverse many to many relationship raises an exception:\nAttributeError: 'ManyToManyRel' object has no attribute 'field_name'\n.\nThis is a regression in Django 2.0: the same migration with Django 1.11 terminates successfully\nBelow the code and the commands to reproduce the problem:\n# myapp/models.py\n\nfrom django.db import models\n\n\nclass ModelA(models.Model):\n    new_name = models.IntegerField()\n\n\nclass ModelB(models.Model):\n    model_as = models.ManyToManyField('ModelA')\n\n# myapp/migrations/0001_initial.py\n\nfrom django.db import migrations, models\n\n\nclass Migration(migrations.Migration):\n\n    initial = True\n\n    dependencies = [\n    ]\n\n    operations = [\n        migrations.CreateModel(\n            name='ModelA',\n            fields=[\n                ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),\n                ('old_name', models.IntegerField()),\n            ],\n        ),\n        migrations.CreateModel(\n            name='ModelB',\n            fields=[\n                ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),\n                ('model_as', models.ManyToManyField(to='myapp.ModelA')),\n            ],\n        ),\n    ]\n\n# myapp/migrations/0002_auto_20171204_1012.py\n\nfrom django.db import migrations\n\n\nclass Migration(migrations.Migration):\n\n    dependencies = [\n        ('myapp', '0001_initial'),\n    ]\n\n    operations = [\n        migrations.RenameField(\n            model_name='modela',\n            old_name='old_name',\n            new_name='new_name',\n        ),\n    ]\n\n$ ./manage.py migrate\nOperations to perform:\n  Apply all migrations: admin, auth, contenttypes, myapp, sessions\nRunning migrations:\n  Applying contenttypes.0001_initial... OK\n  Applying auth.0001_initial... OK\n  Applying admin.0001_initial... OK\n  Applying admin.0002_logentry_remove_auto_add... OK\n  Applying contenttypes.0002_remove_content_type_name... OK\n  Applying auth.0002_alter_permission_name_max_length... OK\n  Applying auth.0003_alter_user_email_max_length... OK\n  Applying auth.0004_alter_user_username_opts... OK\n  Applying auth.0005_alter_user_last_login_null... OK\n  Applying auth.0006_require_contenttypes_0002... OK\n  Applying auth.0007_alter_validators_add_error_messages... OK\n  Applying auth.0008_alter_user_username_max_length... OK\n  Applying auth.0009_alter_user_last_name_max_length... OK\n  Applying myapp.0001_initial... OK\n  Applying myapp.0002_auto_20171204_1012...Traceback (most recent call last):\n  File \"./manage.py\", line 15, in <module>\n    execute_from_command_line(sys.argv)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/__init__.py\", line 371, in execute_from_command_line\n    utility.execute()\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/__init__.py\", line 365, in execute\n    self.fetch_command(subcommand).run_from_argv(self.argv)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/base.py\", line 288, in run_from_argv\n    self.execute(*args, **cmd_options)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/base.py\", line 335, in execute\n    output = self.handle(*args, **options)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/core/management/commands/migrate.py\", line 200, in handle\n    fake_initial=fake_initial,\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/executor.py\", line 117, in migrate\n    state = self._migrate_all_forwards(state, plan, full_plan, fake=fake, fake_initial=fake_initial)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/executor.py\", line 147, in _migrate_all_forwards\n    state = self.apply_migration(state, migration, fake=fake, fake_initial=fake_initial)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/executor.py\", line 244, in apply_migration\n    state = migration.apply(state, schema_editor)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/migration.py\", line 122, in apply\n    operation.database_forwards(self.app_label, schema_editor, old_state, project_state)\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/migrations/operations/fields.py\", line 304, in database_forwards\n    to_model._meta.get_field(self.new_name),\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/backends/sqlite3/schema.py\", line 81, in alter_field\n    any(r.field_name == old_field.name for r in model._meta.related_objects)):\n  File \"/home/edg/src/example/env/lib/python3.6/site-packages/django/db/backends/sqlite3/schema.py\", line 81, in <genexpr>\n    any(r.field_name == old_field.name for r in model._meta.related_objects)):\nAttributeError: 'ManyToManyRel' object has no attribute 'field_name'\n\n$ pip freeze\nDjango==2.0\npytz==2017.3",
+      "issue_closed_at": "2017-12-22T15:09:50",
+      "base_commit": "f3a98224e6dd5f8846008512f281e452dc3b1909",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "_table_info",
+          "class_name": "DatabaseIntrospection",
+          "code": "def _table_info(self, cursor, name):\n        cursor.execute('PRAGMA table_info(%s)' % self.connection.ops.quote_name(name))\n        # cid, name, type, notnull, default_value, pk\n        return [{\n            'name': field[1],\n            'type': field[2],\n            'size': get_field_size(field[2]),\n            'null_ok': not field[3],\n            'default': field[4],\n            'pk': field[5],  # undocumented\n        } for field in cursor.fetchall()]"
+        },
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "get_constraints",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_constraints(self, cursor, table_name):\n        \"\"\"\n        Retrieve any constraints or keys (unique, pk, fk, check, index) across\n        one or more columns.\n        \"\"\"\n        constraints = {}\n        # Get the index info\n        cursor.execute(\"PRAGMA index_list(%s)\" % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Sqlite3 3.8.9+ has 5 columns, however older versions only give 3\n            # columns. Discard last 2 columns if there.\n            number, index, unique = row[:3]\n            # Get the index info for that index\n            cursor.execute('PRAGMA index_info(%s)' % self.connection.ops.quote_name(index))\n            for index_rank, column_rank, column in cursor.fetchall():\n                if index not in constraints:\n                    constraints[index] = {\n                        \"columns\": [],\n                        \"primary_key\": False,\n                        \"unique\": bool(unique),\n                        \"foreign_key\": False,\n                        \"check\": False,\n                        \"index\": True,\n                    }\n                constraints[index]['columns'].append(column)\n            # Add type and column orders for indexes\n            if constraints[index]['index'] and not constraints[index]['unique']:\n                # SQLite doesn't support any index type other than b-tree\n                constraints[index]['type'] = Index.suffix\n                cursor.execute(\n                    \"SELECT sql FROM sqlite_master \"\n                    \"WHERE type='index' AND name=%s\" % self.connection.ops.quote_name(index)\n                )\n                orders = []\n                # There would be only 1 row to loop over\n                for sql, in cursor.fetchall():\n                    order_info = sql.split('(')[-1].split(')')[0].split(',')\n                    orders = ['DESC' if info.endswith('DESC') else 'ASC' for info in order_info]\n                constraints[index]['orders'] = orders\n        # Get the PK\n        pk_column = self.get_primary_key_column(cursor, table_name)\n        if pk_column:\n            # SQLite doesn't actually give a name to the PK constraint,\n            # so we invent one. This is fine, as the SQLite backend never\n            # deletes PK constraints by name, as you can't delete constraints\n            # in SQLite; we remake the table with a new PK instead.\n            constraints[\"__primary__\"] = {\n                \"columns\": [pk_column],\n                \"primary_key\": True,\n                \"unique\": False,  # It's not actually a unique constraint.\n                \"foreign_key\": False,\n                \"check\": False,\n                \"index\": False,\n            }\n        # Get foreign keys\n        cursor.execute('PRAGMA foreign_key_list(%s)' % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Remaining on_update/on_delete/match values are of no interest here\n            id_, seq, table, from_, to = row[:5]\n            constraints['fk_%d' % id_] = {\n                'columns': [from_],\n                'primary_key': False,\n                'unique': False,\n                'foreign_key': (table, to),\n                'check': False,\n                'index': False,\n            }\n        return constraints"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "quote_value",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def quote_value(self, value):\n        # The backend \"mostly works\" without this function and there are use\n        # cases for compiling Python without the sqlite3 libraries (e.g.\n        # security hardening).\n        try:\n            import sqlite3\n            value = sqlite3.adapt(value)\n        except ImportError:\n            pass\n        except sqlite3.ProgrammingError:\n            pass\n        # Manual emulation of SQLite parameter quoting\n        if isinstance(value, bool):\n            return str(int(value))\n        elif isinstance(value, (Decimal, float, int)):\n            return str(value)\n        elif isinstance(value, str):\n            return \"'%s'\" % value.replace(\"\\'\", \"\\'\\'\")\n        elif value is None:\n            return \"NULL\"\n        elif isinstance(value, (bytes, bytearray, memoryview)):\n            # Bytes are only allowed for BLOB fields, encoded as string\n            # literals containing hexadecimal data and preceded by a single \"X\"\n            # character.\n            return \"X'%s'\" % value.hex()\n        else:\n            raise ValueError(\"Cannot quote parameter value %r of type %s\" % (value, type(value)))"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_db_table",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_db_table(self, model, old_db_table, new_db_table, disable_constraints=True):\n        if model._meta.related_objects and disable_constraints:\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r table while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % old_db_table)\n            self.connection.enable_constraint_checking()\n            super().alter_db_table(model, old_db_table, new_db_table)\n            self.connection.disable_constraint_checking()\n        else:\n            super().alter_db_table(model, old_db_table, new_db_table)"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_field(self, model, old_field, new_field, strict=False):\n        old_field_name = old_field.name\n        if (new_field.name != old_field_name and\n                any(r.field_name == old_field.name for r in model._meta.related_objects)):\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r.%r column while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % (model._meta.db_table, old_field_name))\n            with atomic(self.connection.alias):\n                super().alter_field(model, old_field, new_field, strict=strict)\n                # Follow SQLite's documented procedure for performing changes\n                # that don't affect the on-disk content.\n                # https://sqlite.org/lang_altertable.html#otheralter\n                with self.connection.cursor() as cursor:\n                    schema_version = cursor.execute('PRAGMA schema_version').fetchone()[0]\n                    cursor.execute('PRAGMA writable_schema = 1')\n                    table_name = model._meta.db_table\n                    references_template = ' REFERENCES \"%s\" (\"%%s\") ' % table_name\n                    old_column_name = old_field.get_attname_column()[1]\n                    new_column_name = new_field.get_attname_column()[1]\n                    search = references_template % old_column_name\n                    replacement = references_template % new_column_name\n                    cursor.execute('UPDATE sqlite_master SET sql = replace(sql, %s, %s)', (search, replacement))\n                    cursor.execute('PRAGMA schema_version = %d' % (schema_version + 1))\n                    cursor.execute('PRAGMA writable_schema = 0')\n                    # The integrity check will raise an exception and rollback\n                    # the transaction if the sqlite_master updates corrupt the\n                    # database.\n                    cursor.execute('PRAGMA integrity_check')\n            # Perform a VACUUM to refresh the database representation from\n            # the sqlite_master table.\n            with self.connection.cursor() as cursor:\n                cursor.execute('VACUUM')\n        else:\n            super().alter_field(model, old_field, new_field, strict=strict)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "I have a model that does not want to use a constraint on a foreign key, but still use a database index:\nclass Category(models.Model):\n    text = models.CharField(max_length=3)\n\nclass Message(models.Model):\n    cat = models.ForeignKey(Category, db_constraint=False)\n\nclass IndexMessage(models.Model):\n    cat = models.ForeignKey(Category, db_constraint=False, db_index=True)\n\nclass StrongMessage(models.Model):\n    cat = models.ForeignKey(Category)\nThe SQLite backend generates an index on the FK column for both models:\n$ python manage.py sqlmigrate boohoo 0001_initial\nBEGIN;\n--\n-- Create model Category\n--\nCREATE TABLE \"boohoo_category\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"text\" varchar(3) NOT NULL);\n--\n-- Create model IndexMessage\n--\nCREATE TABLE \"boohoo_indexmessage\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL);\n--\n-- Create model Message\n--\nCREATE TABLE \"boohoo_message\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL);\n--\n-- Create model StrongMessage\n--\nCREATE TABLE \"boohoo_strongmessage\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL REFERENCES \"boohoo_category\" (\"id\"));\nCREATE INDEX \"boohoo_indexmessage_05e7bb57\" ON \"boohoo_indexmessage\" (\"cat_id\");\nCREATE INDEX \"boohoo_message_05e7bb57\" ON \"boohoo_message\" (\"cat_id\");\nCREATE INDEX \"boohoo_strongmessage_05e7bb57\" ON \"boohoo_strongmessage\" (\"cat_id\");\n\nCOMMIT;\nWith the MySQL backend, this does not create an index on the FK:\n$ python manage.py sqlmigrate boohoo 0001_initial\nBEGIN;\n--\n-- Create model Category\n--\nCREATE TABLE `boohoo_category` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `text` varchar(3) NOT NULL);\n--\n-- Create model IndexMessage\n--\nCREATE TABLE `boohoo_indexmessage` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\n--\n-- Create model Message\n--\nCREATE TABLE `boohoo_message` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\n--\n-- Create model StrongMessage\n--\nCREATE TABLE `boohoo_strongmessage` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\nALTER TABLE `boohoo_strongmessage` ADD CONSTRAINT `boohoo_strongmessage_cat_id_c843b68a_fk_boohoo_category_id` FOREIGN KEY (`cat_id`) REFERENCES `boohoo_category` (`id`);\n\nCOMMIT;\nI would think that specifying db_constraint=false would only leave out the constraint, and not also the index; Especially with <field>.db_index still set to true. Adding db_index=True does not help, probably because that is the default setting on the FK field object.\nThis also applies to earlier django versions.\nA simple workaround is to use\nindex_together = (('cat', ), )\non the models.\nI'm inclined to blame this on django.db.backends.mysql.schema.DatabaseSchemaEditor#_model_indexes_sql,\nwhich may need an extra check for db_constraint being used. This fixes my problem (but changes current django behavior):\n--- django/db/backends/mysql/schema.py.orig     2016-02-03 12:01:10.000000000 +0100\n+++ django/db/backends/mysql/schema.py  2016-02-03 12:00:19.000000000 +0100\n@@ -64,7 +64,7 @@\n         )\n         if storage == \"InnoDB\":\n             for field in model._meta.local_fields:\n-                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\":\n+                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\" and field.db_constraint:\n                     # Temporary setting db_index to False (in memory) to disable\n                     # index creation for FKs (index automatically created by MySQL)\n                     field.db_index = False",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 9345,
+      "pr_title": "Fixed #28792 -- Fixed index name truncation of namespaced tables.",
+      "pr_body": "Refs #27458, #27843.",
+      "issue_id": 28792,
+      "issue_title": "Index names can be incorrectly truncated when using a namespaced table name",
+      "issue_body": "When using a namespaced\n_meta.db_table\n(e.g. Oracle's\n'schema\".\"table'\n) it's possible that\n_create_index_name\nreturns an index name truncating the namespace resulting in an invalid identifier or one that isn't namespaced anymore and thus created in the user's namespace.\nFor example, given the following model:\nclass\nFoo\n(\nmodels\n.\nModel\n):\nfield\n=\nmodels\n.\nIntegerField\n(\nindex\n=\nTrue\n)\nclass\nMeta\n:\ndb_table\n=\n'long_name\".\"table_name'\nThe resulting index name will be\n'long_name\"_field_d21c9e0a'\nwhich is invalid SQL even when quoted to\n'\"long_name\"_field_d21c9e0a\"'\n.\nMarking as a release blocker because this is a regression which I believe was introduced by\n#27458\nand wasn't addressed by\n#27843\n. I confirm that this uses to work on Django 1.10 but was broken on 1.11 as I stumbled upon the issue when upgrading a Django 1.8 LTS codebase to 1.11 LTS on the 1.10 -> 1.11 step.\nThe tests added by\n#27458\njust happened to work because the index name truncation cut the string the in a way that both double quotes are stripped. It should be possible to tweak the table names to trigger the errors but I felt like directly testing\n_create_index_name\nwas more appropriate.",
+      "issue_closed_at": "2017-11-14T20:53:46",
+      "base_commit": "532a4f22ad94db320cb0fd66f4c7ee57d17ac65a",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "line",
+          "name": "line 5",
+          "code": "from django.db.backends.ddl_references import (\n    Columns, ForeignKeyName, IndexName, Statement, Table,\n)\nfrom django.db.backends.utils import strip_quotes\nfrom django.db.models import Index\nfrom django.db.transaction import TransactionManagementError, atomic\nfrom django.utils import timezone"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_create_index_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _create_index_name(self, table_name, column_names, suffix=\"\"):\n        \"\"\"\n        Generate a unique name for an index/unique constraint.\n\n        The name is divided into 3 parts: the table name, the column names,\n        and a unique digest and suffix.\n        \"\"\"\n        table_name = strip_quotes(table_name)\n        hash_data = [table_name] + list(column_names)\n        hash_suffix_part = '%s%s' % (self._digest(*hash_data), suffix)\n        max_length = self.connection.ops.max_name_length() or 200\n        # If everything fits into max_length, use that name.\n        index_name = '%s_%s_%s' % (table_name, '_'.join(column_names), hash_suffix_part)\n        if len(index_name) <= max_length:\n            return index_name\n        # Shorten a long suffix.\n        if len(hash_suffix_part) > max_length / 3:\n            hash_suffix_part = hash_suffix_part[:max_length // 3]\n        other_length = (max_length - len(hash_suffix_part)) // 2 - 1\n        index_name = '%s_%s_%s' % (\n            table_name[:other_length],\n            '_'.join(column_names)[:other_length],\n            hash_suffix_part,\n        )\n        # Prepend D if needed to prevent the name from starting with an\n        # underscore or a number (not permitted on Oracle).\n        if index_name[0] == \"_\" or index_name[0].isdigit():\n            index_name = \"D%s\" % index_name[:-1]\n        return index_name"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "import functools\nimport hashlib\nimport logging\nimport re\nfrom time import time\n\nfrom django.conf import settings"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "function",
+          "name": "rev_typecast_decimal",
+          "class_name": null,
+          "code": "def rev_typecast_decimal(d):\n    if d is None:\n        return None\n    return str(d)"
+        }
+      ]
+    },
+    {
+      "pr_number": 10781,
+      "pr_title": "Fixed #30054 -- Implemented cascaded flush on SQLite.",
+      "pr_body": "This is required to maintain foreign key integrity when using the `TransactionTestCase.available_apps` feature.\r\n\r\nRefs [#30033](https://code.djangoproject.com/ticket/30033), [#14204](https://code.djangoproject.com/ticket/14204), [#20483](https://code.djangoproject.com/ticket/20483).",
+      "issue_id": 30054,
+      "issue_title": "SQLite doesn't implement cascading flush and breaks available_apps feature.",
+      "issue_body": "#30033\nstarted performing constraint checks on schema alteration commits on SQLite and uncovered a data integrity issue of our SQLite backend flushing of data.\nWhen\nTransactionTestCase.available_apps\nis specfied only the specified apps subset of tested model tables are flushed for performance reasons. Thing is when this happens all rows referring to\nflushed\ntable rows must also be flushed as specified by the\nDatabaseOperations.sql_flush(allow_cascade)\nflag that SQLite completely ignores.\nThis issue has been around since foreign keys were enabled on SQLite because\nexecute_sql_flush\nhappens to disable constraint checks and allow foreign key integrity to be silently broken.\nIn order to address this issue\nsql_flush\nmust consider\nallow_cascade\nand\nexecute_sql_flush\nshould stop disabling constraints.\nMore context from\n​\nhttps://github.com/django/django/pull/10779#issuecomment-449483709",
+      "issue_closed_at": "2018-12-22T16:48:11",
+      "base_commit": "790d108c97f0cf9caa02c72791f2bf158d308fcd",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/operations.py",
+          "type": "function",
+          "name": "no_limit_value",
+          "class_name": "DatabaseOperations",
+          "code": "def no_limit_value(self):\n        return -1"
+        },
+        {
+          "file": "django/db/backends/sqlite3/operations.py",
+          "type": "function",
+          "name": "sql_flush",
+          "class_name": "DatabaseOperations",
+          "code": "def sql_flush(self, style, tables, sequences, allow_cascade=False):\n        sql = ['%s %s %s;' % (\n            style.SQL_KEYWORD('DELETE'),\n            style.SQL_KEYWORD('FROM'),\n            style.SQL_FIELD(self.quote_name(table))\n        ) for table in tables]\n        # Note: No requirement for reset of auto-incremented indices (cf. other\n        # sql_flush() implementations). Just return SQL at this point\n        return sql"
+        }
+      ]
+    },
+    {
+      "pr_number": 12472,
+      "pr_title": "Fixed #31286 -- Made database specific fields checks databases aware.",
+      "pr_body": "Further tests required(or not?).\r\nCurrent test cases don't cover the case when the user provides multiple databases, e.g.:\r\n```python manage.py check --database dba --database dbb```\r\n",
+      "issue_id": 31286,
+      "issue_title": "Database specific fields checks should be databases aware.",
+      "issue_body": "In an attempt to trigger the check Error mentioned in Tickets:\n#31144\n, I found that the check for database backend doesn't check against the backend specified, e.g. --database mysql, rather, it always checks against the 'default' backend.\nAfter diving into the source code, I found the following method defined in django/db/models/fields/\ninit\n.py\ndef _check_backend_specific_checks(self, **kwargs):\n        app_label = self.model._meta.app_label\n        for db in connections:\n            if router.allow_migrate(db, app_label, model_name=self.model._meta.model_name):\n                return connections[db].validation.check_field(self, **kwargs)\n        return []\nIt checks the first db defined in connections rather those provided by users.\nA proposed change would be:\ndef _check_backend_specific_checks(self, **kwargs):\n        app_label = self.model._meta.app_label\n        errors = []\n        for db in kwargs['databases'] or ['default']:\n            if router.allow_migrate(db, app_label, model_name=self.model._meta.model_name):\n                errors.extend(connections[db].validation.check_field(self, **kwargs))\n        return errors\nIt worked as intended on my local machine.\nI would happily provide a patch for this one.",
+      "issue_closed_at": "2020-02-24T10:38:01",
+      "base_commit": "94d4bd3a091dd9ac265e14619576b1ee568653b1",
+      "changes": [
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_null_allowed_for_primary_keys",
+          "class_name": "Field",
+          "code": "def _check_null_allowed_for_primary_keys(self):\n        if (self.primary_key and self.null and\n                not connection.features.interprets_empty_strings_as_nulls):\n            # We cannot reliably check this for backends like Oracle which\n            # consider NULL and '' to be equal (and thus set up\n            # character-based fields a little differently).\n            return [\n                checks.Error(\n                    'Primary keys must not have null=True.',\n                    hint=('Set null=False on the field, or '\n                          'remove primary_key=True argument.'),\n                    obj=self,\n                    id='fields.E007',\n                )\n            ]\n        else:\n            return []"
+        }
+      ]
+    }
+  ]
+}

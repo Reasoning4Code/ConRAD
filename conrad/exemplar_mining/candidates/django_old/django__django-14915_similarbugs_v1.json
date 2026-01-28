@@ -1,0 +1,157 @@
+{
+  "instance_id": "django__django-14915",
+  "repo": "django/django",
+  "created_at": "2021-09-29T22:00:15Z",
+  "problem_statement": "ModelChoiceIteratorValue is not hashable.\nDescription\n\t\nRecently I migrated from Django 3.0 to Django 3.1. In my code, I add custom data-* attributes to the select widget options. After the upgrade some of those options broke. Error is {TypeError}unhashable type: 'ModelChoiceIteratorValue'.\nExample (this one breaks):\n\tdef create_option(self, name, value, label, selected, index, subindex=None, attrs=None):\n\t\tcontext = super().create_option(name, value, label, selected, index, subindex, attrs)\n\t\tif not value:\n\t\t\treturn context\n\t\tif value in self.show_fields: # This is a dict {1: ['first_name', 'last_name']}\n\t\t\tcontext['attrs']['data-fields'] = json.dumps(self.show_fields[value])\nHowever, working with arrays is not an issue:\n\tdef create_option(self, name, value, label, selected, index, subindex=None, attrs=None):\n\t\tcontext = super().create_option(name, value, label, selected, index, subindex, attrs)\n\t\tif not value:\n\t\t\treturn context\n\t\tif value in allowed_values: # This is an array [1, 2]\n\t\t\t...\n",
+  "patch": "diff --git a/django/forms/models.py b/django/forms/models.py\n--- a/django/forms/models.py\n+++ b/django/forms/models.py\n@@ -1166,6 +1166,9 @@ def __init__(self, value, instance):\n     def __str__(self):\n         return str(self.value)\n \n+    def __hash__(self):\n+        return hash(self.value)\n+\n     def __eq__(self, other):\n         if isinstance(other, ModelChoiceIteratorValue):\n             other = other.value\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8213,
+      "pr_title": "Refs #27935 -- Fixed BrinIndex.max_name_length if a project's default database isn't PostgreSQL.",
+      "pr_body": "",
+      "issue_id": 27935,
+      "issue_title": "BrinIndex crashes if name  > 30 characters",
+      "issue_body": "",
+      "issue_closed_at": "2017-03-20T10:30:05",
+      "base_commit": "6cb0a3ac2836c044987f7a0cca0d1e99d52e002e",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from django.db import connection\nfrom django.db.models import Index\nfrom django.utils.functional import cached_property\n\n__all__ = ['BrinIndex', 'GinIndex']\n\n\nclass BrinIndex(Index):\n    suffix = 'brin'\n\n    def __init__(self, fields=[], name=None, pages_per_range=None):\n        if pages_per_range is not None and pages_per_range <= 0:"
+        },
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "function",
+          "name": "get_sql_create_template_values",
+          "class_name": "BrinIndex",
+          "code": "def get_sql_create_template_values(self, model, schema_editor, using):\n        parameters = super().get_sql_create_template_values(model, schema_editor, using=' USING brin')\n        if self.pages_per_range is not None:\n            parameters['extra'] = ' WITH (pages_per_range={})'.format(\n                schema_editor.quote_value(self.pages_per_range)) + parameters['extra']\n        return parameters"
+        }
+      ]
+    },
+    {
+      "pr_number": 9345,
+      "pr_title": "Fixed #28792 -- Fixed index name truncation of namespaced tables.",
+      "pr_body": "Refs #27458, #27843.",
+      "issue_id": 28792,
+      "issue_title": "Index names can be incorrectly truncated when using a namespaced table name",
+      "issue_body": "",
+      "issue_closed_at": "2017-11-14T20:53:46",
+      "base_commit": "532a4f22ad94db320cb0fd66f4c7ee57d17ac65a",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "line",
+          "name": "line 5",
+          "code": "from django.db.backends.ddl_references import (\n    Columns, ForeignKeyName, IndexName, Statement, Table,\n)\nfrom django.db.backends.utils import strip_quotes\nfrom django.db.models import Index\nfrom django.db.transaction import TransactionManagementError, atomic\nfrom django.utils import timezone"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_create_index_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _create_index_name(self, table_name, column_names, suffix=\"\"):\n        \"\"\"\n        Generate a unique name for an index/unique constraint.\n\n        The name is divided into 3 parts: the table name, the column names,\n        and a unique digest and suffix.\n        \"\"\"\n        table_name = strip_quotes(table_name)\n        hash_data = [table_name] + list(column_names)\n        hash_suffix_part = '%s%s' % (self._digest(*hash_data), suffix)\n        max_length = self.connection.ops.max_name_length() or 200\n        # If everything fits into max_length, use that name.\n        index_name = '%s_%s_%s' % (table_name, '_'.join(column_names), hash_suffix_part)\n        if len(index_name) <= max_length:\n            return index_name\n        # Shorten a long suffix.\n        if len(hash_suffix_part) > max_length / 3:\n            hash_suffix_part = hash_suffix_part[:max_length // 3]\n        other_length = (max_length - len(hash_suffix_part)) // 2 - 1\n        index_name = '%s_%s_%s' % (\n            table_name[:other_length],\n            '_'.join(column_names)[:other_length],\n            hash_suffix_part,\n        )\n        # Prepend D if needed to prevent the name from starting with an\n        # underscore or a number (not permitted on Oracle).\n        if index_name[0] == \"_\" or index_name[0].isdigit():\n            index_name = \"D%s\" % index_name[:-1]\n        return index_name"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "import functools\nimport hashlib\nimport logging\nimport re\nfrom time import time\n\nfrom django.conf import settings"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "function",
+          "name": "rev_typecast_decimal",
+          "class_name": null,
+          "code": "def rev_typecast_decimal(d):\n    if d is None:\n        return None\n    return str(d)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 9782,
+      "pr_title": "Fixed #29200 -- Fixed label rendering when using RadioSelect and CheckboxSelectMultiple with MultiWidget.",
+      "pr_body": "https://code.djangoproject.com/ticket/29200",
+      "issue_id": 29200,
+      "issue_title": "RadioSelect does not render its label in MultiWidget",
+      "issue_body": "",
+      "issue_closed_at": "2018-03-15T08:52:38",
+      "base_commit": "fb8fd535c0f47cffb4da0c5900f3f66e1ec8d432",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "__str__",
+          "class_name": "BoundWidget",
+          "code": "def __str__(self):\n        return self.tag(wrap_label=True)"
+        },
+        {
+          "file": "django/forms/widgets.py",
+          "type": "function",
+          "name": "create_option",
+          "class_name": "ChoiceWidget",
+          "code": "def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):\n        index = str(index) if subindex is None else \"%s_%s\" % (index, subindex)\n        if attrs is None:\n            attrs = {}\n        option_attrs = self.build_attrs(self.attrs, attrs) if self.option_inherits_attrs else {}\n        if selected:\n            option_attrs.update(self.checked_attribute)\n        if 'id' in option_attrs:\n            option_attrs['id'] = self.id_for_label(option_attrs['id'], index)\n        return {\n            'name': name,\n            'value': value,\n            'label': label,\n            'selected': selected,\n            'index': index,\n            'attrs': option_attrs,\n            'type': self.input_type,\n            'template_name': self.option_template_name,\n        }"
+        }
+      ]
+    },
+    {
+      "pr_number": 13283,
+      "pr_title": "Fixed #31866 -- Fixed locking proxy models in QuerySet.select_for_update(of=())",
+      "pr_body": "https://code.djangoproject.com/ticket/31866",
+      "issue_id": 31866,
+      "issue_title": "Proxy model is ignored when referenced in select_for_update's 'of' parameter",
+      "issue_body": "",
+      "issue_closed_at": "2020-08-11T05:35:37",
+      "base_commit": "0aeb802cf054cb369646c871b53c93a83c1fa58a",
+      "changes": [
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_select_for_update_of_arguments",
+          "class_name": "SQLCompiler",
+          "code": "def get_select_for_update_of_arguments(self):\n        \"\"\"\n        Return a quoted list of arguments for the SELECT FOR UPDATE OF part of\n        the query.\n        \"\"\"\n        def _get_parent_klass_info(klass_info):\n            for parent_model, parent_link in klass_info['model']._meta.parents.items():\n                parent_list = parent_model._meta.get_parent_list()\n                yield {\n                    'model': parent_model,\n                    'field': parent_link,\n                    'reverse': False,\n                    'select_fields': [\n                        select_index\n                        for select_index in klass_info['select_fields']\n                        # Selected columns from a model or its parents.\n                        if (\n                            self.select[select_index][0].target.model == parent_model or\n                            self.select[select_index][0].target.model in parent_list\n                        )\n                    ],\n                }\n\n        def _get_first_selected_col_from_model(klass_info):\n            \"\"\"\n            Find the first selected column from a model. If it doesn't exist,\n            don't lock a model.\n\n            select_fields is filled recursively, so it also contains fields\n            from the parent models.\n            \"\"\"\n            for select_index in klass_info['select_fields']:\n                if self.select[select_index][0].target.model == klass_info['model']:\n                    return self.select[select_index][0]\n\n        def _get_field_choices():\n            \"\"\"Yield all allowed field paths in breadth-first search order.\"\"\"\n            queue = collections.deque([(None, self.klass_info)])\n            while queue:\n                parent_path, klass_info = queue.popleft()\n                if parent_path is None:\n                    path = []\n                    yield 'self'\n                else:\n                    field = klass_info['field']\n                    if klass_info['reverse']:\n                        field = field.remote_field\n                    path = parent_path + [field.name]\n                    yield LOOKUP_SEP.join(path)\n                queue.extend(\n                    (path, klass_info)\n                    for klass_info in _get_parent_klass_info(klass_info)\n                )\n                queue.extend(\n                    (path, klass_info)\n                    for klass_info in klass_info.get('related_klass_infos', [])\n                )\n        result = []\n        invalid_names = []\n        for name in self.query.select_for_update_of:\n            klass_info = self.klass_info\n            if name == 'self':\n                col = _get_first_selected_col_from_model(klass_info)\n            else:\n                for part in name.split(LOOKUP_SEP):\n                    klass_infos = (\n                        *klass_info.get('related_klass_infos', []),\n                        *_get_parent_klass_info(klass_info),\n                    )\n                    for related_klass_info in klass_infos:\n                        field = related_klass_info['field']\n                        if related_klass_info['reverse']:\n                            field = field.remote_field\n                        if field.name == part:\n                            klass_info = related_klass_info\n                            break\n                    else:\n                        klass_info = None\n                        break\n                if klass_info is None:\n                    invalid_names.append(name)\n                    continue\n                col = _get_first_selected_col_from_model(klass_info)\n            if col is not None:\n                if self.connection.features.select_for_update_of_column:\n                    result.append(self.compile(col)[0])\n                else:\n                    result.append(self.quote_name_unless_alias(col.alias))\n        if invalid_names:\n            raise FieldError(\n                'Invalid field name(s) given in select_for_update(of=(...)): %s. '\n                'Only relational fields followed in the query are allowed. '\n                'Choices are: %s.' % (\n                    ', '.join(invalid_names),\n                    ', '.join(_get_field_choices()),\n                )\n            )\n        return result"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "_get_first_selected_col_from_model",
+          "class_name": "SQLCompiler",
+          "code": "def _get_first_selected_col_from_model(klass_info):\n            \"\"\"\n            Find the first selected column from a model. If it doesn't exist,\n            don't lock a model.\n\n            select_fields is filled recursively, so it also contains fields\n            from the parent models.\n            \"\"\"\n            for select_index in klass_info['select_fields']:\n                if self.select[select_index][0].target.model == klass_info['model']:\n                    return self.select[select_index][0]"
+        }
+      ]
+    }
+  ]
+}

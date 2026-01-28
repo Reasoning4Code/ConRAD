@@ -1,0 +1,145 @@
+{
+  "instance_id": "django__django-13768",
+  "repo": "django/django",
+  "created_at": "2020-12-12T07:34:48Z",
+  "problem_statement": "Log exceptions handled in Signal.send_robust()\nDescription\n\t\nAs pointed out by \u200bHaki Benita on Twitter, by default Signal.send_robust() doesn't have any log messages for exceptions raised in receivers. Since Django logs exceptions in other similar situations, such as missing template variables, I think it would be worth adding a logger.exception() call in the except clause of send_robust() . Users would then see such exceptions in their error handling tools, e.g. Sentry, and be able to figure out what action to take from there. Ultimately any *expected* exception should be caught with a try in the receiver function.\n",
+  "patch": "diff --git a/django/dispatch/dispatcher.py b/django/dispatch/dispatcher.py\n--- a/django/dispatch/dispatcher.py\n+++ b/django/dispatch/dispatcher.py\n@@ -1,3 +1,4 @@\n+import logging\n import threading\n import warnings\n import weakref\n@@ -5,6 +6,8 @@\n from django.utils.deprecation import RemovedInDjango40Warning\n from django.utils.inspect import func_accepts_kwargs\n \n+logger = logging.getLogger('django.dispatch')\n+\n \n def _make_id(target):\n     if hasattr(target, '__func__'):\n@@ -208,6 +211,12 @@ def send_robust(self, sender, **named):\n             try:\n                 response = receiver(signal=self, sender=sender, **named)\n             except Exception as err:\n+                logger.error(\n+                    'Error calling %s in Signal.send_robust() (%s)',\n+                    receiver.__qualname__,\n+                    err,\n+                    exc_info=err,\n+                )\n                 responses.append((receiver, err))\n             else:\n                 responses.append((receiver, response))\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10416,
+      "pr_title": "Fixed #29673 -- Reset URLconf at the end of request processing",
+      "pr_body": "Fixes [ticket 29673](https://code.djangoproject.com/ticket/29673)\r\n\r\nWe attach a signal handler to request_finished, and reset the URLconf. Before this change, the URLconf is not reset until the start of the next request.",
+      "issue_id": 29673,
+      "issue_title": "Thread urlconf isn't reset after response complete",
+      "issue_body": "",
+      "issue_closed_at": "2018-09-26T14:35:46",
+      "base_commit": "e40e7026cad400d720963aea0ba156a19f83b058",
+      "changes": [
+        {
+          "file": "django/core/handlers/base.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "\nfrom django.conf import settings\nfrom django.core.exceptions import ImproperlyConfigured, MiddlewareNotUsed\nfrom django.db import connections, transaction\nfrom django.urls import get_resolver, set_urlconf\nfrom django.utils.log import log_response"
+        },
+        {
+          "file": "django/core/handlers/base.py",
+          "type": "function",
+          "name": "process_exception_by_middleware",
+          "class_name": "BaseHandler",
+          "code": "def process_exception_by_middleware(self, exception, request):\n        \"\"\"\n        Pass the exception to the exception middleware. If no middleware\n        return a response for this exception, raise it.\n        \"\"\"\n        for middleware_method in self._exception_middleware:\n            response = middleware_method(request, exception)\n            if response:\n                return response\n        raise"
+        }
+      ]
+    },
+    {
+      "pr_number": 6802,
+      "pr_title": "Fixed #26778 -- Fixed ModelSignal.connect() weak argument.",
+      "pr_body": "https://code.djangoproject.com/ticket/26778\n",
+      "issue_id": 26778,
+      "issue_title": "ModelSignal.connect() does not work when 'weak' is set to False and receiver is a local function",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-18T19:42:54",
+      "base_commit": "8ba44ecda024050c219e7cbc1f16c2d56fa258ac",
+      "changes": [
+        {
+          "file": "django/db/models/signals.py",
+          "type": "function",
+          "name": "_lazy_method",
+          "class_name": "ModelSignal",
+          "code": "def _lazy_method(self, method, apps, receiver, sender, **kwargs):\n        from django.db.models.options import Options\n\n        # This partial takes a single optional argument named \"sender\".\n        partial_method = partial(method, receiver, **kwargs)\n        if isinstance(sender, six.string_types):\n            apps = apps or Options.default_apps\n            apps.lazy_model_operation(partial_method, make_model_tuple(sender))\n        else:\n            return partial_method(sender)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9259,
+      "pr_title": "Fixed #28723 -- RelatedManager.get_prefetch_queryset returns \"wrong\" cache_name",
+      "pr_body": "https://code.djangoproject.com/ticket/28723",
+      "issue_id": 28723,
+      "issue_title": "RelatedManager.get_prefetch_queryset returns \"wrong\" cache_name",
+      "issue_body": "",
+      "issue_closed_at": "2018-02-07T14:29:42",
+      "base_commit": "ef718a72b3db81d35a6c1273b1565b48dd867e90",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related_descriptors.py",
+          "type": "function",
+          "name": "_remove_prefetched_objects",
+          "class_name": "ManyRelatedManager",
+          "code": "def _remove_prefetched_objects(self):\n            try:\n                self.instance._prefetched_objects_cache.pop(self.prefetch_cache_name)\n            except (AttributeError, KeyError):\n                pass"
+        },
+        {
+          "file": "django/db/models/fields/related_descriptors.py",
+          "type": "function",
+          "name": "get_prefetch_queryset",
+          "class_name": "ManyRelatedManager",
+          "code": "def get_prefetch_queryset(self, instances, queryset=None):\n            if queryset is None:\n                queryset = super().get_queryset()\n\n            queryset._add_hints(instance=instances[0])\n            queryset = queryset.using(queryset._db or self._db)\n\n            query = {'%s__in' % self.query_field_name: instances}\n            queryset = queryset._next_is_sticky().filter(**query)\n\n            # M2M: need to annotate the query in order to get the primary model\n            # that the secondary model was actually related to. We know that\n            # there will already be a join on the join table, so we can just add\n            # the select.\n\n            # For non-autocreated 'through' models, can't assume we are\n            # dealing with PK values.\n            fk = self.through._meta.get_field(self.source_field_name)\n            join_table = fk.model._meta.db_table\n            connection = connections[queryset.db]\n            qn = connection.ops.quote_name\n            queryset = queryset.extra(select={\n                '_prefetch_related_val_%s' % f.attname:\n                '%s.%s' % (qn(join_table), qn(f.column)) for f in fk.local_related_fields})\n            return (\n                queryset,\n                lambda result: tuple(\n                    getattr(result, '_prefetch_related_val_%s' % f.attname)\n                    for f in fk.local_related_fields\n                ),\n                lambda inst: tuple(\n                    f.get_db_prep_value(getattr(inst, f.attname), connection)\n                    for f in fk.foreign_related_fields\n                ),\n                False,\n                self.prefetch_cache_name,\n                False,\n            )"
+        }
+      ]
+    },
+    {
+      "pr_number": 11170,
+      "pr_title": "Fixed #30324 -- Forced utf-8 encoding when loading debug templates.",
+      "pr_body": "Refs #28007 and #29654.\r\n\r\nRegression in ea542a9c7239b5b665797b7c809f1aceb0b412cf and 50b8493581fea3d7137dd8db33bac7008868d23a.",
+      "issue_id": 30324,
+      "issue_title": "UnicodeDecodeError when loading debug templates.",
+      "issue_body": "",
+      "issue_closed_at": "2019-04-05T09:35:37",
+      "base_commit": "9012033138fa41b573d3e4e3f0dfa8b94a4719c6",
+      "changes": [
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_traceback_data",
+          "class_name": "ExceptionReporter",
+          "code": "def get_traceback_data(self):\n        \"\"\"Return a dictionary containing traceback information.\"\"\"\n        if self.exc_type and issubclass(self.exc_type, TemplateDoesNotExist):\n            self.template_does_not_exist = True\n            self.postmortem = self.exc_value.chain or [self.exc_value]\n\n        frames = self.get_traceback_frames()\n        for i, frame in enumerate(frames):\n            if 'vars' in frame:\n                frame_vars = []\n                for k, v in frame['vars']:\n                    v = pprint(v)\n                    # Trim large blobs of data\n                    if len(v) > 4096:\n                        v = '%s\u2026 <trimmed %d bytes string>' % (v[0:4096], len(v))\n                    frame_vars.append((k, v))\n                frame['vars'] = frame_vars\n            frames[i] = frame\n\n        unicode_hint = ''\n        if self.exc_type and issubclass(self.exc_type, UnicodeError):\n            start = getattr(self.exc_value, 'start', None)\n            end = getattr(self.exc_value, 'end', None)\n            if start is not None and end is not None:\n                unicode_str = self.exc_value.args[1]\n                unicode_hint = force_str(\n                    unicode_str[max(start - 5, 0):min(end + 5, len(unicode_str))],\n                    'ascii', errors='replace'\n                )\n        from django import get_version\n\n        if self.request is None:\n            user_str = None\n        else:\n            try:\n                user_str = str(self.request.user)\n            except Exception:\n                # request.user may raise OperationalError if the database is\n                # unavailable, for example.\n                user_str = '[unable to retrieve the current user]'\n\n        c = {\n            'is_email': self.is_email,\n            'unicode_hint': unicode_hint,\n            'frames': frames,\n            'request': self.request,\n            'user_str': user_str,\n            'filtered_POST_items': list(self.filter.get_post_parameters(self.request).items()),\n            'settings': get_safe_settings(),\n            'sys_executable': sys.executable,\n            'sys_version_info': '%d.%d.%d' % sys.version_info[0:3],\n            'server_time': timezone.now(),\n            'django_version_info': get_version(),\n            'sys_path': sys.path,\n            'template_info': self.template_info,\n            'template_does_not_exist': self.template_does_not_exist,\n            'postmortem': self.postmortem,\n        }\n        if self.request is not None:\n            c['request_GET_items'] = self.request.GET.items()\n            c['request_FILES_items'] = self.request.FILES.items()\n            c['request_COOKIES_items'] = self.request.COOKIES.items()\n        # Check whether exception info is available\n        if self.exc_type:\n            c['exception_type'] = self.exc_type.__name__\n        if self.exc_value:\n            c['exception_value'] = str(self.exc_value)\n        if frames:\n            c['lastframe'] = frames[-1]\n        return c"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "technical_404_response",
+          "class_name": null,
+          "code": "def technical_404_response(request, exception):\n    \"\"\"Create a technical 404 error response. `exception` is the Http404.\"\"\"\n    try:\n        error_url = exception.args[0]['path']\n    except (IndexError, TypeError, KeyError):\n        error_url = request.path_info[1:]  # Trim leading slash\n\n    try:\n        tried = exception.args[0]['tried']\n    except (IndexError, TypeError, KeyError):\n        tried = []\n    else:\n        if (not tried or (                  # empty URLconf\n            request.path == '/' and\n            len(tried) == 1 and             # default URLconf\n            len(tried[0]) == 1 and\n            getattr(tried[0][0], 'app_name', '') == getattr(tried[0][0], 'namespace', '') == 'admin'\n        )):\n            return default_urlconf(request)\n\n    urlconf = getattr(request, 'urlconf', settings.ROOT_URLCONF)\n    if isinstance(urlconf, types.ModuleType):\n        urlconf = urlconf.__name__\n\n    caller = ''\n    try:\n        resolver_match = resolve(request.path)\n    except Resolver404:\n        pass\n    else:\n        obj = resolver_match.func\n\n        if hasattr(obj, '__name__'):\n            caller = obj.__name__\n        elif hasattr(obj, '__class__') and hasattr(obj.__class__, '__name__'):\n            caller = obj.__class__.__name__\n\n        if hasattr(obj, '__module__'):\n            module = obj.__module__\n            caller = '%s.%s' % (module, caller)\n\n    with Path(CURRENT_DIR, 'templates', 'technical_404.html').open() as fh:\n        t = DEBUG_ENGINE.from_string(fh.read())\n    c = Context({\n        'urlconf': urlconf,\n        'root_urlconf': settings.ROOT_URLCONF,\n        'request_path': error_url,\n        'urlpatterns': tried,\n        'reason': str(exception),\n        'request': request,\n        'settings': get_safe_settings(),\n        'raising_view_name': caller,\n    })\n    return HttpResponseNotFound(t.render(c), content_type='text/html')"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "technical_404_response",
+          "class_name": null,
+          "code": "def technical_404_response(request, exception):\n    \"\"\"Create a technical 404 error response. `exception` is the Http404.\"\"\"\n    try:\n        error_url = exception.args[0]['path']\n    except (IndexError, TypeError, KeyError):\n        error_url = request.path_info[1:]  # Trim leading slash\n\n    try:\n        tried = exception.args[0]['tried']\n    except (IndexError, TypeError, KeyError):\n        tried = []\n    else:\n        if (not tried or (                  # empty URLconf\n            request.path == '/' and\n            len(tried) == 1 and             # default URLconf\n            len(tried[0]) == 1 and\n            getattr(tried[0][0], 'app_name', '') == getattr(tried[0][0], 'namespace', '') == 'admin'\n        )):\n            return default_urlconf(request)\n\n    urlconf = getattr(request, 'urlconf', settings.ROOT_URLCONF)\n    if isinstance(urlconf, types.ModuleType):\n        urlconf = urlconf.__name__\n\n    caller = ''\n    try:\n        resolver_match = resolve(request.path)\n    except Resolver404:\n        pass\n    else:\n        obj = resolver_match.func\n\n        if hasattr(obj, '__name__'):\n            caller = obj.__name__\n        elif hasattr(obj, '__class__') and hasattr(obj.__class__, '__name__'):\n            caller = obj.__class__.__name__\n\n        if hasattr(obj, '__module__'):\n            module = obj.__module__\n            caller = '%s.%s' % (module, caller)\n\n    with Path(CURRENT_DIR, 'templates', 'technical_404.html').open() as fh:\n        t = DEBUG_ENGINE.from_string(fh.read())\n    c = Context({\n        'urlconf': urlconf,\n        'root_urlconf': settings.ROOT_URLCONF,\n        'request_path': error_url,\n        'urlpatterns': tried,\n        'reason': str(exception),\n        'request': request,\n        'settings': get_safe_settings(),\n        'raising_view_name': caller,\n    })\n    return HttpResponseNotFound(t.render(c), content_type='text/html')"
+        }
+      ]
+    },
+    {
+      "pr_number": 4356,
+      "pr_title": "Fixed #24515 -- Fixed DjangoTranslation plural handling",
+      "pr_body": "",
+      "issue_id": 24515,
+      "issue_title": "Plural handling broken",
+      "issue_body": "",
+      "issue_closed_at": "2015-03-21T04:28:18",
+      "base_commit": "aea02ddfb7c610db9a7cb291b113d6e561d8eba9",
+      "changes": [
+        {
+          "file": "django/utils/translation/trans_real.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "DjangoTranslation",
+          "code": "def __init__(self, language):\n        \"\"\"Create a GNUTranslations() using many locale directories\"\"\"\n        gettext_module.GNUTranslations.__init__(self)\n\n        self.__language = language\n        self.__to_language = to_language(language)\n        self.__locale = to_locale(language)\n        self.plural = lambda n: int(n != 1)\n\n        self._init_translation_catalog()\n        self._add_installed_apps_translations()\n        self._add_local_translations()\n        self._add_fallback()"
+        },
+        {
+          "file": "django/utils/translation/trans_real.py",
+          "type": "function",
+          "name": "_new_gnu_trans",
+          "class_name": "DjangoTranslation",
+          "code": "def _new_gnu_trans(self, localedir, use_null_fallback=True):\n        \"\"\"\n        Returns a mergeable gettext.GNUTranslations instance.\n\n        A convenience wrapper. By default gettext uses 'fallback=False'.\n        Using param `use_null_fallback` to avoid confusion with any other\n        references to 'fallback'.\n        \"\"\"\n        translation = gettext_module.translation(\n            domain='django',\n            localedir=localedir,\n            languages=[self.__locale],\n            codeset='utf-8',\n            fallback=use_null_fallback)\n        if not hasattr(translation, '_catalog'):\n            # provides merge support for NullTranslations()\n            translation._catalog = {}\n            translation._info = {}\n        return translation"
+        },
+        {
+          "file": "django/utils/translation/trans_real.py",
+          "type": "function",
+          "name": "_init_translation_catalog",
+          "class_name": "DjangoTranslation",
+          "code": "def _init_translation_catalog(self):\n        \"\"\"Creates a base catalog using global django translations.\"\"\"\n        settingsfile = upath(sys.modules[settings.__module__].__file__)\n        localedir = os.path.join(os.path.dirname(settingsfile), 'locale')\n        use_null_fallback = True\n        if self.__language == settings.LANGUAGE_CODE:\n            # default lang should be present and parseable, if not\n            # gettext will raise an IOError (refs #18192).\n            use_null_fallback = False\n        translation = self._new_gnu_trans(localedir, use_null_fallback)\n        self._info = translation._info.copy()\n        self._catalog = translation._catalog.copy()"
+        }
+      ]
+    }
+  ]
+}

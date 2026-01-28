@@ -1,0 +1,163 @@
+{
+  "instance_id": "django__django-11848",
+  "repo": "django/django",
+  "created_at": "2019-09-28T04:28:22Z",
+  "problem_statement": "django.utils.http.parse_http_date two digit year check is incorrect\nDescription\n\t \n\t\t(last modified by Ad Timmering)\n\t \nRFC 850 does not mention this, but in RFC 7231 (and there's something similar in RFC 2822), there's the following quote:\nRecipients of a timestamp value in rfc850-date format, which uses a\ntwo-digit year, MUST interpret a timestamp that appears to be more\nthan 50 years in the future as representing the most recent year in\nthe past that had the same last two digits.\nCurrent logic is hard coded to consider 0-69 to be in 2000-2069, and 70-99 to be 1970-1999, instead of comparing versus the current year.\n",
+  "patch": "diff --git a/django/utils/http.py b/django/utils/http.py\n--- a/django/utils/http.py\n+++ b/django/utils/http.py\n@@ -176,10 +176,14 @@ def parse_http_date(date):\n     try:\n         year = int(m.group('year'))\n         if year < 100:\n-            if year < 70:\n-                year += 2000\n+            current_year = datetime.datetime.utcnow().year\n+            current_century = current_year - (current_year % 100)\n+            if year - (current_year % 100) > 50:\n+                # year that appears to be more than 50 years in the future are\n+                # interpreted as representing the past.\n+                year += current_century - 100\n             else:\n-                year += 1900\n+                year += current_century\n         month = MONTHS.index(m.group('mon').lower()) + 1\n         day = int(m.group('day'))\n         hour = int(m.group('hour'))\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10910,
+      "pr_title": "Fixed #30128 -- Fixed handling timedelta timezone in database functions.",
+      "pr_body": "Ticket: [#30128](https://code.djangoproject.com/ticket/30128)",
+      "issue_id": 30128,
+      "issue_title": "Using database functions with tzinfo=datetime.timezone(datetime.timedelta(...)) results in an incorrect query",
+      "issue_body": "",
+      "issue_closed_at": "2019-06-13T03:17:18",
+      "base_commit": "3dca8738cbbbb5674f795169e5ea25e2002f2d71",
+      "changes": [
+        {
+          "file": "django/db/backends/mysql/operations.py",
+          "type": "function",
+          "name": "date_trunc_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def date_trunc_sql(self, lookup_type, field_name):\n        fields = {\n            'year': '%%Y-01-01',\n            'month': '%%Y-%%m-01',\n        }  # Use double percents to escape.\n        if lookup_type in fields:\n            format_str = fields[lookup_type]\n            return \"CAST(DATE_FORMAT(%s, '%s') AS DATE)\" % (field_name, format_str)\n        elif lookup_type == 'quarter':\n            return \"MAKEDATE(YEAR(%s), 1) + INTERVAL QUARTER(%s) QUARTER - INTERVAL 1 QUARTER\" % (\n                field_name, field_name\n            )\n        elif lookup_type == 'week':\n            return \"DATE_SUB(%s, INTERVAL WEEKDAY(%s) DAY)\" % (\n                field_name, field_name\n            )\n        else:\n            return \"DATE(%s)\" % (field_name)"
+        },
+        {
+          "file": "django/db/backends/oracle/operations.py",
+          "type": "function",
+          "name": "date_trunc_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def date_trunc_sql(self, lookup_type, field_name):\n        # https://docs.oracle.com/en/database/oracle/oracle-database/18/sqlrf/ROUND-and-TRUNC-Date-Functions.html\n        if lookup_type in ('year', 'month'):\n            return \"TRUNC(%s, '%s')\" % (field_name, lookup_type.upper())\n        elif lookup_type == 'quarter':\n            return \"TRUNC(%s, 'Q')\" % field_name\n        elif lookup_type == 'week':\n            return \"TRUNC(%s, 'IW')\" % field_name\n        else:\n            return \"TRUNC(%s)\" % field_name"
+        },
+        {
+          "file": "django/db/backends/oracle/operations.py",
+          "type": "function",
+          "name": "_convert_field_to_tz",
+          "class_name": "DatabaseOperations",
+          "code": "def _convert_field_to_tz(self, field_name, tzname):\n        if not settings.USE_TZ:\n            return field_name\n        if not self._tzname_re.match(tzname):\n            raise ValueError(\"Invalid time zone name: %s\" % tzname)\n        # Convert from connection timezone to the local time, returning\n        # TIMESTAMP WITH TIME ZONE and cast it back to TIMESTAMP to strip the\n        # TIME ZONE details.\n        if self.connection.timezone_name != tzname:\n            return \"CAST((FROM_TZ(%s, '%s') AT TIME ZONE '%s') AS TIMESTAMP)\" % (\n                field_name,\n                self.connection.timezone_name,\n                tzname,\n            )\n        return field_name"
+        },
+        {
+          "file": "django/db/backends/postgresql/operations.py",
+          "type": "function",
+          "name": "date_trunc_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def date_trunc_sql(self, lookup_type, field_name):\n        # https://www.postgresql.org/docs/current/functions-datetime.html#FUNCTIONS-DATETIME-TRUNC\n        return \"DATE_TRUNC('%s', %s)\" % (lookup_type, field_name)"
+        },
+        {
+          "file": "django/db/backends/sqlite3/base.py",
+          "type": "function",
+          "name": "_sqlite_datetime_parse",
+          "class_name": null,
+          "code": "def _sqlite_datetime_parse(dt, tzname=None, conn_tzname=None):\n    if dt is None:\n        return None\n    try:\n        dt = backend_utils.typecast_timestamp(dt)\n    except (TypeError, ValueError):\n        return None\n    if conn_tzname:\n        dt = dt.replace(tzinfo=pytz.timezone(conn_tzname))\n    if tzname is not None and tzname != conn_tzname:\n        dt = timezone.localtime(dt, pytz.timezone(tzname))\n    return dt"
+        }
+      ]
+    },
+    {
+      "pr_number": 11393,
+      "pr_title": "Fixed #29396, #30494 -- Added indirect values support to __year lookups.",
+      "pr_body": "https://code.djangoproject.com/ticket/30494\r\n\r\nThe previous heuristics were naively enabling the `BETWEEN` optimization on successful cast of the first rhs SQL params to an integer while it was not appropriate for a lot of database resolved expressions.\r\n\r\nThanks Alexey Chernov for the report.",
+      "issue_id": 29396,
+      "issue_title": "The __year lookp crashes with IndexError when passed a non-direct values/expression.",
+      "issue_body": "",
+      "issue_closed_at": "2019-05-21T00:53:19",
+      "base_commit": "1d0bab0bfd77edcf1228d45bf654457a8ff1890d",
+      "changes": [
+        {
+          "file": "django/db/models/lookups.py",
+          "type": "function",
+          "name": "year_lookup_bounds",
+          "class_name": "YearLookup",
+          "code": "def year_lookup_bounds(self, connection, year):\n        output_field = self.lhs.lhs.output_field\n        if isinstance(output_field, DateTimeField):\n            bounds = connection.ops.year_lookup_bounds_for_datetime_field(year)\n        else:\n            bounds = connection.ops.year_lookup_bounds_for_date_field(year)\n        return bounds"
+        }
+      ]
+    },
+    {
+      "pr_number": 9457,
+      "pr_title": "Fixed #28915 -- Prevented SQLite from truncating trailing zeros in the fractional part of DecimalField.",
+      "pr_body": "https://code.djangoproject.com/ticket/28915\r\n\r\nThis reverts commit a146b65628e702a9a3ed5be21542ca45366fbb29 as it\r\nintroduces regression described in #28915.\r\nThis also adds test for that regression.",
+      "issue_id": 28915,
+      "issue_title": "DecimalField truncates trailing zeros in the fractional part on SQLite",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-13T02:23:53",
+      "base_commit": "30a389bd7795016d7f48bcda997e5dea5116f9bb",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/operations.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import datetime\nimport uuid\n\nfrom django.conf import settings\nfrom django.core.exceptions import FieldError\nfrom django.db import utils\nfrom django.db.backends.base.operations import BaseDatabaseOperations\nfrom django.db.models import aggregates, fields\nfrom django.db.models.expressions import Col\nfrom django.utils import timezone\nfrom django.utils.dateparse import parse_date, parse_datetime, parse_time\nfrom django.utils.duration import duration_string"
+        },
+        {
+          "file": "django/db/backends/sqlite3/operations.py",
+          "type": "function",
+          "name": "get_db_converters",
+          "class_name": "DatabaseOperations",
+          "code": "def get_db_converters(self, expression):\n        converters = super().get_db_converters(expression)\n        internal_type = expression.output_field.get_internal_type()\n        if internal_type == 'DateTimeField':\n            converters.append(self.convert_datetimefield_value)\n        elif internal_type == 'DateField':\n            converters.append(self.convert_datefield_value)\n        elif internal_type == 'TimeField':\n            converters.append(self.convert_timefield_value)\n        # Converter for Col is added with Database.register_converter()\n        # in base.py.\n        elif internal_type == 'DecimalField' and not isinstance(expression, Col):\n            converters.append(self.convert_decimalfield_value)\n        elif internal_type == 'UUIDField':\n            converters.append(self.convert_uuidfield_value)\n        elif internal_type in ('NullBooleanField', 'BooleanField'):\n            converters.append(self.convert_booleanfield_value)\n        return converters"
+        },
+        {
+          "file": "django/db/backends/sqlite3/operations.py",
+          "type": "function",
+          "name": "convert_timefield_value",
+          "class_name": "DatabaseOperations",
+          "code": "def convert_timefield_value(self, value, expression, connection):\n        if value is not None:\n            if not isinstance(value, datetime.time):\n                value = parse_time(value)\n        return value"
+        }
+      ]
+    },
+    {
+      "pr_number": 10853,
+      "pr_title": "Fixed #30027 -- Errored out on Window function usage if unsupported.",
+      "pr_body": "https://code.djangoproject.com/ticket/30027",
+      "issue_id": 30027,
+      "issue_title": "SQLite (pre 3.25.0) does not support window functions, raises OperationalError",
+      "issue_body": "",
+      "issue_closed_at": "2019-02-09T08:02:56",
+      "base_commit": "eefc9550fd3b8011cc12069eb700df09f25cc4d9",
+      "changes": [
+        {
+          "file": "django/db/backends/oracle/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    interprets_empty_strings_as_nulls = True\n    has_select_for_update = True\n    has_select_for_update_nowait = True\n    has_select_for_update_skip_locked = True\n    has_select_for_update_of = True\n    select_for_update_of_column = True\n    can_return_columns_from_insert = True\n    can_introspect_autofield = True\n    supports_subqueries_in_group_by = False\n    supports_transactions = True\n    supports_timezones = False\n    has_native_duration_field = True\n    can_defer_constraint_checks = True\n    supports_partially_nullable_unique_constraints = False\n    truncates_names = True\n    supports_tablespaces = True\n    supports_sequence_reset = False\n    can_introspect_materialized_views = True\n    can_introspect_time_field = False\n    atomic_transactions = False\n    supports_combined_alters = False\n    nulls_order_largest = True\n    requires_literal_defaults = True\n    closed_cursor_error_class = InterfaceError\n    bare_select_suffix = \" FROM DUAL\"\n    # select for update with limit can be achieved on Oracle, but not with the current backend.\n    supports_select_for_update_with_limit = False\n    supports_temporal_subtraction = True\n    # Oracle doesn't ignore quoted identifiers case but the current backend\n    # does by uppercasing all identifiers.\n    ignores_table_name_case = True\n    supports_index_on_text_field = False\n    has_case_insensitive_like = False\n    create_test_procedure_without_params_sql = \"\"\"\n        CREATE PROCEDURE \"TEST_PROCEDURE\" AS\n            V_I INTEGER;\n        BEGIN\n            V_I := 1;\n        END;\n    \"\"\"\n    create_test_procedure_with_int_param_sql = \"\"\"\n        CREATE PROCEDURE \"TEST_PROCEDURE\" (P_I INTEGER) AS\n            V_I INTEGER;\n        BEGIN\n            V_I := P_I;\n        END;\n    \"\"\"\n    supports_callproc_kwargs = True\n    supports_over_clause = True\n    supports_ignore_conflicts = False\n    max_query_params = 2**16 - 1\n    supports_partial_indexes = False\n    supports_slicing_ordering_in_compound = True"
+        },
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite can read from a cursor since SQLite 3.6.5, subject to the caveat\n    # that statements within a connection aren't isolated from each other. See\n    # https://sqlite.org/isolation.html.\n    can_use_chunked_reads = True\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    can_introspect_autofield = True\n    can_introspect_decimal_field = False\n    can_introspect_duration_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    introspected_big_auto_field_type = 'AutoField'\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_atomic_references_rename = Database.sqlite_version_info >= (3, 26, 0)\n    can_create_inline_fk = False\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n    supports_cast_with_precision = False\n    time_cast_precision = 3\n    can_release_savepoints = True\n    # Is \"ALTER TABLE ... RENAME COLUMN\" supported?\n    can_alter_table_rename_column = Database.sqlite_version_info >= (3, 25, 0)\n    supports_parentheses_in_compound = False\n    # Deferred constraint checks can be emulated on SQLite < 3.20 but not in a\n    # reasonably performant way.\n    supports_pragma_foreign_key_check = Database.sqlite_version_info >= (3, 20, 0)\n    can_defer_constraint_checks = supports_pragma_foreign_key_check\n    supports_functions_in_partial_indexes = Database.sqlite_version_info >= (3, 15, 0)"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "line",
+          "name": "line 7",
+          "code": "from django.db import connection\nfrom django.db.models import fields\nfrom django.db.models.query_utils import Q\nfrom django.utils.deconstruct import deconstructible\nfrom django.utils.functional import cached_property\nfrom django.utils.hashable import make_hashable"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "set_source_expressions",
+          "class_name": "WindowFrame",
+          "code": "def set_source_expressions(self, exprs):\n        self.start, self.end = exprs"
+        }
+      ]
+    },
+    {
+      "pr_number": 6540,
+      "pr_title": "Fixed #26341 (again) -- Addressed multiple occurrences per line use case",
+      "pr_body": "",
+      "issue_id": 26341,
+      "issue_title": "Weird comments in PO files (.html.py filenames)",
+      "issue_body": "",
+      "issue_closed_at": "2016-04-30T05:07:43",
+      "base_commit": "4e2ee8662753ca6a2619039b903f11c60709f398",
+      "changes": [
+        {
+          "file": "django/core/management/commands/makemessages.py",
+          "type": "function",
+          "name": "postprocess_messages",
+          "class_name": "BuildFile",
+          "code": "def postprocess_messages(self, msgs):\n        \"\"\"\n        Postprocess messages generated by xgettext GNU gettext utility.\n\n        Transform paths as if these messages were generated from original\n        translatable files rather than from preprocessed versions.\n        \"\"\"\n        if not self.is_templatized:\n            return msgs\n\n        # Remove '.py' suffix\n        if os.name == 'nt':\n            # Preserve '.\\' prefix on Windows to respect gettext behavior\n            old_path = self.work_path\n            new_path = self.path\n        else:\n            old_path = self.work_path[2:]\n            new_path = self.path[2:]\n\n        return re.sub(\n            r'^(#: .*)(' + re.escape(old_path) + r')',\n            r'\\1' + new_path,\n            msgs,\n            flags=re.MULTILINE\n        )"
+        }
+      ]
+    }
+  ]
+}

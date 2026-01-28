@@ -1,0 +1,146 @@
+{
+  "instance_id": "sphinx-doc__sphinx-8801",
+  "repo": "sphinx-doc/sphinx",
+  "created_at": "2021-01-31T11:12:59Z",
+  "problem_statement": "autodoc: The annotation only member in superclass is treated as \"undocumented\"\n**Describe the bug**\r\nautodoc: The annotation only member in superclass is treated as \"undocumented\".\r\n\r\n**To Reproduce**\r\n\r\n```\r\n# example.py\r\nclass Foo:\r\n    \"\"\"docstring\"\"\"\r\n    attr1: int  #: docstring\r\n\r\n\r\nclass Bar(Foo):\r\n    \"\"\"docstring\"\"\"\r\n    attr2: str  #: docstring\r\n```\r\n```\r\n# index.rst\r\n.. autoclass:: example.Bar\r\n   :members:\r\n   :inherited-members:\r\n```\r\n\r\n`Bar.attr1` is not documented. It will be shown if I give `:undoc-members:` option to the autoclass directive call. It seems the attribute is treated as undocumented.\r\n\r\n**Expected behavior**\r\nIt should be shown.\r\n\r\n**Your project**\r\nNo\r\n\r\n**Screenshots**\r\nNo\r\n\r\n**Environment info**\r\n- OS: Mac\r\n- Python version: 3.9.1\r\n- Sphinx version: HEAD of 3.x\r\n- Sphinx extensions: sphinx.ext.autodoc\r\n- Extra tools: No\r\n\r\n**Additional context**\r\nNo\r\n\n",
+  "patch": "diff --git a/sphinx/ext/autodoc/importer.py b/sphinx/ext/autodoc/importer.py\n--- a/sphinx/ext/autodoc/importer.py\n+++ b/sphinx/ext/autodoc/importer.py\n@@ -294,24 +294,35 @@ def get_class_members(subject: Any, objpath: List[str], attrgetter: Callable\n \n     try:\n         for cls in getmro(subject):\n+            try:\n+                modname = safe_getattr(cls, '__module__')\n+                qualname = safe_getattr(cls, '__qualname__')\n+                analyzer = ModuleAnalyzer.for_module(modname)\n+                analyzer.analyze()\n+            except AttributeError:\n+                qualname = None\n+                analyzer = None\n+            except PycodeError:\n+                analyzer = None\n+\n             # annotation only member (ex. attr: int)\n             for name in getannotations(cls):\n                 name = unmangle(cls, name)\n                 if name and name not in members:\n-                    members[name] = ObjectMember(name, INSTANCEATTR, class_=cls)\n+                    if analyzer and (qualname, name) in analyzer.attr_docs:\n+                        docstring = '\\n'.join(analyzer.attr_docs[qualname, name])\n+                    else:\n+                        docstring = None\n+\n+                    members[name] = ObjectMember(name, INSTANCEATTR, class_=cls,\n+                                                 docstring=docstring)\n \n             # append instance attributes (cf. self.attr1) if analyzer knows\n-            try:\n-                modname = safe_getattr(cls, '__module__')\n-                qualname = safe_getattr(cls, '__qualname__')\n-                analyzer = ModuleAnalyzer.for_module(modname)\n-                analyzer.analyze()\n+            if analyzer:\n                 for (ns, name), docstring in analyzer.attr_docs.items():\n                     if ns == qualname and name not in members:\n                         members[name] = ObjectMember(name, INSTANCEATTR, class_=cls,\n                                                      docstring='\\n'.join(docstring))\n-            except (AttributeError, PycodeError):\n-                pass\n     except AttributeError:\n         pass\n \n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8274,
+      "pr_title": "Fix #8200: autodoc: type aliases break type formatting",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #8200 \r\n- The annotation option is shared between auto directives unexpectedly.\r\nIt causes supression of type annotations for objects after\r\nGenericAlias definition.\r\n",
+      "issue_id": 8200,
+      "issue_title": "Certain type aliases break type formatting in automodule",
+      "issue_body": "**Describe the bug**\r\nIf `automodule` is applied to a module which defines a documented complex type alias, the type annotations on all attributes later in the module will be ignored.\r\n\r\n**To Reproduce**\r\nApply `automodule` to a module like the following:\r\n```\r\nimport typing\r\n\r\nAlias = typing.Union[int, float]\r\n\"\"\"a type alias\"\"\"\r\n\r\nclass Foo:\r\n    \"\"\"blah\"\"\"\r\n\r\n    bar: object\r\n    \"\"\"an attribute\"\"\"\r\n```\r\nThe generated documentation will not list any type for the attribute `bar`. Removing the definition of `Alias` causes the type of `bar` to be correctly rendered.\r\n\r\n**Expected behavior**\r\nThe presence of a type alias definition should not affect the display of type information for unrelated members.\r\n\r\n**Your project**\r\nHere is a tiny example project: [example3.zip](https://github.com/sphinx-doc/sphinx/files/5212082/example3.zip)\r\n\r\n**Environment info**\r\n- OS: macOS 10.14.6\r\n- Python version: 3.8.0\r\n- Sphinx version: 3.2.1 (also reproduced on the current 3.x branch)\r\n- Sphinx extensions:  `sphinx.ext.autodoc`\r\n\r\n**Additional context**\r\nThe reason for the bug is that `autodoc.GenericAliasDocumenter.add_directive_header` and `autodoc.TypeVarDocumenter.add_directive_header` use the line `self.options.annotation = SUPPRESS` to suppress the printing of the usual type information. Unfortunately, the `self.options` object can be shared across multiple documenters created as part of the same `automodule` directive, so mutating the options for one documenter affects all the others. One way to fix this is to change `autodoc.Documenter.__init__` to make a copy of the `Options` object, using the line `self.options = Options(directive.genopt)`. Making this change causes the bug described above to disappear.\r\n\r\nThanks to @altendky for helping me debug this problem.",
+      "issue_closed_at": "2020-10-04T14:44:10Z",
+      "base_commit": "38bb3774643d779b708970f941f2b16d1ab81b89",
+      "changes": [
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "can_document_member",
+          "class_name": "SlotsAttributeDocumenter",
+          "code": "def can_document_member(cls, member: Any, membername: str, isattr: bool, parent: Any\n                            ) -> bool:\n        \"\"\"This documents only SLOTSATTR members.\"\"\"\n        return member is SLOTSATTR"
+        },
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "can_document_member",
+          "class_name": "SlotsAttributeDocumenter",
+          "code": "def can_document_member(cls, member: Any, membername: str, isattr: bool, parent: Any\n                            ) -> bool:\n        \"\"\"This documents only SLOTSATTR members.\"\"\"\n        return member is SLOTSATTR"
+        }
+      ]
+    },
+    {
+      "pr_number": 7515,
+      "pr_title": "Close #2044: autodoc: Suppress default value for instance attributes",
+      "pr_body": "### Feature or Bugfix\r\n- Feature\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #2044 \r\n- This also fixes uninitialized global variables.",
+      "issue_id": 2044,
+      "issue_title": "None by by default for instance attributes?",
+      "issue_body": "When I'm included docstrings for instance attributes in the `__init__` of a class then using autoclass, I always end up with\n\n```\nattr = None\n    Documentation of attr\n```\n\ndue to this line\n\nhttps://github.com/sphinx-doc/sphinx/blob/add4c2467d9f98cadadff51593ca1727b4a81ca1/sphinx/ext/autodoc.py#L1465\n\nIs there a use case for documenting the `= None`. Can it just always be suppressed? There's no way right now to pass a `annotation` option to autoclass AFAICT.\n",
+      "issue_closed_at": "2020-04-23T12:57:37Z",
+      "base_commit": "12cb90c3fa5451e2c99100d8ce1d4d0a8bb7f527",
+      "changes": [
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "identity",
+          "class_name": null,
+          "code": "def identity(x: Any) -> Any:\n    return x"
+        },
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "add_directive_header",
+          "class_name": "PropertyDocumenter",
+          "code": "def add_directive_header(self, sig: str) -> None:\n        super().add_directive_header(sig)\n        sourcename = self.get_sourcename()\n        if inspect.isabstractmethod(self.object):\n            self.add_line('   :abstractmethod:', sourcename)\n        self.add_line('   :property:', sourcename)"
+        },
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "import_object",
+          "class_name": "SlotsAttributeDocumenter",
+          "code": "def import_object(self) -> Any:\n        \"\"\"Never import anything.\"\"\"\n        # disguise as an attribute\n        self.objtype = 'attribute'\n        self._datadescriptor = True\n\n        with mock(self.env.config.autodoc_mock_imports):\n            try:\n                ret = import_object(self.modname, self.objpath[:-1], 'class',\n                                    attrgetter=self.get_attr,\n                                    warningiserror=self.env.config.autodoc_warningiserror)\n                self.module, _, _, self.parent = ret\n                return True\n            except ImportError as exc:\n                logger.warning(exc.args[0], type='autodoc', subtype='import_object')\n                self.env.note_reread()\n                return False"
+        },
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "add_directive_header",
+          "class_name": "PropertyDocumenter",
+          "code": "def add_directive_header(self, sig: str) -> None:\n        super().add_directive_header(sig)\n        sourcename = self.get_sourcename()\n        if inspect.isabstractmethod(self.object):\n            self.add_line('   :abstractmethod:', sourcename)\n        self.add_line('   :property:', sourcename)"
+        },
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "import_object",
+          "class_name": "SlotsAttributeDocumenter",
+          "code": "def import_object(self) -> Any:\n        \"\"\"Never import anything.\"\"\"\n        # disguise as an attribute\n        self.objtype = 'attribute'\n        self._datadescriptor = True\n\n        with mock(self.env.config.autodoc_mock_imports):\n            try:\n                ret = import_object(self.modname, self.objpath[:-1], 'class',\n                                    attrgetter=self.get_attr,\n                                    warningiserror=self.env.config.autodoc_warningiserror)\n                self.module, _, _, self.parent = ret\n                return True\n            except ImportError as exc:\n                logger.warning(exc.args[0], type='autodoc', subtype='import_object')\n                self.env.note_reread()\n                return False"
+        }
+      ]
+    },
+    {
+      "pr_number": 2299,
+      "pr_title": "Fix #2298: automodule fails to document a class attribute.",
+      "pr_body": "This pull request adds a test case for bug #2298 (commit de356149cd) and a fix (commit c44608234d).\n\nI didn't create a new test module but extended test_ext_viewcode, because the sphinx dev guide recommends it for performance reasons. The test fails until the second commit get applied.\n\nMy fix is not the only possible fix, but a fairly simple one. It surely needs to be reviewed. Especially I'm not completely sure about its impact on extension classes written in C.\n",
+      "issue_id": 2298,
+      "issue_title": "automodule fails to document a class attribute",
+      "issue_body": "The directive automodule:: fails to document a class attribute under the following conditions:\n\nModule mod1 defines a class C:\n\n``` python\nclass C(object):\n    class_attr = 42\n    \"\"\"This is the class attribute class_attr\"\"\"\n```\n\nModule mod2 imports C from mod1:\n\n``` python\nfrom mod1 import C\n__all__ = ('C',)  # required to trigger the bug\n```\n\nNow document module mod2 using automodule:\n\n```\n.. automodule:: mod2\n   :members:\n```\n\nThe resulting documentation won't contain the doc string for the class attribute class_attr.\n\nThe bug is caused by a call of  class_documenter.generate() with the optional arguments\n`check_module=False` and `real_modname=\"mod2\"`. This causes the analyser to look for the source of class C in mod2 instead of mod1. As a consequence it doesn't find the doc-string of class_attr and fails to document it.\n\nI'll create a pull request with a test case and a fix.\n",
+      "issue_closed_at": "2017-11-11T16:53:43Z",
+      "base_commit": "bdc230b1ccc189989789f82a55023f369410309d",
+      "changes": [
+        {
+          "file": "sphinx/ext/autodoc.py",
+          "type": "function",
+          "name": "document_members",
+          "class_name": "AttributeDocumenter",
+          "code": "def document_members(self, all_members=False):\n        pass"
+        }
+      ]
+    },
+    {
+      "pr_number": 7823,
+      "pr_title": "Fix #7821: autodoc: TypeError is raised for overloaded C-ext function",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #7821 ",
+      "issue_id": 7821,
+      "issue_title": "TypeError: can't set attributes of built-in/extension type 'list'",
+      "issue_body": "Previous issue: https://github.com/sphinx-doc/sphinx/issues/7791\r\n\r\n**Describe the bug**\r\nRunning sphinx-build after sphinx-apidoc on our codebase results in the error message:\r\n\r\n```\r\n  File \"/home/danielk/.local/lib/python3.7/site-packages/sphinx/ext/autodoc/__init__.py\", line 1240, in annotate_to_first_argument\r\n    func.__signature__ = sig.replace(parameters=params)  # type: ignore\r\nTypeError: can't set attributes of built-in/extension type 'list'\r\n```\r\n\r\n**To Reproduce**\r\nSteps to reproduce the behavior:\r\n\r\nRun `make html` in project folder\r\n\r\n**Expected behavior**\r\nNo error\r\n\r\n**Your project**\r\n\r\nn/a\r\n\r\n**Screenshots**\r\nIf applicable, add screenshots to help explain your problem.\r\n\r\n**Environment info**\r\n- OS: Gentoo Linux, KDE 19.12.3, Plasma 5.70\r\n- Python version: 3.7.7\r\n- Sphinx version: See below\r\n- Sphinx extensions: See below\r\n- Extra tools: n/a\r\n\r\n```\r\nalabaster                          0.7.12            \r\nautodoc                            0.5.0             \r\nBabel                              2.8.0             \r\nbeautifulsoup4                     4.9.1             \r\nBrotli                             1.0.7             \r\nbsddb3                             6.2.7             \r\ncertifi                            2020.4.5.1        \r\ncffi                               1.14.0            \r\nchardet                            3.0.4             \r\ncracklib                           2.9.7             \r\ncryptacular                        1.4.1             /home/danielk/Development/cryptacular/src/cryptacular\r\ncryptography                       2.8               \r\nCython                             0.29.15           \r\ndecorator                          4.4.2             \r\ndistro                             1.0.4             \r\ndocutils                           0.16              \r\nextras                             1.0.0             \r\nfile-magic                         0.4.0             \r\nfixtures                           3.0.0             \r\nFormEncode                         1.3.1             \r\ngdbus-codegen                      2.62.6            \r\ngemato                             14.3              \r\ngentoolkit                         0.4.8             \r\ngpg                                1.13.0            \r\ngpodder                            3.10.5            \r\nhtml5lib                           1.0.1             \r\nidna                               2.8               \r\nimagesize                          1.1.0             \r\nisodate                            0.6.0             \r\nisort                              4.3.15            \r\njava-config                        2.2.0             \r\nJinja2                             2.11.1            \r\nlayman                             2.4.3             \r\nlensfun                            0.3.2             \r\nlibsass                            0.20.0            \r\nlinecache2                         1.0.0             \r\nlxml                               4.5.0             \r\nM2Crypto                           0.31.0            \r\nMako                               1.1.2             \r\nMarkdown                           2.4.1             \r\nMarkups                            3.0.0             \r\nMarkupSafe                         1.1.1             \r\nmercurial                          5.3.2             \r\nmeson                              0.52.1            \r\nmimeparse                          1.6.0             \r\nmock                               4.0.2             \r\nMomoko                             2.2.5.1           \r\nmygpoclient                        1.8               \r\nnetlink                            1.0               \r\nnotify2                            0.3.1             \r\nnumpy                              1.17.4            \r\nolefile                            0.46              \r\npackaging                          20.3              \r\npbkdf2                             1.3               \r\npbr                                5.1.1             \r\npdoc                               0.3.2             \r\nPillow                             7.0.0             \r\npip                                20.0.2            \r\nply                                3.11              \r\npodcastparser                      0.6.4             \r\nportage                            2.3.99            \r\npsycopg2                           2.8.5             \r\npsycopg2-binary                    2.8.5             \r\npwquality                          1.4.2             \r\npycairo                            1.18.2            \r\nPycco                              0.6.0             \r\npycountry                          19.8.18           \r\npycparser                          2.20              \r\npycryptodome                       3.9.4             \r\npyelftools                         0.25              \r\npyenchant                          2.0.0             \r\nPygments                           2.5.2             \r\nPyGObject                          3.34.0            \r\npyOpenSSL                          19.1.0            \r\npyparsing                          2.4.6             \r\npyportmidi                         0.0.7             \r\nPyQt5                              5.14.1            \r\nPyQt5-sip                          4.19.21           \r\nPyQtWebEngine                      5.14.0            \r\npyrsistent                         0.15.6            \r\nPySocks                            1.7.1             \r\npystache                           0.5.4             \r\npython-markdown-math               0.6               \r\npython-mimeparse                   1.6.0             \r\npython-subunit                     1.2.0             \r\npytz                               2019.3            \r\npyxdg                              0.26              \r\nPyYAML                             5.3.1             \r\nrdflib                             4.2.2             \r\nreportlab                          3.5.13            \r\nrequests                           2.23.0            \r\nReText                             7.0.4             \r\nscour                              0.37              \r\nsetuptools                         44.1.0            \r\nsimplejson                         3.17.0            \r\nsip                                4.19.21           \r\nsix                                1.14.0            \r\nsmartypants                        2.0.1             \r\nsnowballstemmer                    2.0.0             \r\nsoupsieve                          2.0.1             \r\nSphinx                             3.1.0             \r\nsphinx-rtd-theme                   0.4.3             \r\nsphinx-rtd-theme-http              1.0.0             \r\nsphinxcontrib-apidoc               0.3.0             \r\nsphinxcontrib-applehelp            1.0.2             \r\nsphinxcontrib-autodoc-doxygen      0.6.0             \r\nsphinxcontrib-autodoc-filterparams 0.0.1             \r\nsphinxcontrib-devhelp              1.0.2             \r\nsphinxcontrib-htmlhelp             1.0.3             \r\nsphinxcontrib-httpdomain           1.7.0             \r\nsphinxcontrib-jsmath               1.0.1             \r\nsphinxcontrib-mockautodoc          0.0.1.dev20130518 \r\nsphinxcontrib-qthelp               1.0.3             \r\nsphinxcontrib-serializinghtml      1.1.3             \r\nssl-fetch                          0.4               \r\ntesttools                          2.3.0             \r\ntornado                            5.1.1             \r\ntraceback2                         1.4.0             \r\ntyped-ast                          1.4.1             \r\nunittest2                          1.1.0             \r\nurllib3                            1.25.8            \r\nwaitress                           1.4.4             \r\nwebencodings                       0.5.1             \r\nWebOb                              1.8.6             \r\nWebTest                            2.0.35            \r\nyoutube-dl                         2020.5.29         \r\nzstandard                          0.13.0 \r\n```\r\n\r\n\r\n\r\n**Additional context**\r\n\r\n```\r\n\r\nRunning Sphinx v3.1.0\r\nbuilding [mo]: targets for 0 po files that are out of date\r\nbuilding [html]: targets for 41 source files that are out of date\r\nupdating environment: [new config] 41 added, 0 changed, 0 removed\r\nreading sources... [ 87%] ... Exception occurred:\r\n  File \"/home/danielk/.local/lib/python3.7/site-packages/sphinx/ext/autodoc/__init__.py\", line 1240, in annotate_to_first_argument\r\n    func.__signature__ = sig.replace(parameters=params)  # type: ignore\r\nTypeError: can't set attributes of built-in/extension type 'list'\r\nThe full traceback has been saved in /tmp/sphinx-err-lf0wsvvp.log\r\n\r\n, if you want to report the issue to the developers.\r\nPlease also report this if it was a user error, so that a better error message can be provided next time.\r\nA bug report can be filed in the tracker at <https://github.com/sphinx-doc/sphinx/issues>. Thanks!\r\nmake[1]: *** [Makefile:20: html] Error 2\r\nmake[1]: Leaving directory '/home/danielk/Development/docs'\r\nmake: *** [Makefile:85: docs] Error 2\r\n```\r\n\r\n[sphinx-err-lf0wsvvp.log](https://github.com/sphinx-doc/sphinx/files/4766780/sphinx-err-lf0wsvvp.log)",
+      "issue_closed_at": "2020-06-14T02:48:20Z",
+      "base_commit": "46f79c55e1242ae8bb49b14c0a9e226d119460e5",
+      "changes": [
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "annotate_to_first_argument",
+          "class_name": "MethodDocumenter",
+          "code": "def annotate_to_first_argument(self, func: Callable, typ: Type) -> None:\n        \"\"\"Annotate type hint to the first argument of function if needed.\"\"\"\n        try:\n            sig = inspect.signature(func)\n        except TypeError as exc:\n            logger.warning(__(\"Failed to get a method signature for %s: %s\"),\n                           self.fullname, exc)\n            return\n        except ValueError:\n            return\n        if len(sig.parameters) == 1:\n            return\n\n        params = list(sig.parameters.values())\n        if params[1].annotation is Parameter.empty:\n            params[1] = params[1].replace(annotation=typ)\n            func.__signature__ = sig.replace(parameters=params)"
+        },
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "annotate_to_first_argument",
+          "class_name": "MethodDocumenter",
+          "code": "def annotate_to_first_argument(self, func: Callable, typ: Type) -> None:\n        \"\"\"Annotate type hint to the first argument of function if needed.\"\"\"\n        try:\n            sig = inspect.signature(func)\n        except TypeError as exc:\n            logger.warning(__(\"Failed to get a method signature for %s: %s\"),\n                           self.fullname, exc)\n            return\n        except ValueError:\n            return\n        if len(sig.parameters) == 1:\n            return\n\n        params = list(sig.parameters.values())\n        if params[1].annotation is Parameter.empty:\n            params[1] = params[1].replace(annotation=typ)\n            func.__signature__ = sig.replace(parameters=params)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8543,
+      "pr_title": "Fix #8534: autoattribute failed to document a commented attribute in alias dervied class",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- Additional fix for https://github.com/sphinx-doc/sphinx/pull/8540#discussion_r543556450\r\n- This contains https://github.com/sphinx-doc/sphinx/pull/8542",
+      "issue_id": 8534,
+      "issue_title": "autodoc: autoattribute directive can't create document for commented attribute in alias class",
+      "issue_body": "**Describe the bug**\r\nautodoc: autoattribute directive can't create document for commented attribute in alias class\r\n\r\n**To Reproduce**\r\n\r\n```\r\n# example.py\r\n\r\nclass Foo:\r\n    def __init__(self):\r\n        self.attr = None  #: docstring\r\n\r\nAlias = Foo\r\n```\r\n```\r\n# index.rst\r\n\r\n.. autoattribute:: example.Alias.attr\r\n```\r\n\r\nThis example causes ImportError on generating a document.\r\n\r\n**Expected behavior**\r\nBuild successfully.\r\n\r\n**Your project**\r\nNo\r\n\r\n**Screenshots**\r\nNo\r\n\r\n**Environment info**\r\n- OS: Mac\r\n- Python version: 3.9.1\r\n- Sphinx version: HEAD of 3.x\r\n- Sphinx extensions: sphinx.ext.autodoc\r\n- Extra tools: No\r\n\r\n**Additional context**\r\nNo",
+      "issue_closed_at": "2020-12-16T14:47:26Z",
+      "base_commit": "beeab6ced4e0441e84b517f0f4e54472a83f30b7",
+      "changes": [
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "ClassDocumenter",
+          "code": "def __init__(self, *args: Any) -> None:\n        super().__init__(*args)\n        merge_members_option(self.options)"
+        }
+      ]
+    }
+  ]
+}

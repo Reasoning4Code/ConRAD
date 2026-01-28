@@ -1,0 +1,174 @@
+{
+  "instance_id": "django__django-10914",
+  "repo": "django/django",
+  "created_at": "2019-01-30T13:13:20Z",
+  "problem_statement": "Set default FILE_UPLOAD_PERMISSION to 0o644.\nDescription\n\t\nHello,\nAs far as I can see, the \u200bFile Uploads documentation page does not mention any permission issues.\nWhat I would like to see is a warning that in absence of explicitly configured FILE_UPLOAD_PERMISSIONS, the permissions for a file uploaded to FileSystemStorage might not be consistent depending on whether a MemoryUploadedFile or a TemporaryUploadedFile was used for temporary storage of the uploaded data (which, with the default FILE_UPLOAD_HANDLERS, in turn depends on the uploaded data size).\nThe tempfile.NamedTemporaryFile + os.rename sequence causes the resulting file permissions to be 0o0600 on some systems (I experience it here on CentOS 7.4.1708 and Python 3.6.5). In all probability, the implementation of Python's built-in tempfile module explicitly sets such permissions for temporary files due to security considerations.\nI found mentions of this issue \u200bon GitHub, but did not manage to find any existing bug report in Django's bug tracker.\n",
+  "patch": "diff --git a/django/conf/global_settings.py b/django/conf/global_settings.py\n--- a/django/conf/global_settings.py\n+++ b/django/conf/global_settings.py\n@@ -304,7 +304,7 @@ def gettext_noop(s):\n \n # The numeric mode to set newly-uploaded files to. The value should be a mode\n # you'd pass directly to os.chmod; see https://docs.python.org/library/os.html#files-and-directories.\n-FILE_UPLOAD_PERMISSIONS = None\n+FILE_UPLOAD_PERMISSIONS = 0o644\n \n # The numeric mode to assign to newly-created directories, when uploading files.\n # The value should be a mode as you'd pass to os.chmod;\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 5139,
+      "pr_title": "Fixed #19263 -- Fixed crash when filtering using __in and an empty QuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/19263\n",
+      "issue_id": 19263,
+      "issue_title": "Filtering __in a sliced queryset with a 0 limit raises an error",
+      "issue_body": "",
+      "issue_closed_at": "2015-09-04T07:00:51",
+      "base_commit": "7c0850028f25eebaa9b521b5d02afac084ff2c6f",
+      "changes": [
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "as_nested_sql",
+          "class_name": "SQLCompiler",
+          "code": "def as_nested_sql(self):\n        \"\"\"\n        Perform the same functionality as the as_sql() method, returning an\n        SQL string and parameters. However, the alias prefixes are bumped\n        beforehand (in a copy -- the current query isn't changed), and any\n        ordering is removed if the query is unsliced.\n\n        Used when nesting this query inside another.\n        \"\"\"\n        obj = self.query.clone()\n        if obj.low_mark == 0 and obj.high_mark is None and not self.query.distinct_fields:\n            # If there is no slicing in use, then we can safely drop all ordering\n            obj.clear_ordering(True)\n        return obj.get_compiler(connection=self.connection).as_sql(subquery=True)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8992,
+      "pr_title": "Fixed #28543 -- Prevented ManyToManyField.value_from_object() from being lazy.",
+      "pr_body": "Previously, it was a QuerySet which could reevaluate to a new value if the\r\nmodel's data changes. This is inconsistent with other Field.value_from_object()\r\nmethods.\r\n\r\nThis allows reverting the fix in the admin for refs #27998.\r\n\r\nhttps://code.djangoproject.com/ticket/28543",
+      "issue_id": 28543,
+      "issue_title": "ModelForm.initial is affected while its bound instance's m2m field be set with new data",
+      "issue_body": "",
+      "issue_closed_at": "2017-08-31T08:34:57",
+      "base_commit": "f0d9ede9e653c03052c5c7fdeae5b88feda267df",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "_changeform_view",
+          "class_name": "ModelAdmin",
+          "code": "def _changeform_view(self, request, object_id, form_url, extra_context):\n        to_field = request.POST.get(TO_FIELD_VAR, request.GET.get(TO_FIELD_VAR))\n        if to_field and not self.to_field_allowed(request, to_field):\n            raise DisallowedModelAdminToField(\"The field %s cannot be referenced.\" % to_field)\n\n        model = self.model\n        opts = model._meta\n\n        if request.method == 'POST' and '_saveasnew' in request.POST:\n            object_id = None\n\n        add = object_id is None\n\n        if add:\n            if not self.has_add_permission(request):\n                raise PermissionDenied\n            obj = None\n\n        else:\n            obj = self.get_object(request, unquote(object_id), to_field)\n\n            if not self.has_change_permission(request, obj):\n                raise PermissionDenied\n\n            if obj is None:\n                return self._get_obj_does_not_exist_redirect(request, opts, object_id)\n\n        ModelForm = self.get_form(request, obj)\n        if request.method == 'POST':\n            form = ModelForm(request.POST, request.FILES, instance=obj)\n            if form.is_valid():\n                form_validated = True\n                new_object = self.save_form(request, form, change=not add)\n            else:\n                form_validated = False\n                new_object = form.instance\n            formsets, inline_instances = self._create_formsets(request, new_object, change=not add)\n            if all_valid(formsets) and form_validated:\n                if not add:\n                    # Evalute querysets in form.initial so that changes to\n                    # ManyToManyFields are reflected in this change's LogEntry.\n                    form.has_changed()\n                self.save_model(request, new_object, form, not add)\n                self.save_related(request, form, formsets, not add)\n                change_message = self.construct_change_message(request, form, formsets, add)\n                if add:\n                    self.log_addition(request, new_object, change_message)\n                    return self.response_add(request, new_object)\n                else:\n                    self.log_change(request, new_object, change_message)\n                    return self.response_change(request, new_object)\n            else:\n                form_validated = False\n        else:\n            if add:\n                initial = self.get_changeform_initial_data(request)\n                form = ModelForm(initial=initial)\n                formsets, inline_instances = self._create_formsets(request, form.instance, change=False)\n            else:\n                form = ModelForm(instance=obj)\n                formsets, inline_instances = self._create_formsets(request, obj, change=True)\n\n        adminForm = helpers.AdminForm(\n            form,\n            list(self.get_fieldsets(request, obj)),\n            self.get_prepopulated_fields(request, obj),\n            self.get_readonly_fields(request, obj),\n            model_admin=self)\n        media = self.media + adminForm.media\n\n        inline_formsets = self.get_inline_formsets(request, formsets, inline_instances, obj)\n        for inline_formset in inline_formsets:\n            media = media + inline_formset.media\n\n        context = dict(\n            self.admin_site.each_context(request),\n            title=(_('Add %s') if add else _('Change %s')) % opts.verbose_name,\n            adminform=adminForm,\n            object_id=object_id,\n            original=obj,\n            is_popup=(IS_POPUP_VAR in request.POST or\n                      IS_POPUP_VAR in request.GET),\n            to_field=to_field,\n            media=media,\n            inline_admin_formsets=inline_formsets,\n            errors=helpers.AdminErrorList(form, formsets),\n            preserved_filters=self.get_preserved_filters(request),\n        )\n\n        # Hide the \"Save\" and \"Save and continue\" buttons if \"Save as New\" was\n        # previously chosen to prevent the interface from getting confusing.\n        if request.method == 'POST' and not form_validated and \"_saveasnew\" in request.POST:\n            context['show_save'] = False\n            context['show_save_and_continue'] = False\n            # Use the change template instead of the add template.\n            add = False\n\n        context.update(extra_context or {})\n\n        return self.render_change_form(request, context, add=add, change=not add, obj=obj, form_url=form_url)"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "set_attributes_from_rel",
+          "class_name": "ManyToManyField",
+          "code": "def set_attributes_from_rel(self):\n        pass"
+        }
+      ]
+    },
+    {
+      "pr_number": 10027,
+      "pr_title": "Fixed #24384 -- Allowed compilemessages to continue running after nonfatal errors.",
+      "pr_body": "",
+      "issue_id": 24384,
+      "issue_title": "compilemessages shouldn't return with exit code 0 when it fails",
+      "issue_body": "",
+      "issue_closed_at": "2018-06-13T14:27:08",
+      "base_commit": "b30f9b131c9489b9d9f21c311ecb46d0aea91381",
+      "changes": [
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "handle",
+          "class_name": "Command",
+          "code": "def handle(self, **options):\n        locale = options['locale']\n        exclude = options['exclude']\n        self.verbosity = options['verbosity']\n        if options['fuzzy']:\n            self.program_options = self.program_options + ['-f']\n\n        if find_command(self.program) is None:\n            raise CommandError(\"Can't find %s. Make sure you have GNU gettext \"\n                               \"tools 0.15 or newer installed.\" % self.program)\n\n        basedirs = [os.path.join('conf', 'locale'), 'locale']\n        if os.environ.get('DJANGO_SETTINGS_MODULE'):\n            from django.conf import settings\n            basedirs.extend(settings.LOCALE_PATHS)\n\n        # Walk entire tree, looking for locale directories\n        for dirpath, dirnames, filenames in os.walk('.', topdown=True):\n            for dirname in dirnames:\n                if dirname == 'locale':\n                    basedirs.append(os.path.join(dirpath, dirname))\n\n        # Gather existing directories.\n        basedirs = set(map(os.path.abspath, filter(os.path.isdir, basedirs)))\n\n        if not basedirs:\n            raise CommandError(\"This script should be run from the Django Git \"\n                               \"checkout or your project or app tree, or with \"\n                               \"the settings module specified.\")\n\n        # Build locale list\n        all_locales = []\n        for basedir in basedirs:\n            locale_dirs = filter(os.path.isdir, glob.glob('%s/*' % basedir))\n            all_locales.extend(map(os.path.basename, locale_dirs))\n\n        # Account for excluded locales\n        locales = locale or all_locales\n        locales = set(locales).difference(exclude)\n\n        for basedir in basedirs:\n            if locales:\n                dirs = [os.path.join(basedir, l, 'LC_MESSAGES') for l in locales]\n            else:\n                dirs = [basedir]\n            locations = []\n            for ldir in dirs:\n                for dirpath, dirnames, filenames in os.walk(ldir):\n                    locations.extend((dirpath, f) for f in filenames if f.endswith('.po'))\n            if locations:\n                self.compile_messages(locations)"
+        },
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "handle",
+          "class_name": "Command",
+          "code": "def handle(self, **options):\n        locale = options['locale']\n        exclude = options['exclude']\n        self.verbosity = options['verbosity']\n        if options['fuzzy']:\n            self.program_options = self.program_options + ['-f']\n\n        if find_command(self.program) is None:\n            raise CommandError(\"Can't find %s. Make sure you have GNU gettext \"\n                               \"tools 0.15 or newer installed.\" % self.program)\n\n        basedirs = [os.path.join('conf', 'locale'), 'locale']\n        if os.environ.get('DJANGO_SETTINGS_MODULE'):\n            from django.conf import settings\n            basedirs.extend(settings.LOCALE_PATHS)\n\n        # Walk entire tree, looking for locale directories\n        for dirpath, dirnames, filenames in os.walk('.', topdown=True):\n            for dirname in dirnames:\n                if dirname == 'locale':\n                    basedirs.append(os.path.join(dirpath, dirname))\n\n        # Gather existing directories.\n        basedirs = set(map(os.path.abspath, filter(os.path.isdir, basedirs)))\n\n        if not basedirs:\n            raise CommandError(\"This script should be run from the Django Git \"\n                               \"checkout or your project or app tree, or with \"\n                               \"the settings module specified.\")\n\n        # Build locale list\n        all_locales = []\n        for basedir in basedirs:\n            locale_dirs = filter(os.path.isdir, glob.glob('%s/*' % basedir))\n            all_locales.extend(map(os.path.basename, locale_dirs))\n\n        # Account for excluded locales\n        locales = locale or all_locales\n        locales = set(locales).difference(exclude)\n\n        for basedir in basedirs:\n            if locales:\n                dirs = [os.path.join(basedir, l, 'LC_MESSAGES') for l in locales]\n            else:\n                dirs = [basedir]\n            locations = []\n            for ldir in dirs:\n                for dirpath, dirnames, filenames in os.walk(ldir):\n                    locations.extend((dirpath, f) for f in filenames if f.endswith('.po'))\n            if locations:\n                self.compile_messages(locations)"
+        },
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "compile_messages",
+          "class_name": "Command",
+          "code": "def compile_messages(self, locations):\n        \"\"\"\n        Locations is a list of tuples: [(directory, file), ...]\n        \"\"\"\n        for i, (dirpath, f) in enumerate(locations):\n            if self.verbosity > 0:\n                self.stdout.write('processing file %s in %s\\n' % (f, dirpath))\n            po_path = os.path.join(dirpath, f)\n            if has_bom(po_path):\n                raise CommandError(\"The %s file has a BOM (Byte Order Mark). \"\n                                   \"Django only supports .po files encoded in \"\n                                   \"UTF-8 and without any BOM.\" % po_path)\n            base_path = os.path.splitext(po_path)[0]\n\n            # Check writability on first location\n            if i == 0 and not is_writable(base_path + '.mo'):\n                self.stderr.write(\"The po files under %s are in a seemingly not writable location. \"\n                                  \"mo files will not be updated/created.\" % dirpath)\n                return\n\n            args = [self.program] + self.program_options + [\n                '-o', base_path + '.mo', base_path + '.po'\n            ]\n            output, errors, status = popen_wrapper(args)\n            if status:\n                if errors:\n                    msg = \"Execution of %s failed: %s\" % (self.program, errors)\n                else:\n                    msg = \"Execution of %s failed\" % self.program\n                raise CommandError(msg)"
+        },
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "compile_messages",
+          "class_name": "Command",
+          "code": "def compile_messages(self, locations):\n        \"\"\"\n        Locations is a list of tuples: [(directory, file), ...]\n        \"\"\"\n        for i, (dirpath, f) in enumerate(locations):\n            if self.verbosity > 0:\n                self.stdout.write('processing file %s in %s\\n' % (f, dirpath))\n            po_path = os.path.join(dirpath, f)\n            if has_bom(po_path):\n                raise CommandError(\"The %s file has a BOM (Byte Order Mark). \"\n                                   \"Django only supports .po files encoded in \"\n                                   \"UTF-8 and without any BOM.\" % po_path)\n            base_path = os.path.splitext(po_path)[0]\n\n            # Check writability on first location\n            if i == 0 and not is_writable(base_path + '.mo'):\n                self.stderr.write(\"The po files under %s are in a seemingly not writable location. \"\n                                  \"mo files will not be updated/created.\" % dirpath)\n                return\n\n            args = [self.program] + self.program_options + [\n                '-o', base_path + '.mo', base_path + '.po'\n            ]\n            output, errors, status = popen_wrapper(args)\n            if status:\n                if errors:\n                    msg = \"Execution of %s failed: %s\" % (self.program, errors)\n                else:\n                    msg = \"Execution of %s failed\" % self.program\n                raise CommandError(msg)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6309,
+      "pr_title": "Fixed #25232, #24987 -- Made ModelBackend reject inactive users.",
+      "pr_body": "https://code.djangoproject.com/ticket/25232\nhttps://code.djangoproject.com/ticket/24987\n\nUpdated from https://github.com/django/django/pull/6090\n",
+      "issue_id": 24987,
+      "issue_title": "Remove test client login()'s hardcoded rejection of inactive users",
+      "issue_body": "",
+      "issue_closed_at": "2016-03-23T08:21:35",
+      "base_commit": "1555d50ea40f22524b58e71bf15f3fc69a7c9591",
+      "changes": [
+        {
+          "file": "django/contrib/auth/backends.py",
+          "type": "function",
+          "name": "authenticate",
+          "class_name": "RemoteUserBackend",
+          "code": "def authenticate(self, remote_user):\n        \"\"\"\n        The username passed as ``remote_user`` is considered trusted.  This\n        method simply returns the ``User`` object with the given username,\n        creating a new ``User`` object if ``create_unknown_user`` is ``True``.\n\n        Returns None if ``create_unknown_user`` is ``False`` and a ``User``\n        object with the given username is not found in the database.\n        \"\"\"\n        if not remote_user:\n            return\n        user = None\n        username = self.clean_username(remote_user)\n\n        UserModel = get_user_model()\n\n        # Note that this could be accomplished in one try-except clause, but\n        # instead we use get_or_create when creating unknown users since it has\n        # built-in safeguards for multiple threads.\n        if self.create_unknown_user:\n            user, created = UserModel._default_manager.get_or_create(**{\n                UserModel.USERNAME_FIELD: username\n            })\n            if created:\n                user = self.configure_user(user)\n        else:\n            try:\n                user = UserModel._default_manager.get_by_natural_key(username)\n            except UserModel.DoesNotExist:\n                pass\n        return user"
+        },
+        {
+          "file": "django/contrib/auth/backends.py",
+          "type": "function",
+          "name": "has_module_perms",
+          "class_name": "ModelBackend",
+          "code": "def has_module_perms(self, user_obj, app_label):\n        \"\"\"\n        Returns True if user_obj has any permissions in the given app_label.\n        \"\"\"\n        if not user_obj.is_active:\n            return False\n        for perm in self.get_all_permissions(user_obj):\n            if perm[:perm.index('.')] == app_label:\n                return True\n        return False"
+        },
+        {
+          "file": "django/contrib/auth/backends.py",
+          "type": "function",
+          "name": "authenticate",
+          "class_name": "RemoteUserBackend",
+          "code": "def authenticate(self, remote_user):\n        \"\"\"\n        The username passed as ``remote_user`` is considered trusted.  This\n        method simply returns the ``User`` object with the given username,\n        creating a new ``User`` object if ``create_unknown_user`` is ``True``.\n\n        Returns None if ``create_unknown_user`` is ``False`` and a ``User``\n        object with the given username is not found in the database.\n        \"\"\"\n        if not remote_user:\n            return\n        user = None\n        username = self.clean_username(remote_user)\n\n        UserModel = get_user_model()\n\n        # Note that this could be accomplished in one try-except clause, but\n        # instead we use get_or_create when creating unknown users since it has\n        # built-in safeguards for multiple threads.\n        if self.create_unknown_user:\n            user, created = UserModel._default_manager.get_or_create(**{\n                UserModel.USERNAME_FIELD: username\n            })\n            if created:\n                user = self.configure_user(user)\n        else:\n            try:\n                user = UserModel._default_manager.get_by_natural_key(username)\n            except UserModel.DoesNotExist:\n                pass\n        return user"
+        },
+        {
+          "file": "django/contrib/auth/backends.py",
+          "type": "function",
+          "name": "configure_user",
+          "class_name": "RemoteUserBackend",
+          "code": "def configure_user(self, user):\n        \"\"\"\n        Configures a user after creation and returns the updated user.\n\n        By default, returns the user unmodified.\n        \"\"\"\n        return user"
+        }
+      ]
+    },
+    {
+      "pr_number": 8116,
+      "pr_title": "Fixed #25406 -- Removed exception hiding in PostgreSQL test database \u2026",
+      "pr_body": "\u2026creation / cloning during `--keepdb`. Ticket [25406](https://code.djangoproject.com/ticket/25406).\r\n\r\nI'm going to prepare separate PR with similar modification in the MySQL backend.",
+      "issue_id": 25406,
+      "issue_title": "_create_test_db hides errors like 'source database \"template1\" is being accessed by other users' with --keepdb",
+      "issue_body": "",
+      "issue_closed_at": "2017-04-10T12:04:07",
+      "base_commit": "5d3b322dce452dd75e8602ced9f0d02f9d6a5837",
+      "changes": [
+        {
+          "file": "django/db/backends/base/creation.py",
+          "type": "function",
+          "name": "_get_test_db_name",
+          "class_name": "BaseDatabaseCreation",
+          "code": "def _get_test_db_name(self):\n        \"\"\"\n        Internal implementation - return the name of the test DB that will be\n        created. Only useful when called from create_test_db() and\n        _create_test_db() and when no external munging is done with the 'NAME'\n        settings.\n        \"\"\"\n        if self.connection.settings_dict['TEST']['NAME']:\n            return self.connection.settings_dict['TEST']['NAME']\n        return TEST_DATABASE_PREFIX + self.connection.settings_dict['NAME']"
+        },
+        {
+          "file": "django/db/backends/base/creation.py",
+          "type": "function",
+          "name": "_create_test_db",
+          "class_name": "BaseDatabaseCreation",
+          "code": "def _create_test_db(self, verbosity, autoclobber, keepdb=False):\n        \"\"\"\n        Internal implementation - create the test db tables.\n        \"\"\"\n        suffix = self.sql_table_creation_suffix()\n\n        test_database_name = self._get_test_db_name()\n\n        qn = self.connection.ops.quote_name\n\n        # Create the test database and connect to it.\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                cursor.execute(\n                    \"CREATE DATABASE %s %s\" % (qn(test_database_name), suffix))\n            except Exception as e:\n                # if we want to keep the db, then no need to do any of the below,\n                # just return and skip it all.\n                if keepdb:\n                    return test_database_name\n\n                sys.stderr.write(\n                    \"Got an error creating the test database: %s\\n\" % e)\n                if not autoclobber:\n                    confirm = input(\n                        \"Type 'yes' if you would like to try deleting the test \"\n                        \"database '%s', or 'no' to cancel: \" % test_database_name)\n                if autoclobber or confirm == 'yes':\n                    try:\n                        if verbosity >= 1:\n                            print(\"Destroying old test database for alias %s...\" % (\n                                self._get_database_display_str(verbosity, test_database_name),\n                            ))\n                        cursor.execute(\n                            \"DROP DATABASE %s\" % qn(test_database_name))\n                        cursor.execute(\n                            \"CREATE DATABASE %s %s\" % (qn(test_database_name),\n                                                       suffix))\n                    except Exception as e:\n                        sys.stderr.write(\n                            \"Got an error recreating the test database: %s\\n\" % e)\n                        sys.exit(2)\n                else:\n                    print(\"Tests cancelled.\")\n                    sys.exit(1)\n\n        return test_database_name"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "sql_table_creation_suffix",
+          "class_name": "DatabaseCreation",
+          "code": "def sql_table_creation_suffix(self):\n        test_settings = self.connection.settings_dict['TEST']\n        assert test_settings['COLLATION'] is None, (\n            \"PostgreSQL does not support collation setting at database creation time.\"\n        )\n        return self._get_database_create_suffix(\n            encoding=test_settings['CHARSET'],\n            template=test_settings.get('TEMPLATE'),\n        )"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "_clone_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _clone_test_db(self, number, verbosity, keepdb=False):\n        # CREATE DATABASE ... WITH TEMPLATE ... requires closing connections\n        # to the template database.\n        self.connection.close()\n\n        source_database_name = self.connection.settings_dict['NAME']\n        target_database_name = self.get_test_db_clone_settings(number)['NAME']\n        suffix = self._get_database_create_suffix(template=source_database_name)\n        creation_sql = \"CREATE DATABASE {} {}\".format(self._quote_name(target_database_name), suffix)\n\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                cursor.execute(creation_sql)\n            except Exception:\n                if keepdb:\n                    return\n                try:\n                    if verbosity >= 1:\n                        print(\"Destroying old test database for alias %s...\" % (\n                            self._get_database_display_str(verbosity, target_database_name),\n                        ))\n                    cursor.execute(\"DROP DATABASE %s\" % self._quote_name(target_database_name))\n                    cursor.execute(creation_sql)\n                except Exception as e:\n                    sys.stderr.write(\"Got an error cloning the test database: %s\\n\" % e)\n                    sys.exit(2)"
+        }
+      ]
+    }
+  ]
+}

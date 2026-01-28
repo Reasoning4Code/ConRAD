@@ -1,0 +1,163 @@
+{
+  "instance_id": "django__django-12284",
+  "repo": "django/django",
+  "created_at": "2020-01-07T11:06:31Z",
+  "problem_statement": "Model.get_FOO_display() does not work correctly with inherited choices.\nDescription\n\t \n\t\t(last modified by Mariusz Felisiak)\n\t \nGiven a base model with choices A containing 3 tuples\nChild Model inherits the base model overrides the choices A and adds 2 more tuples\nget_foo_display does not work correctly for the new tuples added\nExample:\nclass A(models.Model):\n foo_choice = [(\"A\",\"output1\"),(\"B\",\"output2\")]\n field_foo = models.CharField(max_length=254,choices=foo_choice)\n class Meta:\n\t abstract = True\nclass B(A):\n foo_choice = [(\"A\",\"output1\"),(\"B\",\"output2\"),(\"C\",\"output3\")]\n field_foo = models.CharField(max_length=254,choices=foo_choice)\nUpon invoking get_field_foo_display() on instance of B , \nFor value \"A\" and \"B\" the output works correctly i.e. returns \"output1\" / \"output2\"\nbut for value \"C\" the method returns \"C\" and not \"output3\" which is the expected behaviour\n",
+  "patch": "diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py\n--- a/django/db/models/fields/__init__.py\n+++ b/django/db/models/fields/__init__.py\n@@ -764,7 +764,11 @@ def contribute_to_class(self, cls, name, private_only=False):\n             if not getattr(cls, self.attname, None):\n                 setattr(cls, self.attname, self.descriptor_class(self))\n         if self.choices is not None:\n-            if not hasattr(cls, 'get_%s_display' % self.name):\n+            # Don't override a get_FOO_display() method defined explicitly on\n+            # this class, but don't check methods derived from inheritance, to\n+            # allow overriding inherited choices. For more complex inheritance\n+            # structures users should override contribute_to_class().\n+            if 'get_%s_display' % self.name not in cls.__dict__:\n                 setattr(\n                     cls,\n                     'get_%s_display' % self.name,\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8213,
+      "pr_title": "Refs #27935 -- Fixed BrinIndex.max_name_length if a project's default database isn't PostgreSQL.",
+      "pr_body": "",
+      "issue_id": 27935,
+      "issue_title": "BrinIndex crashes if name  > 30 characters",
+      "issue_body": "BrinIndex.suffix ( django.contrib.postgres.indexes) longer 3 char, but Index.set_name_with_model method allowed 3 char in suffix\nAssertionError: Index too long for multiple database support. Is self.suffix longer than 3 characters?",
+      "issue_closed_at": "2017-03-20T10:30:05",
+      "base_commit": "6cb0a3ac2836c044987f7a0cca0d1e99d52e002e",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from django.db import connection\nfrom django.db.models import Index\nfrom django.utils.functional import cached_property\n\n__all__ = ['BrinIndex', 'GinIndex']\n\n\nclass BrinIndex(Index):\n    suffix = 'brin'\n\n    def __init__(self, fields=[], name=None, pages_per_range=None):\n        if pages_per_range is not None and pages_per_range <= 0:"
+        },
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "function",
+          "name": "get_sql_create_template_values",
+          "class_name": "BrinIndex",
+          "code": "def get_sql_create_template_values(self, model, schema_editor, using):\n        parameters = super().get_sql_create_template_values(model, schema_editor, using=' USING brin')\n        if self.pages_per_range is not None:\n            parameters['extra'] = ' WITH (pages_per_range={})'.format(\n                schema_editor.quote_value(self.pages_per_range)) + parameters['extra']\n        return parameters"
+        }
+      ]
+    },
+    {
+      "pr_number": 8899,
+      "pr_title": "[1.11.x] Fixed #28451 -- Fixed regression in Oracle sequence naming",
+      "pr_body": "Backport of 99c7a18f4edf84d3b2bbddd3dfc7c3287bc8fa23 from master,\r\nwith additional migration script & release notes.",
+      "issue_id": 28451,
+      "issue_title": "Change in Oracle sequence name truncation causes regression when updating existing database",
+      "issue_body": "Summary\n: a change introduced in 1.11 in how the Oracle backend truncates sequence names introduces persistent \"ORA-02289: sequence does not exist\" errors after upgrading to 1.11.\nExplanation\n(as far best as I can tell): In the Oracle backend, sequence names are truncated to 30 characters.\nIn 1.10.7 (and 1.9.13 & 1.8.17) the method to do that in\ndjango.db.backends.oracle.operations\nis as follows:\ndef _get_sequence_name(self, table):\n    name_length = self.max_name_length() - 3\n    return '%s_SQ' % truncate_name(table, name_length).upper()\nIn 1.11.3 it's:\ndef _get_sequence_name(self, table):\n    name_length = self.max_name_length() - 3\n    sequence_name = '%s_SQ' % strip_quotes(table)\n    return truncate_name(sequence_name, name_length).upper()\nNote the subtle change - in 1.10.7 the return value always ends with '_SQ'; in 1.11.3 the '_SQ' is part of what gets truncated. (For context, truncate_name basically takes a hash of the string and appends the last few digits to the name of the table - so you end up with e.g. 'PATIENTS_PATIENTDOCTORRELA8026', to fit in the 30-character limit).\nThe consequence of this is that after upgrading an Oracle-backed app to 1.11, inserts start failing (because\nlast_insert_id\nis looking for the sequence name 'PATIENTS_PATIENTDOCTORR36D1', whereas the actual sequence name is 'PATIENTS_PATIENTDOCTORRC0BD_SQ' - because that's what was generated in the prior version; or, to be precise, whenever the table was created, several versions before that).\nAs far as I can tell (though I can't be sure) this change was an inadvertent side effect of\n69b7d4b1\n, which was the fix for\n#27458\n. I say 'inadvertent' because it doesn't appear to be the focus of the change, and the tests don't appear to be taking that into account. In general, most tests wouldn't pick up the problem because it only manifests if you have existing sequences - for a fresh database, it's fine (since the sequences will be created with the new naming scheme and everything is hunky-dory).\n(NB: the same thing appears to have happened for triggers, though this particular database isn't using triggers so I didn't hit that particular error).\nAs a quick test, patching Django to use the pre-1.11 version of\n_get_sequence_name\nworked correctly, so I'm fairly confident that's the issue (there was another change in it, the strip_quotes bit, so if we go that way for the ultimate fix we'll probably want to keep that rather than just reverting).\nI'd be glad to work on a patch but to be honest I'm not clear what direction to take... as I see it, the options are:\n1) Revert the behavior - make\n_get_sequence_name\nreturn '%s_SQ' like it did pre-1.11 (but with the strip_quotes fix). This has a bad backcompat issue in that it'll introduce essentially the same problem for sequences created with 1.11.x... so that doesn't really seem like a good idea.\n2) Create a helper to rename sequences when a change like this is introduced. In theory this is an implementation detail and Django should be able to tweak the way the truncated names are generated, as long as there's a transition path (though I say that as someone who doesn't use custom sequences much - others may have a different opinion).\nSo I can imagine a utility of some sort to cross-check sequence names (for autonumber fields and such) with what Django expects, and either interactively or automatically rename them. Perhaps call it out in the release notes?\nFor completeness, this feels related to\n#23577\nbut feels a bit different, and IMO is more dire because it's less obvious and less likely to get noticed right away.",
+      "issue_closed_at": "2017-08-22T15:09:28",
+      "base_commit": "60f81118f412268f317abbcc7509e315a714315d",
+      "changes": [
+        {
+          "file": "django/db/backends/oracle/operations.py",
+          "type": "function",
+          "name": "combine_expression",
+          "class_name": "DatabaseOperations",
+          "code": "def combine_expression(self, connector, sub_expressions):\n        lhs, rhs = sub_expressions\n        if connector == '%%':\n            return 'MOD(%s)' % ','.join(sub_expressions)\n        elif connector == '&':\n            return 'BITAND(%s)' % ','.join(sub_expressions)\n        elif connector == '|':\n            return 'BITAND(-%(lhs)s-1,%(rhs)s)+%(lhs)s' % {'lhs': lhs, 'rhs': rhs}\n        elif connector == '<<':\n            return '(%(lhs)s * POWER(2, %(rhs)s))' % {'lhs': lhs, 'rhs': rhs}\n        elif connector == '>>':\n            return 'FLOOR(%(lhs)s / POWER(2, %(rhs)s))' % {'lhs': lhs, 'rhs': rhs}\n        elif connector == '^':\n            return 'POWER(%s)' % ','.join(sub_expressions)\n        return super(DatabaseOperations, self).combine_expression(connector, sub_expressions)"
+        }
+      ]
+    },
+    {
+      "pr_number": 5969,
+      "pr_title": "[1.9.x] Fixed #25858 -- Bound abstract model application relative relationships.",
+      "pr_body": "Thanks to Karl Hobley for the report and Markus, Shai, Aymeric for their input\nand Tim for the review.\n\nBackport of bc7d201bdbaeac14a49f51a9ef292d6312b4c45e from master\n",
+      "issue_id": 25858,
+      "issue_title": "Deriving from abstract model with foreign key to model in same app broken on Django 1.9",
+      "issue_body": "As of Django 1.9, it is no longer possible to derive a new model from abstract model in another app if that abstract model has a local foreign key to a model in the same app.\nSee example project here:\n​\nhttps://github.com/kaedroho/djangobugtest\nFor example, I have two apps: app1 and app2\napp1 contains a concrete model and an abstract model. The abstract model has a foreign key to the concrete one (note the Foreign key is defined as a string and doesn't include the app label):\nclass ConcreteModel(models.Model):\n    pass\n\n\nclass AbstractModel(models.Model):\n    foreign_key = models.ForeignKey('ConcreteModel')\n\n    class Meta:\n        abstract = True\nIn app2, we have another model that derives from the abstract model in app 1\nclass DerivedModel(app1.AbstractModel):\n    pass\nWhen running makemigrations, the following system check error occurs:\napp2.DerivedModel.foreign_key: (fields.E300) Field defines a relation with model 'ConcreteModel', which is either not installed, or is abstract.\nFor apps upgrading to Django 1.9 and already have migrations, the following error occurs when running tests (after the database has been initialised but before the first test runs. It looks like it's happening while serialising the database):\nValueError: Related model u'ConcreteModel' cannot be resolved\nTraceback from an actual site:\n​\nhttps://gist.github.com/kaedroho/01b29332308018abfa29\nThis issue only occurs when the ForeignKey is defined with a string that doesn't contain the app label. So referencing the model class directly or using \"app_label.ModelName\" works.",
+      "issue_closed_at": "2016-01-11T12:59:11",
+      "base_commit": "76b4015ea9b02fdbc3acebe71ed79bcc902697da",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "line",
+          "name": "line 39",
+          "code": "RECURSIVE_RELATIONSHIP_CONSTANT = 'self'\n\n\ndef resolve_relation(scope_model, relation):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model."
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_relation",
+          "class_name": null,
+          "code": "def resolve_relation(scope_model, relation):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model.\n\n    The relation argument can be:\n      * RECURSIVE_RELATIONSHIP_CONSTANT, i.e. the string \"self\", in which case\n        the model argument will be returned.\n      * A bare model name without an app_label, in which case scope_model's\n        app_label will be prepended.\n      * An \"app_label.ModelName\" string.\n      * A model class, which will be returned unchanged.\n    \"\"\"\n    # Check for recursive relations\n    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:\n        relation = scope_model\n\n    # Look for an \"app.Model\" relation\n    if isinstance(relation, six.string_types):\n        if \".\" not in relation:\n            relation = \"%s.%s\" % (scope_model._meta.app_label, relation)\n\n    return relation"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_related_class",
+          "class_name": "RelatedField",
+          "code": "def resolve_related_class(model, related, field):\n                field.remote_field.model = related\n                field.do_related_class(related, model)"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_through_model",
+          "class_name": "ManyToManyField",
+          "code": "def resolve_through_model(_, model, field):\n                    field.remote_field.through = model"
+        }
+      ]
+    },
+    {
+      "pr_number": 9412,
+      "pr_title": "Fixed #28876 -- Fixed class-based model indexes and constraints names for models with quoted db_table.",
+      "pr_body": "https://code.djangoproject.com/ticket/28876",
+      "issue_id": 28876,
+      "issue_title": "badly formed Table Index and constraint's name when  `Meta.db_table` is set with quoted string",
+      "issue_body": "2 cases where the error occur .\nalways because it was set a\nMeta.db_table\nquoted custom name\nThe same models.Model was tested twice, with index been set with\nfield.db_index\nand\nMeta.indexes\nIt was tested with\nDjango 1.11\nPostgreSQL\nModel\nclass\nPublisher\n(\nmodels\n.\nModel\n):\nname\n=\nmodels\n.\nCharField\n(\nverbose_name\n=\n'publisher name'\n,\nmax_length\n=\n50\n,\nnull\n=\nFalse\n)\nclass\nMeta\n:\ndb_table\n=\n'\"tbl_publisher_litle_name\"'\nget_latest_by\n=\n\"name\"\nordering\n=\n[\n'name'\n,\n]\nverbose_name\n=\n'Publiser'\nverbose_name_plural\n=\n'Publishers'\nindexes\n=\n[\nmodels\n.\nIndex\n(\nfields\n=\n[\n'name'\n,\n]),\n]\nMigration traceback\nOperations\nto\nperform:\nApply\nall\nmigrations:\nadmin,\nauth,\ncontenttypes,\nsessions,\ntestapp\nRunning\nmigrations:\nApplying\ncontenttypes.0001_initial...\nOK\nApplying\nauth.0001_initial...\nOK\nApplying\nadmin.0001_initial...\nOK\nApplying\nadmin.0002_logentry_remove_auto_add...\nOK\nApplying\ncontenttypes.0002_remove_content_type_name...\nOK\nApplying\nauth.0002_alter_permission_name_max_length...\nOK\nApplying\nauth.0003_alter_user_email_max_length...\nOK\nApplying\nauth.0004_alter_user_username_opts...\nOK\nApplying\nauth.0005_alter_user_last_login_null...\nOK\nApplying\nauth.0006_require_contenttypes_0002...\nOK\nApplying\nauth.0007_alter_validators_add_error_messages...\nOK\nApplying\nauth.0008_alter_user_username_max_length...\nOK\nApplying\nsessions.0001_initial...\nOK\nApplying\ntestapp.0001_initial...Traceback\n(\nmost\nrecent\ncall\nlast\n)\n:\nFile\n\"manage.py\"\n,\nline\n22\n,\nin\n<module>\nexecute_from_command_line\n(\nsys.argv\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/__init__.py\"\n,\nline\n363\n,\nin\nexecute_from_command_line\nutility.execute\n()\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/__init__.py\"\n,\nline\n355\n,\nin\nexecute\nself.fetch_command\n(\nsubcommand\n)\n.run_from_argv\n(\nself.argv\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/base.py\"\n,\nline\n283\n,\nin\nrun_from_argv\nself.execute\n(\n*args,\n**cmd_options\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/base.py\"\n,\nline\n330\n,\nin\nexecute\noutput\n=\nself.handle\n(\n*args,\n**options\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/commands/migrate.py\"\n,\nline\n204\n,\nin\nhandle\nfake_initial\n=\nfake_initial,\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n115\n,\nin\nmigrate\nstate\n=\nself._migrate_all_forwards\n(\nstate,\nplan,\nfull_plan,\nfake\n=\nfake,\nfake_initial\n=\nfake_initial\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n145\n,\nin\n_migrate_all_forwards\nstate\n=\nself.apply_migration\n(\nstate,\nmigration,\nfake\n=\nfake,\nfake_initial\n=\nfake_initial\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n244\n,\nin\napply_migration\nstate\n=\nmigration.apply\n(\nstate,\nschema_editor\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/migration.py\"\n,\nline\n129\n,\nin\napply\noperation.database_forwards\n(\nself.app_label,\nschema_editor,\nold_state,\nproject_state\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/operations/models.py\"\n,\nline\n785\n,\nin\ndatabase_forwards\nschema_editor.add_index\n(\nmodel,\nself.index\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/base/schema.py\"\n,\nline\n330\n,\nin\nadd_index\nself.execute\n(\nindex.create_sql\n(\nmodel,\nself\n))\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/base/schema.py\"\n,\nline\n119\n,\nin\nexecute\ncursor.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n80\n,\nin\nexecute\nreturn\nsuper\n(\nCursorDebugWrapper,\nself\n)\n.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n65\n,\nin\nexecute\nreturn\nself.cursor.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/utils.py\"\n,\nline\n94\n,\nin\n__exit__\nsix.reraise\n(\ndj_exc_type,\ndj_exc_value,\ntraceback\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n65\n,\nin\nexecute\nreturn\nself.cursor.execute\n(\nsql,\nparams\n)\ndjango.db.utils.ProgrammingError:\nzero-length\ndelimited\nidentifier\nat\nor\nnear\n\"\"\"\"\nLINE\n1\n:\nCREATE\nINDEX\n\"\"\ntbl_publis_name_b0b929_idx\n\" ON \"\ntbl_publisher...\n^\n(\ndj111\n)\n20171202\n.Sat16:15:27cadu>/Volumes/p10G/prj/dj_datadictionary_testproject/testproject>\nAnd again, when db_index is set on field ...\nthe migration is OK, but the error continues.\nModel with no Meta.indexes  but field.index=True\nclass\nPublisher\n(\nmodels\n.\nModel\n):\n\"\"\"\nBook's Author - author is a Book's model supplement.\n\"\"\"\nname\n=\nmodels\n.\nCharField\n(\nverbose_name\n=\n'publisher name'\n,\nmax_length\n=\n50\n,\nnull\n=\nFalse\n,\ndb_index\n=\nTrue\n)\nclass\nMeta\n:\ndb_table\n=\n'\"tbl_publisher_litle_name\"'\nget_latest_by\n=\n\"name\"\nordering\n=\n[\n'name'\n,\n]\nverbose_name\n=\n'Publiser'\nverbose_name_plural\n=\n'Publishers'\n# indexes = [\n#     models.Index(fields=['name', ]),\n# ]\ndef\n__unicode__\n(\nself\n):\nreturn\nself\n.\nname\nMigration\nmigrations\n.\nCreateModel\n(\nname\n=\n'Publisher'\n,\nfields\n=\n[\n(\n'id'\n,\nmodels\n.\nAutoField\n(\nauto_created\n=\nTrue\n,\nprimary_key\n=\nTrue\n,\nserialize\n=\nFalse\n,\nverbose_name\n=\n'ID'\n)),\n(\n'name'\n,\nmodels\n.\nCharField\n(\ndb_index\n=\nTrue\n,\nmax_length\n=\n50\n,\nverbose_name\n=\n'publisher name'\n)),\n],\noptions\n=\n{\n'get_latest_by'\n:\n'name'\n,\n'ordering'\n:\n[\n'name'\n],\n'verbose_name_plural'\n:\n'Publishers'\n,\n'db_table'\n:\n'\"tbl_publisher_litle_name\"'\n,\n'verbose_name'\n:\n'Publiser'\n,\n},\n),\nmigrations\n.\nAddField\n(\nmodel_name\n=\n'book'\n,\nname\n=\n'publisher'\n,\nfield\n=\nmodels\n.\nForeignKey\n(\nblank\n=\nTrue\n,\nnull\n=\nTrue\n,\non_delete\n=\ndjango\n.\ndb\n.\nmodels\n.\ndeletion\n.\nCASCADE\n,\nto\n=\n'testapp.Publisher'\n),\n),\n]\nMigration \"2\" traceback\n$python\nmanage.py\nmakemigrations\nMigrations\nfor\n'testapp'\n:\ntestproject/testapp/migrations/0001_initial.py\n-\nCreate\nmodel\nAuthor\n-\nCreate\nmodel\nBook\n-\nCreate\nmodel\nBookOtherTitle\n-\nCreate\nmodel\nPublisher\n-\nAdd\nfield\npublisher\nto\nbook\n(\ndj111\n)\n20171202\n.Sat16:45:19cadu>/Volumes/p10G/prj/dj_datadictionary_testproject/testproject>\ncadu.\n[\n532\n]\n$python\nmanage.py\nmigrate\nOperations\nto\nperform:\nApply\nall\nmigrations:\nadmin,\nauth,\ncontenttypes,\nsessions,\ntestapp\nRunning\nmigrations:\nApplying\ncontenttypes.0001_initial...\nOK\nApplying\nauth.0001_initial...\nOK\nApplying\nadmin.0001_initial...\nOK\nApplying\nadmin.0002_logentry_remove_auto_add...\nOK\nApplying\ncontenttypes.0002_remove_content_type_name...\nOK\nApplying\nauth.0002_alter_permission_name_max_length...\nOK\nApplying\nauth.0003_alter_user_email_max_length...\nOK\nApplying\nauth.0004_alter_user_username_opts...\nOK\nApplying\nauth.0005_alter_user_last_login_null...\nOK\nApplying\nauth.0006_require_contenttypes_0002...\nOK\nApplying\nauth.0007_alter_validators_add_error_messages...\nOK\nApplying\nauth.0008_alter_user_username_max_length...\nOK\nApplying\nsessions.0001_initial...\nOK\nApplying\ntestapp.0001_initial...Traceback\n(\nmost\nrecent\ncall\nlast\n)\n:\nFile\n\"manage.py\"\n,\nline\n22\n,\nin\n<module>\nexecute_from_command_line\n(\nsys.argv\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/__init__.py\"\n,\nline\n363\n,\nin\nexecute_from_command_line\nutility.execute\n()\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/__init__.py\"\n,\nline\n355\n,\nin\nexecute\nself.fetch_command\n(\nsubcommand\n)\n.run_from_argv\n(\nself.argv\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/base.py\"\n,\nline\n283\n,\nin\nrun_from_argv\nself.execute\n(\n*args,\n**cmd_options\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/base.py\"\n,\nline\n330\n,\nin\nexecute\noutput\n=\nself.handle\n(\n*args,\n**options\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/core/management/commands/migrate.py\"\n,\nline\n204\n,\nin\nhandle\nfake_initial\n=\nfake_initial,\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n115\n,\nin\nmigrate\nstate\n=\nself._migrate_all_forwards\n(\nstate,\nplan,\nfull_plan,\nfake\n=\nfake,\nfake_initial\n=\nfake_initial\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n145\n,\nin\n_migrate_all_forwards\nstate\n=\nself.apply_migration\n(\nstate,\nmigration,\nfake\n=\nfake,\nfake_initial\n=\nfake_initial\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/migrations/executor.py\"\n,\nline\n244\n,\nin\napply_migration\nstate\n=\nmigration.apply\n(\nstate,\nschema_editor\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/base/schema.py\"\n,\nline\n92\n,\nin\n__exit__\nself.execute\n(\nsql\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/base/schema.py\"\n,\nline\n119\n,\nin\nexecute\ncursor.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n80\n,\nin\nexecute\nreturn\nsuper\n(\nCursorDebugWrapper,\nself\n)\n.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n65\n,\nin\nexecute\nreturn\nself.cursor.execute\n(\nsql,\nparams\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/utils.py\"\n,\nline\n94\n,\nin\n__exit__\nsix.reraise\n(\ndj_exc_type,\ndj_exc_value,\ntraceback\n)\nFile\n\"/Users/cadu/Envs/dj111/lib/python2.7/site-packages/django/db/backends/utils.py\"\n,\nline\n65\n,\nin\nexecute\nreturn\nself.cursor.execute\n(\nsql,\nparams\n)\ndjango.db.utils.ProgrammingError:\nsyntax\nerror\nat\nor\nnear\n\"table_bo\"\nLINE\n1\n:\n...TRAINT\n\"table_book_double_qu_book_id_2cd88caf_fk_\"\ntable_bo\n\" ...\n^",
+      "issue_closed_at": "2017-12-05T16:01:30",
+      "base_commit": "f2ec89691236b59f54f9cf41bccd79a5853af36c",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_rename_field_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _rename_field_sql(self, table, old_field, new_field, new_type):\n        return self.sql_rename_column % {\n            \"table\": self.quote_name(table),\n            \"old_column\": self.quote_name(old_field.column),\n            \"new_column\": self.quote_name(new_field.column),\n            \"type\": new_type,\n        }"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "create_fk_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def create_fk_name(*args, **kwargs):\n            return self.quote_name(self._create_index_name(*args, **kwargs))"
+        },
+        {
+          "file": "django/db/models/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import hashlib\n\nfrom django.utils.encoding import force_bytes\n\n__all__ = ['Index']"
+        },
+        {
+          "file": "django/db/models/indexes.py",
+          "type": "function",
+          "name": "set_name_with_model",
+          "class_name": "Index",
+          "code": "def set_name_with_model(self, model):\n        \"\"\"\n        Generate a unique name for the index.\n\n        The name is divided into 3 parts - table name (12 chars), field name\n        (8 chars) and unique hash + suffix (10 chars). Each part is made to\n        fit its size by truncating the excess length.\n        \"\"\"\n        table_name = model._meta.db_table\n        column_names = [model._meta.get_field(field_name).column for field_name, order in self.fields_orders]\n        column_names_with_order = [\n            (('-%s' if order else '%s') % column_name)\n            for column_name, (field_name, order) in zip(column_names, self.fields_orders)\n        ]\n        # The length of the parts of the name is based on the default max\n        # length of 30 characters.\n        hash_data = [table_name] + column_names_with_order + [self.suffix]\n        self.name = '%s_%s_%s' % (\n            table_name[:11],\n            column_names[0][:7],\n            '%s_%s' % (self._hash_generator(*hash_data), self.suffix),\n        )\n        assert len(self.name) <= self.max_name_length, (\n            'Index too long for multiple database support. Is self.suffix '\n            'longer than 3 characters?'\n        )\n        self.check_name()"
+        }
+      ]
+    },
+    {
+      "pr_number": 8713,
+      "pr_title": "Fixed #28382 -- Prevented BaseExpression._output_field from being set if _resolve_output_field() fails.",
+      "pr_body": "https://code.djangoproject.com/ticket/28382",
+      "issue_id": 28382,
+      "issue_title": "BaseExpression.output_field should not be set after BaseExpression._resolve_output_field() fails",
+      "issue_body": "In [1]: from django.db.models.expressions import Value, Func\nIn [2]: from django.db.models import IntegerField, FloatField\nIn [3]: expr = Func(Value(1, output_field=IntegerField()), Value(1, output_field=FloatField()))\nIn [4]: expr.output_field # raises FieldError\nIn [5]: expr.output_field                        \nOut[5]: <django.db.models.fields.IntegerField>",
+      "issue_closed_at": "2017-07-11T07:46:42",
+      "base_commit": "306b961a4dc1fd308c6f298b406fb41906ebaf2d",
+      "changes": [
+        {
+          "file": "django/db/models/aggregates.py",
+          "type": "class",
+          "name": "Avg",
+          "code": "class Avg(Aggregate):\n    function = 'AVG'\n    name = 'Avg'\n\n    def _resolve_output_field(self):\n        source_field = self.get_source_fields()[0]\n        if isinstance(source_field, (IntegerField, DecimalField)):\n            self._output_field = FloatField()\n        super()._resolve_output_field()\n\n    def as_oracle(self, compiler, connection):\n        if self.output_field.get_internal_type() == 'DurationField':\n            expression = self.get_source_expressions()[0]\n            from django.db.backends.oracle.functions import IntervalToSeconds, SecondsToInterval\n            return compiler.compile(\n                SecondsToInterval(Avg(IntervalToSeconds(expression)))\n            )\n        return super().as_sql(compiler, connection)"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_output_field_or_none",
+          "class_name": "BaseExpression",
+          "code": "def _output_field_or_none(self):\n        \"\"\"\n        Return the output field of this expression, or None if no output type\n        can be resolved. Note that the 'output_field' property will raise\n        FieldError if no type can be resolved, but this attribute allows for\n        None values.\n        \"\"\"\n        if self._output_field is None:\n            self._resolve_output_field()\n        return self._output_field"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempt to infer the output type of the expression. If the output\n        fields of all source fields match then, simply infer the same type\n        here. This isn't always correct, but it makes sense most of the time.\n\n        Consider the difference between `2 + 2` and `2 / 3`. Inferring\n        the type here is a convenience for the common case. The user should\n        supply their own output_field with more complex computations.\n\n        If a source does not have an `_output_field` then we exclude it from\n        this check. If all sources are `None`, then an error will be thrown\n        higher up the stack in the `output_field` property.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                for source in sources:\n                    if self._output_field is None:\n                        self._output_field = source\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        }
+      ]
+    }
+  ]
+}

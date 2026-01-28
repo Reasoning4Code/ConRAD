@@ -1,0 +1,229 @@
+{
+  "instance_id": "pytest-dev__pytest-8365",
+  "repo": "pytest-dev/pytest",
+  "created_at": "2021-02-22T20:26:35Z",
+  "problem_statement": "tmpdir creation fails when the username contains illegal characters for directory names\n`tmpdir`, `tmpdir_factory` and `tmp_path_factory` rely on `getpass.getuser()` for determining the `basetemp` directory. I found that the user name returned by `getpass.getuser()` may return characters that are not allowed for directory names. This may lead to errors while creating the temporary directory.\r\n\r\nThe situation in which I reproduced this issue was while being logged in through an ssh connection into my Windows 10 x64 Enterprise version (1909) using an OpenSSH_for_Windows_7.7p1 server. In this configuration the command `python -c \"import getpass; print(getpass.getuser())\"` returns my domain username e.g. `contoso\\john_doe` instead of `john_doe` as when logged in regularly using a local session.\r\n\r\nWhen trying to create a temp directory in pytest through e.g. `tmpdir_factory.mktemp('foobar')` this fails with the following error message:\r\n```\r\nself = WindowsPath('C:/Users/john_doe/AppData/Local/Temp/pytest-of-contoso/john_doe')\r\nmode = 511, parents = False, exist_ok = True\r\n\r\n    def mkdir(self, mode=0o777, parents=False, exist_ok=False):\r\n        \"\"\"\r\n        Create a new directory at this given path.\r\n        \"\"\"\r\n        if self._closed:\r\n            self._raise_closed()\r\n        try:\r\n>           self._accessor.mkdir(self, mode)\r\nE           FileNotFoundError: [WinError 3] The system cannot find the path specified: 'C:\\\\Users\\\\john_doe\\\\AppData\\\\Local\\\\Temp\\\\pytest-of-contoso\\\\john_doe'\r\n\r\nC:\\Python38\\lib\\pathlib.py:1266: FileNotFoundError\r\n```\r\n\r\nI could also reproduce this without the complicated ssh/windows setup with pytest 6.2.2 using the following commands from a `cmd`:\r\n```bat\r\necho def test_tmpdir(tmpdir):>test_tmp.py\r\necho   pass>>test_tmp.py\r\nset LOGNAME=contoso\\john_doe\r\npy.test test_tmp.py\r\n```\r\n\r\nThanks for having a look at this!\n",
+  "patch": "diff --git a/src/_pytest/tmpdir.py b/src/_pytest/tmpdir.py\n--- a/src/_pytest/tmpdir.py\n+++ b/src/_pytest/tmpdir.py\n@@ -115,7 +115,12 @@ def getbasetemp(self) -> Path:\n             # use a sub-directory in the temproot to speed-up\n             # make_numbered_dir() call\n             rootdir = temproot.joinpath(f\"pytest-of-{user}\")\n-            rootdir.mkdir(exist_ok=True)\n+            try:\n+                rootdir.mkdir(exist_ok=True)\n+            except OSError:\n+                # getuser() likely returned illegal characters for the platform, use unknown back off mechanism\n+                rootdir = temproot.joinpath(\"pytest-of-unknown\")\n+                rootdir.mkdir(exist_ok=True)\n             basetemp = make_numbered_dir_with_cleanup(\n                 prefix=\"pytest-\", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT\n             )\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 3885,
+      "pr_title": "Fix bad console output when using console_output_style=classic",
+      "pr_body": "Fix #3883\r\n\r\n",
+      "issue_id": 3883,
+      "issue_title": "console_output_style=classic missing tests and seems broken since 3.4.0",
+      "issue_body": "Thanks for submitting an issue!\r\n\r\nHere's a quick checklist in what to include:\r\n\r\n- [x] Include a detailed description of the bug or suggestion\r\nconsole_output_style=classic seems to leave the progress indicator in place, but just leave it at 0%.\r\nThis worked in pytest 3.3 versions.\r\n\r\nI couldn't find any tests for this feature. Which may be why it wasn't caught earlier.\r\n\r\n- [x] `pip list` of the virtual environment you are using\r\n```\r\n(venv) $ pip list\r\nPackage        Version\r\n-------------- -------\r\natomicwrites   1.2.0  \r\nattrs          18.1.0 \r\nclick          6.7    \r\nmore-itertools 4.3.0  \r\npip            18.0   \r\npluggy         0.7.1  \r\npy             1.5.4  \r\npytest         3.7.2  \r\nsetuptools     39.0.1 \r\nsix            1.11.0 \r\ntinydb         3.11.0 \r\n```\r\n- [x] pytest and operating system versions\r\n\r\nplatform darwin -- Python 3.7.0, pytest-3.7.2, py-1.5.4, pluggy-0.7.1\r\nbut seems broken starting with pytest 3.4.0\r\n\r\n- [x] Minimal example if possible\r\n```\r\n(venv) $ pip install pytest==3.7.2\r\n...\r\nSuccessfully installed pluggy-0.7.1 pytest-3.7.2\r\n(venv) $ pytest --tb=no -o console_output_style=classic\r\n===================== test session starts ======================\r\nplatform darwin -- Python 3.7.0, pytest-3.7.2, py-1.5.4, pluggy-0.7.1\r\nrootdir: /Users/okken/projects/book/pytest_update/Book/code/ch1, inifile: pytest.ini\r\ncollected 6 items                                              \r\n\r\ntest_one.py .                                            [  0%]\r\ntest_two.py F                                            [  0%]\r\ntasks/test_four.py ..                                    [  0%]\r\ntasks/test_three.py ..\r\n\r\n============== 1 failed, 5 passed in 0.10 seconds ==============\r\n(venv) $ pip install pytest==3.3.2\r\n...\r\nSuccessfully installed pluggy-0.6.0 pytest-3.3.2\r\n(venv) $ pytest --tb=no -o console_output_style=classic\r\n===================== test session starts ======================\r\nplatform darwin -- Python 3.7.0, pytest-3.3.2, py-1.5.4, pluggy-0.6.0\r\nrootdir: /Users/okken/projects/book/pytest_update/Book/code/ch1, inifile: pytest.ini\r\ncollected 6 items                                              \r\n\r\ntest_one.py .\r\ntest_two.py F\r\ntasks/test_four.py ..\r\ntasks/test_three.py ..\r\n\r\n============== 1 failed, 5 passed in 0.09 seconds ==============\r\n```",
+      "issue_closed_at": "2018-08-27T22:07:03Z",
+      "base_commit": "a31967431f3d112da547ddbd05c4efdb90cb8ad6",
+      "changes": [
+        {
+          "file": "src/_pytest/terminal.py",
+          "type": "function",
+          "name": "hasopt",
+          "class_name": "TerminalReporter",
+          "code": "def hasopt(self, char):\n        char = {\"xfailed\": \"x\", \"skipped\": \"s\"}.get(char, char)\n        return char in self.reportchars"
+        },
+        {
+          "file": "src/_pytest/terminal.py",
+          "type": "function",
+          "name": "pytest_runtest_logstart",
+          "class_name": "TerminalReporter",
+          "code": "def pytest_runtest_logstart(self, nodeid, location):\n        # ensure that the path is printed before the\n        # 1st test of a module starts running\n        if self.showlongtestinfo:\n            line = self._locationline(nodeid, *location)\n            self.write_ensure_prefix(line, \"\")\n        elif self.showfspath:\n            fsid = nodeid.split(\"::\")[0]\n            self.write_fspath_result(fsid, \"\")"
+        }
+      ]
+    },
+    {
+      "pr_number": 4749,
+      "pr_title": "Merge master into features",
+      "pr_body": "",
+      "issue_id": 2895,
+      "issue_title": "pytest_report_collectionfinish does not execute with --collect-only",
+      "issue_body": "As commented [here](https://github.com/pytest-dev/pytest/pull/2623#issuecomment-341478287).",
+      "issue_closed_at": "2019-02-06T22:38:12Z",
+      "base_commit": "4cd268dc5d19a5ac362785d3068229559e69ddd7",
+      "changes": [
+        {
+          "file": "src/_pytest/config/__init__.py",
+          "type": "function",
+          "name": "_get_plugin_specs_as_list",
+          "class_name": null,
+          "code": "def _get_plugin_specs_as_list(specs):\n    \"\"\"\n    Parses a list of \"plugin specs\" and returns a list of plugin names.\n\n    Plugin specs can be given as a list of strings separated by \",\" or already as a list/tuple in\n    which case it is returned as a list. Specs can also be `None` in which case an\n    empty list is returned.\n    \"\"\"\n    if specs is not None:\n        if isinstance(specs, str):\n            specs = specs.split(\",\") if specs else []\n        if not isinstance(specs, (list, tuple)):\n            raise UsageError(\n                \"Plugin specs must be a ','-separated string or a \"\n                \"list/tuple of strings for plugin names. Given: %r\" % specs\n            )\n        return list(specs)\n    return []"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "get_actual_log_level",
+          "class_name": null,
+          "code": "def get_actual_log_level(config, *setting_names):\n    \"\"\"Return the actual logging level.\"\"\"\n\n    for setting_name in setting_names:\n        log_level = config.getoption(setting_name)\n        if log_level is None:\n            log_level = config.getini(setting_name)\n        if log_level:\n            break\n    else:\n        return\n\n    if isinstance(log_level, six.string_types):\n        log_level = log_level.upper()\n    try:\n        return int(getattr(logging, log_level, log_level))\n    except ValueError:\n        # Python logging does not recognise this as a logging level\n        raise pytest.UsageError(\n            \"'{}' is not recognized as a logging level name for \"\n            \"'{}'. Please consider passing the \"\n            \"logging level num instead.\".format(log_level, setting_name)\n        )"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "_LiveLoggingStreamHandler",
+          "code": "def __init__(self, terminal_reporter, capture_manager):\n        \"\"\"\n        :param _pytest.terminal.TerminalReporter terminal_reporter:\n        :param _pytest.capture.CaptureManager capture_manager:\n        \"\"\"\n        logging.StreamHandler.__init__(self, stream=terminal_reporter)\n        self.capture_manager = capture_manager\n        self.reset()\n        self.set_when(None)\n        self._test_outcome_written = False"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "_LiveLoggingStreamHandler",
+          "code": "def __init__(self, terminal_reporter, capture_manager):\n        \"\"\"\n        :param _pytest.terminal.TerminalReporter terminal_reporter:\n        :param _pytest.capture.CaptureManager capture_manager:\n        \"\"\"\n        logging.StreamHandler.__init__(self, stream=terminal_reporter)\n        self.capture_manager = capture_manager\n        self.reset()\n        self.set_when(None)\n        self._test_outcome_written = False"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "_log_cli_enabled",
+          "class_name": "LoggingPlugin",
+          "code": "def _log_cli_enabled(self):\n        \"\"\"Return True if log_cli should be considered enabled, either explicitly\n        or because --log-cli-level was given in the command-line.\n        \"\"\"\n        return self._config.getoption(\n            \"--log-cli-level\"\n        ) is not None or self._config.getini(\"log_cli\")"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "pytest_sessionfinish",
+          "class_name": "LoggingPlugin",
+          "code": "def pytest_sessionfinish(self):\n        with self.live_logs_context():\n            if self.log_cli_handler:\n                self.log_cli_handler.set_when(\"sessionfinish\")\n            if self.log_file_handler is not None:\n                with catching_logs(self.log_file_handler, level=self.log_file_level):\n                    yield\n            else:\n                yield"
+        },
+        {
+          "file": "src/_pytest/logging.py",
+          "type": "function",
+          "name": "pytest_runtestloop",
+          "class_name": "LoggingPlugin",
+          "code": "def pytest_runtestloop(self, session):\n        \"\"\"Runs all collected test items.\"\"\"\n        with self.live_logs_context():\n            if self.log_file_handler is not None:\n                with catching_logs(self.log_file_handler, level=self.log_file_level):\n                    yield  # run all the tests\n            else:\n                yield"
+        },
+        {
+          "file": "src/_pytest/main.py",
+          "type": "function",
+          "name": "filter_",
+          "class_name": "Session",
+          "code": "def filter_(f):\n                    return f.check(file=1)"
+        },
+        {
+          "file": "src/_pytest/python.py",
+          "type": "function",
+          "name": "gethookproxy",
+          "class_name": "Package",
+          "code": "def gethookproxy(self, fspath):\n        # check if we have the common case of running\n        # hooks with all conftest.py filesall conftest.py\n        pm = self.config.pluginmanager\n        my_conftestmodules = pm._getconftestmodules(fspath)\n        remove_mods = pm._conftest_plugins.difference(my_conftestmodules)\n        if remove_mods:\n            # one or more conftests are not in use at this fspath\n            proxy = FSHookProxy(fspath, pm, remove_mods)\n        else:\n            # all plugis are active for this fspath\n            proxy = self.config.hook\n        return proxy"
+        },
+        {
+          "file": "src/_pytest/python.py",
+          "type": "function",
+          "name": "collect",
+          "class_name": "Instance",
+          "code": "def collect(self):\n        self.session._fixturemanager.parsefactories(self)\n        return super(Instance, self).collect()"
+        },
+        {
+          "file": "src/_pytest/python.py",
+          "type": "function",
+          "name": "_find_parametrized_scope",
+          "class_name": null,
+          "code": "def _find_parametrized_scope(argnames, arg2fixturedefs, indirect):\n    \"\"\"Find the most appropriate scope for a parametrized call based on its arguments.\n\n    When there's at least one direct argument, always use \"function\" scope.\n\n    When a test function is parametrized and all its arguments are indirect\n    (e.g. fixtures), return the most narrow scope based on the fixtures used.\n\n    Related to issue #1832, based on code posted by @Kingdread.\n    \"\"\"\n    from _pytest.fixtures import scopes\n\n    if isinstance(indirect, (list, tuple)):\n        all_arguments_are_fixtures = len(indirect) == len(argnames)\n    else:\n        all_arguments_are_fixtures = bool(indirect)\n\n    if all_arguments_are_fixtures:\n        fixturedefs = arg2fixturedefs or {}\n        used_scopes = [\n            fixturedef[0].scope\n            for name, fixturedef in fixturedefs.items()\n            if name in argnames\n        ]\n        if used_scopes:\n            # Takes the most narrow scope from used fixtures\n            for scope in reversed(scopes):\n                if scope in used_scopes:\n                    return scope\n\n    return \"function\""
+        },
+        {
+          "file": "src/_pytest/python.py",
+          "type": "function",
+          "name": "_idval",
+          "class_name": null,
+          "code": "def _idval(val, argname, idx, idfn, item, config):\n    if idfn:\n        s = None\n        try:\n            s = idfn(val)\n        except Exception as e:\n            # See issue https://github.com/pytest-dev/pytest/issues/2169\n            msg = \"{}: error raised while trying to determine id of parameter '{}' at position {}\\n\"\n            msg = msg.format(item.nodeid, argname, idx)\n            # we only append the exception type and message because on Python 2 reraise does nothing\n            msg += \"  {}: {}\\n\".format(type(e).__name__, e)\n            six.raise_from(ValueError(msg), e)\n        if s:\n            return ascii_escaped(s)\n\n    if config:\n        hook_id = config.hook.pytest_make_parametrize_id(\n            config=config, val=val, argname=argname\n        )\n        if hook_id:\n            return hook_id\n\n    if isinstance(val, STRING_TYPES):\n        return ascii_escaped(val)\n    elif isinstance(val, (float, int, bool, NoneType)):\n        return str(val)\n    elif isinstance(val, REGEX_TYPE):\n        return ascii_escaped(val.pattern)\n    elif enum is not None and isinstance(val, enum.Enum):\n        return str(val)\n    elif (isclass(val) or isfunction(val)) and hasattr(val, \"__name__\"):\n        return val.__name__\n    return str(argname) + str(idx)"
+        },
+        {
+          "file": "src/_pytest/python_api.py",
+          "type": "function",
+          "name": "raises",
+          "class_name": null,
+          "code": "def raises(expected_exception, *args, **kwargs):\n    r\"\"\"\n    Assert that a code block/function call raises ``expected_exception``\n    or raise a failure exception otherwise.\n\n    :kwparam match: if specified, asserts that the exception matches a text or regex\n\n    :kwparam message: **(deprecated since 4.1)** if specified, provides a custom failure message\n        if the exception is not raised\n\n    .. currentmodule:: _pytest._code\n\n    Use ``pytest.raises`` as a context manager, which will capture the exception of the given\n    type::\n\n        >>> with raises(ZeroDivisionError):\n        ...    1/0\n\n    If the code block does not raise the expected exception (``ZeroDivisionError`` in the example\n    above), or no exception at all, the check will fail instead.\n\n    You can also use the keyword argument ``match`` to assert that the\n    exception matches a text or regex::\n\n        >>> with raises(ValueError, match='must be 0 or None'):\n        ...     raise ValueError(\"value must be 0 or None\")\n\n        >>> with raises(ValueError, match=r'must be \\d+$'):\n        ...     raise ValueError(\"value must be 42\")\n\n    The context manager produces an :class:`ExceptionInfo` object which can be used to inspect the\n    details of the captured exception::\n\n        >>> with raises(ValueError) as exc_info:\n        ...     raise ValueError(\"value must be 42\")\n        >>> assert exc_info.type is ValueError\n        >>> assert exc_info.value.args[0] == \"value must be 42\"\n\n    .. deprecated:: 4.1\n\n        In the context manager form you may use the keyword argument\n        ``message`` to specify a custom failure message that will be displayed\n        in case the ``pytest.raises`` check fails. This has been deprecated as it\n        is considered error prone as users often mean to use ``match`` instead.\n\n    .. note::\n\n       When using ``pytest.raises`` as a context manager, it's worthwhile to\n       note that normal context manager rules apply and that the exception\n       raised *must* be the final line in the scope of the context manager.\n       Lines of code after that, within the scope of the context manager will\n       not be executed. For example::\n\n           >>> value = 15\n           >>> with raises(ValueError) as exc_info:\n           ...     if value > 10:\n           ...         raise ValueError(\"value must be <= 10\")\n           ...     assert exc_info.type is ValueError  # this will not execute\n\n       Instead, the following approach must be taken (note the difference in\n       scope)::\n\n           >>> with raises(ValueError) as exc_info:\n           ...     if value > 10:\n           ...         raise ValueError(\"value must be <= 10\")\n           ...\n           >>> assert exc_info.type is ValueError\n\n    **Legacy form**\n\n    It is possible to specify a callable by passing a to-be-called lambda::\n\n        >>> raises(ZeroDivisionError, lambda: 1/0)\n        <ExceptionInfo ...>\n\n    or you can specify an arbitrary callable with arguments::\n\n        >>> def f(x): return 1/x\n        ...\n        >>> raises(ZeroDivisionError, f, 0)\n        <ExceptionInfo ...>\n        >>> raises(ZeroDivisionError, f, x=0)\n        <ExceptionInfo ...>\n\n    The form above is fully supported but discouraged for new code because the\n    context manager form is regarded as more readable and less error-prone.\n\n    .. note::\n        Similar to caught exception objects in Python, explicitly clearing\n        local references to returned ``ExceptionInfo`` objects can\n        help the Python interpreter speed up its garbage collection.\n\n        Clearing those references breaks a reference cycle\n        (``ExceptionInfo`` --> caught exception --> frame stack raising\n        the exception --> current frame stack --> local variables -->\n        ``ExceptionInfo``) which makes Python keep all objects referenced\n        from that cycle (including all local variables in the current\n        frame) alive until the next cyclic garbage collection run. See the\n        official Python ``try`` statement documentation for more detailed\n        information.\n\n    \"\"\"\n    __tracebackhide__ = True\n    for exc in filterfalse(isclass, always_iterable(expected_exception, BASE_TYPE)):\n        msg = (\n            \"exceptions must be old-style classes or\"\n            \" derived from BaseException, not %s\"\n        )\n        raise TypeError(msg % type(exc))\n\n    message = \"DID NOT RAISE {}\".format(expected_exception)\n    match_expr = None\n\n    if not args:\n        if \"message\" in kwargs:\n            message = kwargs.pop(\"message\")\n            warnings.warn(deprecated.RAISES_MESSAGE_PARAMETER, stacklevel=2)\n        if \"match\" in kwargs:\n            match_expr = kwargs.pop(\"match\")\n        if kwargs:\n            msg = \"Unexpected keyword arguments passed to pytest.raises: \"\n            msg += \", \".join(kwargs.keys())\n            raise TypeError(msg)\n        return RaisesContext(expected_exception, message, match_expr)\n    elif isinstance(args[0], str):\n        warnings.warn(deprecated.RAISES_EXEC, stacklevel=2)\n        code, = args\n        assert isinstance(code, str)\n        frame = sys._getframe(1)\n        loc = frame.f_locals.copy()\n        loc.update(kwargs)\n        # print \"raises frame scope: %r\" % frame.f_locals\n        try:\n            code = _pytest._code.Source(code).compile(_genframe=frame)\n            six.exec_(code, frame.f_globals, loc)\n            # XXX didn't mean f_globals == f_locals something special?\n            #     this is destroyed here ...\n        except expected_exception:\n            return _pytest._code.ExceptionInfo.from_current()\n    else:\n        func = args[0]\n        try:\n            func(*args[1:], **kwargs)\n        except expected_exception:\n            return _pytest._code.ExceptionInfo.from_current()\n    fail(message)"
+        },
+        {
+          "file": "src/_pytest/terminal.py",
+          "type": "function",
+          "name": "pytest_report_header",
+          "class_name": "TerminalReporter",
+          "code": "def pytest_report_header(self, config):\n        inifile = \"\"\n        if config.inifile:\n            inifile = \" \" + config.rootdir.bestrelpath(config.inifile)\n        lines = [\"rootdir: %s, inifile:%s\" % (config.rootdir, inifile)]\n\n        plugininfo = config.pluginmanager.list_plugin_distinfo()\n        if plugininfo:\n\n            lines.append(\"plugins: %s\" % \", \".join(_plugin_nameversions(plugininfo)))\n        return lines"
+        },
+        {
+          "file": "src/_pytest/unittest.py",
+          "type": "function",
+          "name": "_make_xunit_fixture",
+          "class_name": null,
+          "code": "def _make_xunit_fixture(obj, setup_name, teardown_name, scope, pass_self):\n    setup = getattr(obj, setup_name, None)\n    teardown = getattr(obj, teardown_name, None)\n    if setup is None and teardown is None:\n        return None\n\n    @pytest.fixture(scope=scope, autouse=True)\n    def fixture(self, request):\n        if setup is not None:\n            if pass_self:\n                setup(self, request.function)\n            else:\n                setup()\n        yield\n        if teardown is not None:\n            if pass_self:\n                teardown(self, request.function)\n            else:\n                teardown()\n\n    return fixture"
+        }
+      ]
+    },
+    {
+      "pr_number": 2487,
+      "pr_title": "Fix internal error when trying to detect the start of a recursive traceback",
+      "pr_body": "Fix #2486\r\n",
+      "issue_id": 2486,
+      "issue_title": "_truncate_recursive_traceback()'s recursionindex can be None in 3.1.2",
+      "issue_body": "```\r\ntest runtests: commands[0] | coverage run --parallel --source tested_library -m pytest --doctest-glob=*.md --junit-xml=report.xml\r\n============================= test session starts ==============================\r\nplatform linux2 -- Python 2.7.5, pytest-3.1.2, py-1.4.34, pluggy-0.4.0 -- workspace/.tox/test/bin/python2\r\ncachedir: .cache\r\nrootdir: workspace, inifile: tox.ini\r\nplugins: mock-1.6.0, pylama-7.3.3\r\ncollecting ... INTERNALERROR> Traceback (most recent call last):\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/main.py\", line 105, in wrap_session\r\nINTERNALERROR>     session.exitstatus = doit(config, session) or 0\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/main.py\", line 140, in _main\r\nINTERNALERROR>     config.hook.pytest_collection(session=session)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 745, in __call__\r\nINTERNALERROR>     return self._hookexec(self, self._nonwrappers + self._wrappers, kwargs)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 339, in _hookexec\r\nINTERNALERROR>     return self._inner_hookexec(hook, methods, kwargs)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 334, in <lambda>\r\nINTERNALERROR>     _MultiCall(methods, kwargs, hook.spec_opts).execute()\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 614, in execute\r\nINTERNALERROR>     res = hook_impl.function(*args)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/main.py\", line 150, in pytest_collection\r\nINTERNALERROR>     return session.perform_collect()\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/main.py\", line 604, in perform_collect\r\nINTERNALERROR>     items = self._perform_collect(args, genitems)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/main.py\", line 641, in _perform_collect\r\nINTERNALERROR>     self.items.extend(self.genitems(node))\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/main.py\", line 776, in genitems\r\nINTERNALERROR>     rep = collect_one_node(node)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/runner.py\", line 457, in collect_one_node\r\nINTERNALERROR>     rep = ihook.pytest_make_collect_report(collector=collector)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 745, in __call__\r\nINTERNALERROR>     return self._hookexec(self, self._nonwrappers + self._wrappers, kwargs)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 339, in _hookexec\r\nINTERNALERROR>     return self._inner_hookexec(hook, methods, kwargs)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 334, in <lambda>\r\nINTERNALERROR>     _MultiCall(methods, kwargs, hook.spec_opts).execute()\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 613, in execute\r\nINTERNALERROR>     return _wrapped_call(hook_impl.function(*args), self.execute)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 250, in _wrapped_call\r\nINTERNALERROR>     wrap_controller.send(call_outcome)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/capture.py\", line 118, in pytest_make_collect_report\r\nINTERNALERROR>     rep = outcome.get_result()\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 280, in get_result\r\nINTERNALERROR>     _reraise(*ex)  # noqa\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 265, in __init__\r\nINTERNALERROR>     self.result = func()\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/vendored_packages/pluggy.py\", line 614, in execute\r\nINTERNALERROR>     res = hook_impl.function(*args)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/runner.py\", line 342, in pytest_make_collect_report\r\nINTERNALERROR>     errorinfo = collector.repr_failure(call.excinfo)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/main.py\", line 480, in repr_failure\r\nINTERNALERROR>     return self._repr_failure_py(excinfo, style=\"short\")\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/main.py\", line 457, in _repr_failure_py\r\nINTERNALERROR>     style=style, tbfilter=tbfilter)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/_code/code.py\", line 429, in getrepr\r\nINTERNALERROR>     return fmt.repr_excinfo(self)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/_code/code.py\", line 650, in repr_excinfo\r\nINTERNALERROR>     reprtraceback = self.repr_traceback(excinfo)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/_code/code.py\", line 607, in repr_traceback\r\nINTERNALERROR>     traceback, extraline = self._truncate_recursive_traceback(traceback)\r\nINTERNALERROR>   File \"workspace/test/lib/python2.7/site-packages/_pytest/_code/code.py\", line 644, in _truncate_recursive_traceback\r\nINTERNALERROR>     traceback = traceback[:recursionindex + 1]\r\nINTERNALERROR> TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'\r\n```\r\n",
+      "issue_closed_at": "2017-06-22T11:40:33Z",
+      "base_commit": "b2d7c26d80aedb8533430d2e70c3d472614c7c0c",
+      "changes": [
+        {
+          "file": "_pytest/_code/code.py",
+          "type": "function",
+          "name": "_truncate_recursive_traceback",
+          "class_name": "FormattedExcinfo",
+          "code": "def _truncate_recursive_traceback(self, traceback):\n        \"\"\"\n        Truncate the given recursive traceback trying to find the starting point\n        of the recursion.\n\n        The detection is done by going through each traceback entry and finding the\n        point in which the locals of the frame are equal to the locals of a previous frame (see ``recursionindex()``.\n\n        Handle the situation where the recursion process might raise an exception (for example\n        comparing numpy arrays using equality raises a TypeError), in which case we do our best to\n        warn the user of the error and show a limited traceback.\n        \"\"\"\n        try:\n            recursionindex = traceback.recursionindex()\n        except Exception as e:\n            max_frames = 10\n            extraline = (\n                '!!! Recursion error detected, but an error occurred locating the origin of recursion.\\n'\n                '  The following exception happened when comparing locals in the stack frame:\\n'\n                '    {exc_type}: {exc_msg}\\n'\n                '  Displaying first and last {max_frames} stack frames out of {total}.'\n            ).format(exc_type=type(e).__name__, exc_msg=safe_str(e), max_frames=max_frames, total=len(traceback))\n            traceback = traceback[:max_frames] + traceback[-max_frames:]\n        else:\n            extraline = \"!!! Recursion detected (same locals & position)\"\n            traceback = traceback[:recursionindex + 1]\n            \n        return traceback, extraline"
+        }
+      ]
+    },
+    {
+      "pr_number": 5559,
+      "pr_title": "Merge master into features",
+      "pr_body": "",
+      "issue_id": 5547,
+      "issue_title": "pytest stepwise doesn't work with xfail strict failures",
+      "issue_body": "```\r\ngraingert@onomastic:~/projects/foo$ cat tests/test_foo.py \r\nimport pytest\r\n\r\n\r\n@pytest.mark.xfail(reason=\"pass\")\r\ndef test_a():\r\n    pass\r\n\r\n\r\n@pytest.mark.xfail(reason=\"pass\")\r\ndef test_b():\r\n    pass\r\ngraingert@onomastic:~/projects/foo$ cat tests/pytest.ini \r\n[pytest]\r\naddopts = --strict\r\nxfail_strict=true\r\ngraingert@onomastic:~/projects/foo$ pytest --sw tests/\r\n================================ test session starts ================================\r\nplatform linux -- Python 3.7.3, pytest-5.0.0, py-1.8.0, pluggy-0.12.0\r\nrootdir: /home/graingert/projects/foo/tests, inifile: pytest.ini\r\ncollected 2 items                                                                   \r\nstepwise: no previously failed tests, not skipping.\r\n\r\ntests/test_foo.py FF                                                          [100%]\r\n\r\n===================================== FAILURES ======================================\r\n______________________________________ test_a _______________________________________\r\n[XPASS(strict)] pass\r\n______________________________________ test_b _______________________________________\r\n[XPASS(strict)] pass\r\n============================= 2 failed in 0.01 seconds ==============================\r\n```",
+      "issue_closed_at": "2019-07-04T23:50:34Z",
+      "base_commit": "60a358fa2dc82a571c68d1be2d25703b51351538",
+      "changes": [
+        {
+          "file": "doc/en/example/nonpython/conftest.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "\n\ndef pytest_collect_file(parent, path):\n    if path.ext == \".yml\" and path.basename.startswith(\"test\"):\n        return YamlFile(path, parent)\n\n"
+        },
+        {
+          "file": "src/_pytest/_code/code.py",
+          "type": "function",
+          "name": "match",
+          "class_name": "ExceptionInfo",
+          "code": "def match(self, regexp):\n        \"\"\"\n        Check whether the regular expression 'regexp' is found in the string\n        representation of the exception using ``re.search``. If it matches\n        then True is returned (so that it is possible to write\n        ``assert excinfo.match()``). If it doesn't match an AssertionError is\n        raised.\n        \"\"\"\n        __tracebackhide__ = True\n        if not re.search(regexp, str(self.value)):\n            assert 0, \"Pattern '{!s}' not found in '{!s}'\".format(regexp, self.value)\n        return True"
+        },
+        {
+          "file": "src/_pytest/stepwise.py",
+          "type": "function",
+          "name": "pytest_collection_modifyitems",
+          "class_name": "StepwisePlugin",
+          "code": "def pytest_collection_modifyitems(self, session, config, items):\n        if not self.active:\n            return\n        if not self.lastfailed:\n            self.report_status = \"no previously failed tests, not skipping.\"\n            return\n\n        already_passed = []\n        found = False\n\n        # Make a list of all tests that have been run before the last failing one.\n        for item in items:\n            if item.nodeid == self.lastfailed:\n                found = True\n                break\n            else:\n                already_passed.append(item)\n\n        # If the previously failed test was not found among the test items,\n        # do not skip any tests.\n        if not found:\n            self.report_status = \"previously failed test not found, not skipping.\"\n            already_passed = []\n        else:\n            self.report_status = \"skipping {} already passed items.\".format(\n                len(already_passed)\n            )\n\n        for item in already_passed:\n            items.remove(item)\n\n        config.hook.pytest_deselected(items=already_passed)"
+        }
+      ]
+    },
+    {
+      "pr_number": 4164,
+      "pr_title": "don`t parse compat properties as fixtures",
+      "pr_body": "Fix #2701 \r\n\r\nits tricky to trigger those warnings under normal circumstances as they happen before pytest hooks into the warnings system\r\n\r\n`python -W always -m pytest testing/test_tmpdir.py --collectonly` could be used to trigger them for example on the cli\r\n",
+      "issue_id": 2701,
+      "issue_title": "warning filters incorrectly apply for conftests and collection in pytester",
+      "issue_body": "#2696 uncovered that pytest invocations with selected warning filters dont pass trough to the nested pytest correctly, in turn making tests even with the filter fail at importing a conftest and running a collection\r\n\r\nCC @nicoddemus ",
+      "issue_closed_at": "2018-10-31T15:52:53Z",
+      "base_commit": "ff04a1fb0999ad82f26db47e4026c8974bd3f99d",
+      "changes": [
+        {
+          "file": "src/_pytest/fixtures.py",
+          "type": "function",
+          "name": "pytest_plugin_registered",
+          "class_name": "FixtureManager",
+          "code": "def pytest_plugin_registered(self, plugin):\n        nodeid = None\n        try:\n            p = py.path.local(plugin.__file__).realpath()\n        except AttributeError:\n            pass\n        else:\n            # construct the base nodeid which is later used to check\n            # what fixtures are visible for particular tests (as denoted\n            # by their test id)\n            if p.basename.startswith(\"conftest.py\"):\n                nodeid = p.dirpath().relto(self.config.rootdir)\n                if p.sep != nodes.SEP:\n                    nodeid = nodeid.replace(p.sep, nodes.SEP)\n        self.parsefactories(plugin, nodeid)"
+        },
+        {
+          "file": "src/_pytest/fixtures.py",
+          "type": "function",
+          "name": "parsefactories",
+          "class_name": "FixtureManager",
+          "code": "def parsefactories(self, node_or_obj, nodeid=NOTSET, unittest=False):\n        from _pytest import deprecated\n\n        if nodeid is not NOTSET:\n            holderobj = node_or_obj\n        else:\n            holderobj = node_or_obj.obj\n            nodeid = node_or_obj.nodeid\n        if holderobj in self._holderobjseen:\n            return\n        self._holderobjseen.add(holderobj)\n        autousenames = []\n        for name in dir(holderobj):\n            # The attribute can be an arbitrary descriptor, so the attribute\n            # access below can raise. safe_getatt() ignores such exceptions.\n            obj = safe_getattr(holderobj, name, None)\n            marker = getfixturemarker(obj)\n            # fixture functions have a pytest_funcarg__ prefix (pre-2.3 style)\n            # or are \"@pytest.fixture\" marked\n            if marker is None:\n                if not name.startswith(self._argprefix):\n                    continue\n                if not callable(obj):\n                    continue\n                marker = defaultfuncargprefixmarker\n\n                filename, lineno = getfslineno(obj)\n                warnings.warn_explicit(\n                    deprecated.FUNCARG_PREFIX.format(name=name),\n                    category=None,\n                    filename=str(filename),\n                    lineno=lineno + 1,\n                )\n                name = name[len(self._argprefix) :]\n            elif not isinstance(marker, FixtureFunctionMarker):\n                # magic globals  with __getattr__ might have got us a wrong\n                # fixture attribute\n                continue\n            else:\n                if marker.name:\n                    name = marker.name\n                assert not name.startswith(self._argprefix), FIXTURE_MSG.format(name)\n\n            # during fixture definition we wrap the original fixture function\n            # to issue a warning if called directly, so here we unwrap it in order to not emit the warning\n            # when pytest itself calls the fixture function\n            if six.PY2 and unittest:\n                # hack on Python 2 because of the unbound methods\n                obj = get_real_func(obj)\n            else:\n                obj = get_real_method(obj, holderobj)\n\n            fixture_def = FixtureDef(\n                self,\n                nodeid,\n                name,\n                obj,\n                marker.scope,\n                marker.params,\n                unittest=unittest,\n                ids=marker.ids,\n            )\n\n            faclist = self._arg2fixturedefs.setdefault(name, [])\n            if fixture_def.has_location:\n                faclist.append(fixture_def)\n            else:\n                # fixturedefs with no location are at the front\n                # so this inserts the current fixturedef after the\n                # existing fixturedefs from external plugins but\n                # before the fixturedefs provided in conftests.\n                i = len([f for f in faclist if not f.has_location])\n                faclist.insert(i, fixture_def)\n            if marker.autouse:\n                autousenames.append(name)\n\n        if autousenames:\n            self._nodeid_and_autousenames.append((nodeid or \"\", autousenames))"
+        }
+      ]
+    }
+  ]
+}

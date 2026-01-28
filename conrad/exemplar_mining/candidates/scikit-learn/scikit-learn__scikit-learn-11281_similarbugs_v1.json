@@ -1,0 +1,182 @@
+{
+  "instance_id": "scikit-learn__scikit-learn-11281",
+  "repo": "scikit-learn/scikit-learn",
+  "created_at": "2018-06-15T17:15:25Z",
+  "problem_statement": "Should mixture models have a clusterer-compatible interface\nMixture models are currently a bit different. They are basically clusterers, except they are probabilistic, and are applied to inductive problems unlike many clusterers. But they are unlike clusterers in API:\r\n* they have an `n_components` parameter, with identical purpose to `n_clusters`\r\n* they do not store the `labels_` of the training data\r\n* they do not have a `fit_predict` method\r\n\r\nAnd they are almost entirely documented separately.\r\n\r\nShould we make the MMs more like clusterers?\n",
+  "patch": "diff --git a/sklearn/mixture/base.py b/sklearn/mixture/base.py\n--- a/sklearn/mixture/base.py\n+++ b/sklearn/mixture/base.py\n@@ -172,7 +172,7 @@ def _initialize(self, X, resp):\n     def fit(self, X, y=None):\n         \"\"\"Estimate model parameters with the EM algorithm.\n \n-        The method fit the model `n_init` times and set the parameters with\n+        The method fits the model `n_init` times and set the parameters with\n         which the model has the largest likelihood or lower bound. Within each\n         trial, the method iterates between E-step and M-step for `max_iter`\n         times until the change of likelihood or lower bound is less than\n@@ -188,6 +188,32 @@ def fit(self, X, y=None):\n         -------\n         self\n         \"\"\"\n+        self.fit_predict(X, y)\n+        return self\n+\n+    def fit_predict(self, X, y=None):\n+        \"\"\"Estimate model parameters using X and predict the labels for X.\n+\n+        The method fits the model n_init times and sets the parameters with\n+        which the model has the largest likelihood or lower bound. Within each\n+        trial, the method iterates between E-step and M-step for `max_iter`\n+        times until the change of likelihood or lower bound is less than\n+        `tol`, otherwise, a `ConvergenceWarning` is raised. After fitting, it\n+        predicts the most probable label for the input data points.\n+\n+        .. versionadded:: 0.20\n+\n+        Parameters\n+        ----------\n+        X : array-like, shape (n_samples, n_features)\n+            List of n_features-dimensional data points. Each row\n+            corresponds to a single data point.\n+\n+        Returns\n+        -------\n+        labels : array, shape (n_samples,)\n+            Component labels.\n+        \"\"\"\n         X = _check_X(X, self.n_components, ensure_min_samples=2)\n         self._check_initial_parameters(X)\n \n@@ -240,7 +266,7 @@ def fit(self, X, y=None):\n         self._set_parameters(best_params)\n         self.n_iter_ = best_n_iter\n \n-        return self\n+        return log_resp.argmax(axis=1)\n \n     def _e_step(self, X):\n         \"\"\"E step.\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 7594,
+      "pr_title": "[MRG+1] FIX Make sure GridSearchCV and RandomizedSearchCV are pickle-able",
+      "pr_body": "Fixes #7562 \n- Subclasses the `np.ma.MaskedArray` and overrides the `__getstate__` to make obj dtyped `MaskedArray`s pickle-able.\n- Uses this fixed `utils.fixes.MaskedArray` inside `gs.cv_results_`...\n\nThis is based off of https://github.com/numpy/numpy/pull/8122\n\nPlease review @jnothman @amueller @GaelVaroquaux @davechallis\n",
+      "issue_id": 7562,
+      "issue_title": "Error unpickling RandomizedSearchCV objects in 0.18 due to masked arrays",
+      "issue_body": "#### Description\n\nIn version 0.18, loading pickles of fitted RandomizedSearchCV objects results in a `TypeError` exception (from pickle also created with version 0.18).\n\nThe error seems related to the use of masked arrays in the `RandomizedSearchCV.cv_results_` attribute - clearing this before pickling (i.e. setting to to `None`) allows pickling/unpickling to work.\n#### Steps/Code to Reproduce\n\n```\nimport pickle                                                                   \nfrom sklearn.model_selection import RandomizedSearchCV                          \nfrom sklearn.ensemble import RandomForestClassifier                             \n\nX = [[1, 0], [1, 0], [1, 0], [0, 1], [0, 1], [0, 1]]                            \ny = [1, 1, 1, 0, 0, 0]                                                          \n\nmodel = RandomizedSearchCV(RandomForestClassifier(),                            \n                           {'n_estimators': [5, 10, 20]},                       \n                           n_iter=3)                                            \nmodel.fit(X, y)                                                                 \n\nwith open('model.pkl', 'wb') as fh:                                             \n    pickle.dump(model, fh)                                                      \n\nwith open('model.pkl', 'rb') as fh:                                             \n    model = pickle.load(fh)\n\nprint(model.predict(X))\n```\n#### Expected Results\n\n```\n[1, 1, 1, 0, 0, 0]\n```\n#### Actual Results\n\n```\nTraceback (most recent call last):\n  File \"./t.py\", line 19, in <module>\n    model = pickle.load(fh)\n  File \"/Users/dsc/miniconda3/envs/p3/lib/python3.5/site-packages/numpy/ma/core.py\", line 5863, in __setstate__\n    super(MaskedArray, self).__setstate__((shp, typ, isf, raw))\nTypeError: object pickle not returning list\n```\n#### Versions\n\nPython 3.5.1 |Continuum Analytics, Inc.| (default, Dec  7 2015, 11:24:55) \n[GCC 4.2.1 (Apple Inc. build 5577)]\nNumPy 1.11.1\nSciPy 0.18.1\nScikit-Learn 0.18\n",
+      "issue_closed_at": "2016-10-10T19:33:44Z",
+      "base_commit": "33ed90dc0aa0549a5963000d7d070aa18ca389c4",
+      "changes": [
+        {
+          "file": "sklearn/model_selection/_search.py",
+          "type": "line",
+          "name": "line 30",
+          "code": "from ..utils import check_random_state\nfrom ..utils.fixes import sp_version\nfrom ..utils.fixes import rankdata\nfrom ..utils.random import sample_without_replacement\nfrom ..utils.validation import indexable, check_is_fitted\nfrom ..utils.metaestimators import if_delegate_has_method"
+        },
+        {
+          "file": "sklearn/model_selection/_search.py",
+          "type": "function",
+          "name": "_store",
+          "class_name": "BaseSearchCV",
+          "code": "def _store(key_name, array, weights=None, splits=False, rank=False):\n            \"\"\"A small helper to store the scores/times to the cv_results_\"\"\"\n            array = np.array(array, dtype=np.float64).reshape(n_candidates,\n                                                              n_splits)\n            if splits:\n                for split_i in range(n_splits):\n                    results[\"split%d_%s\"\n                            % (split_i, key_name)] = array[:, split_i]\n\n            array_means = np.average(array, axis=1, weights=weights)\n            results['mean_%s' % key_name] = array_means\n            # Weighted std is not directly available in numpy\n            array_stds = np.sqrt(np.average((array -\n                                             array_means[:, np.newaxis]) ** 2,\n                                            axis=1, weights=weights))\n            results['std_%s' % key_name] = array_stds\n\n            if rank:\n                results[\"rank_%s\" % key_name] = np.asarray(\n                    rankdata(-array_means, method='min'), dtype=np.int32)"
+        },
+        {
+          "file": "sklearn/utils/fixes.py",
+          "type": "function",
+          "name": "rankdata",
+          "class_name": null,
+          "code": "def rankdata(a, method='average'):\n        if method not in ('average', 'min', 'max', 'dense', 'ordinal'):\n            raise ValueError('unknown method \"{0}\"'.format(method))\n\n        arr = np.ravel(np.asarray(a))\n        algo = 'mergesort' if method == 'ordinal' else 'quicksort'\n        sorter = np.argsort(arr, kind=algo)\n\n        inv = np.empty(sorter.size, dtype=np.intp)\n        inv[sorter] = np.arange(sorter.size, dtype=np.intp)\n\n        if method == 'ordinal':\n            return inv + 1\n\n        arr = arr[sorter]\n        obs = np.r_[True, arr[1:] != arr[:-1]]\n        dense = obs.cumsum()[inv]\n\n        if method == 'dense':\n            return dense\n\n        # cumulative counts of each unique value\n        count = np.r_[np.nonzero(obs)[0], len(obs)]\n\n        if method == 'max':\n            return count[dense]\n\n        if method == 'min':\n            return count[dense - 1] + 1\n\n        # average method\n        return .5 * (count[dense] + count[dense - 1] + 1)"
+        }
+      ]
+    },
+    {
+      "pr_number": 3184,
+      "pr_title": "FIX TfidfVectorizer exports idf_ attribute",
+      "pr_body": "This fixes #3179 by adding an attribute `idf_` to `TfidfVectorizer`.\n",
+      "issue_id": 3179,
+      "issue_title": "TfidfVectorizer doesn't export `idf_`",
+      "issue_body": "Reported on [SO](http://stackoverflow.com/questions/23792781/tf-idf-feature-weights-using-sklearn-feature-extraction-text-tfidfvectorizer). Easy fix: introduce a property that refers to `_tfifd.idf_`.\n",
+      "issue_closed_at": "2014-05-23T11:07:12Z",
+      "base_commit": "62e4975109cc952663054fbb04f8cf3c5ecc24ee",
+      "changes": [
+        {
+          "file": "sklearn/feature_extraction/text.py",
+          "type": "class",
+          "name": "TfidfVectorizer",
+          "code": "class TfidfVectorizer(CountVectorizer):\n    \"\"\"Convert a collection of raw documents to a matrix of TF-IDF features.\n\n    Equivalent to CountVectorizer followed by TfidfTransformer.\n\n    Parameters\n    ----------\n    input : string {'filename', 'file', 'content'}\n        If filename, the sequence passed as an argument to fit is\n        expected to be a list of filenames that need reading to fetch\n        the raw content to analyze.\n\n        If 'file', the sequence items must have 'read' method (file-like\n        object) it is called to fetch the bytes in memory.\n\n        Otherwise the input is expected to be the sequence strings or\n        bytes items are expected to be analyzed directly.\n\n    encoding : string, 'utf-8' by default.\n        If bytes or files are given to analyze, this encoding is used to\n        decode.\n\n    decode_error : {'strict', 'ignore', 'replace'}\n        Instruction on what to do if a byte sequence is given to analyze that\n        contains characters not of the given `encoding`. By default, it is\n        'strict', meaning that a UnicodeDecodeError will be raised. Other\n        values are 'ignore' and 'replace'.\n\n    strip_accents : {'ascii', 'unicode', None}\n        Remove accents during the preprocessing step.\n        'ascii' is a fast method that only works on characters that have\n        an direct ASCII mapping.\n        'unicode' is a slightly slower method that works on any characters.\n        None (default) does nothing.\n\n    analyzer : string, {'word', 'char'} or callable\n        Whether the feature should be made of word or character n-grams.\n\n        If a callable is passed it is used to extract the sequence of features\n        out of the raw, unprocessed input.\n\n    preprocessor : callable or None (default)\n        Override the preprocessing (string transformation) stage while\n        preserving the tokenizing and n-grams generation steps.\n\n    tokenizer : callable or None (default)\n        Override the string tokenization step while preserving the\n        preprocessing and n-grams generation steps.\n\n    ngram_range : tuple (min_n, max_n)\n        The lower and upper boundary of the range of n-values for different\n        n-grams to be extracted. All values of n such that min_n <= n <= max_n\n        will be used.\n\n    stop_words : string {'english'}, list, or None (default)\n        If a string, it is passed to _check_stop_list and the appropriate stop\n        list is returned. 'english' is currently the only supported string\n        value.\n\n        If a list, that list is assumed to contain stop words, all of which\n        will be removed from the resulting tokens.\n\n        If None, no stop words will be used. max_df can be set to a value\n        in the range [0.7, 1.0) to automatically detect and filter stop\n        words based on intra corpus document frequency of terms.\n\n    lowercase : boolean, default True\n        Convert all characters to lowercase befor tokenizing.\n\n    token_pattern : string\n        Regular expression denoting what constitutes a \"token\", only used\n        if `analyzer == 'word'`. The default regexp select tokens of 2\n        or more letters characters (punctuation is completely ignored\n        and always treated as a token separator).\n\n    max_df : float in range [0.0, 1.0] or int, optional, 1.0 by default\n        When building the vocabulary ignore terms that have a term frequency\n        strictly higher than the given threshold (corpus specific stop words).\n        If float, the parameter represents a proportion of documents, integer\n        absolute counts.\n        This parameter is ignored if vocabulary is not None.\n\n    min_df : float in range [0.0, 1.0] or int, optional, 1 by default\n        When building the vocabulary ignore terms that have a term frequency\n        strictly lower than the given threshold.\n        This value is also called cut-off in the literature.\n        If float, the parameter represents a proportion of documents, integer\n        absolute counts.\n        This parameter is ignored if vocabulary is not None.\n\n    max_features : optional, None by default\n        If not None, build a vocabulary that only consider the top\n        max_features ordered by term frequency across the corpus.\n\n        This parameter is ignored if vocabulary is not None.\n\n    vocabulary : Mapping or iterable, optional\n        Either a Mapping (e.g., a dict) where keys are terms and values are\n        indices in the feature matrix, or an iterable over terms. If not\n        given, a vocabulary is determined from the input documents.\n\n    binary : boolean, False by default.\n        If True, all non-zero term counts are set to 1. This does not mean\n        outputs will have only 0/1 values, only that the tf term in tf-idf\n        is binary. (Set idf and normalization to False to get 0/1 outputs.)\n\n    dtype : type, optional\n        Type of the matrix returned by fit_transform() or transform().\n\n    norm : 'l1', 'l2' or None, optional\n        Norm used to normalize term vectors. None for no normalization.\n\n    use_idf : boolean, optional\n        Enable inverse-document-frequency reweighting.\n\n    smooth_idf : boolean, optional\n        Smooth idf weights by adding one to document frequencies, as if an\n        extra document was seen containing every term in the collection\n        exactly once. Prevents zero divisions.\n\n    sublinear_tf : boolean, optional\n        Apply sublinear tf scaling, i.e. replace tf with 1 + log(tf).\n\n    See also\n    --------\n    CountVectorizer\n        Tokenize the documents and count the occurrences of token and return\n        them as a sparse matrix\n\n    TfidfTransformer\n        Apply Term Frequency Inverse Document Frequency normalization to a\n        sparse matrix of occurrence counts.\n\n    \"\"\"\n\n    def __init__(self, input='content', encoding='utf-8', charset=None,\n                 decode_error='strict', charset_error=None,\n                 strip_accents=None, lowercase=True,\n                 preprocessor=None, tokenizer=None, analyzer='word',\n                 stop_words=None, token_pattern=r\"(?u)\\b\\w\\w+\\b\",\n                 ngram_range=(1, 1), max_df=1.0, min_df=1,\n                 max_features=None, vocabulary=None, binary=False,\n                 dtype=np.int64, norm='l2', use_idf=True, smooth_idf=True,\n                 sublinear_tf=False):\n\n        super(TfidfVectorizer, self).__init__(\n            input=input, charset=charset, charset_error=charset_error,\n            encoding=encoding, decode_error=decode_error,\n            strip_accents=strip_accents, lowercase=lowercase,\n            preprocessor=preprocessor, tokenizer=tokenizer, analyzer=analyzer,\n            stop_words=stop_words, token_pattern=token_pattern,\n            ngram_range=ngram_range, max_df=max_df, min_df=min_df,\n            max_features=max_features, vocabulary=vocabulary, binary=binary,\n            dtype=dtype)\n\n        self._tfidf = TfidfTransformer(norm=norm, use_idf=use_idf,\n                                       smooth_idf=smooth_idf,\n                                       sublinear_tf=sublinear_tf)\n\n    # Broadcast the TF-IDF parameters to the underlying transformer instance\n    # for easy grid search and repr\n\n    @property\n    def norm(self):\n        return self._tfidf.norm\n\n    @norm.setter\n    def norm(self, value):\n        self._tfidf.norm = value\n\n    @property\n    def use_idf(self):\n        return self._tfidf.use_idf\n\n    @use_idf.setter\n    def use_idf(self, value):\n        self._tfidf.use_idf = value\n\n    @property\n    def smooth_idf(self):\n        return self._tfidf.smooth_idf\n\n    @smooth_idf.setter\n    def smooth_idf(self, value):\n        self._tfidf.smooth_idf = value\n\n    @property\n    def sublinear_tf(self):\n        return self._tfidf.sublinear_tf\n\n    @sublinear_tf.setter\n    def sublinear_tf(self, value):\n        self._tfidf.sublinear_tf = value\n\n    def fit(self, raw_documents, y=None):\n        \"\"\"Learn a conversion law from documents to array data\"\"\"\n        X = super(TfidfVectorizer, self).fit_transform(raw_documents)\n        self._tfidf.fit(X)\n        return self\n\n    def fit_transform(self, raw_documents, y=None):\n        \"\"\"Learn the representation and return the vectors.\n\n        Parameters\n        ----------\n        raw_documents : iterable\n            an iterable which yields either str, unicode or file objects\n\n        Returns\n        -------\n        vectors : array, [n_samples, n_features]\n        \"\"\"\n        X = super(TfidfVectorizer, self).fit_transform(raw_documents)\n        self._tfidf.fit(X)\n        # X is already a transformed view of raw_documents so\n        # we set copy to False\n        return self._tfidf.transform(X, copy=False)\n\n    def transform(self, raw_documents, copy=True):\n        \"\"\"Transform raw text documents to tf-idf vectors\n\n        Parameters\n        ----------\n        raw_documents : iterable\n            an iterable which yields either str, unicode or file objects\n\n        Returns\n        -------\n        vectors : sparse matrix, [n_samples, n_features]\n        \"\"\"\n        X = super(TfidfVectorizer, self).transform(raw_documents)\n        return self._tfidf.transform(X, copy=False)"
+        },
+        {
+          "file": "sklearn/feature_extraction/text.py",
+          "type": "function",
+          "name": "sublinear_tf",
+          "class_name": "TfidfVectorizer",
+          "code": "def sublinear_tf(self, value):\n        self._tfidf.sublinear_tf = value"
+        }
+      ]
+    },
+    {
+      "pr_number": 4146,
+      "pr_title": "[MRG + 1] Fdr treshold bug",
+      "pr_body": "Continues #2932. Fixes #2771.\nThese are some minor fixes on top of #2932, where @bthirion already gave his +1.\nMaybe @arjoly wants to have a look as he commented there.\nThis is a good bug fix that I think we should include asap.\n\nFYI tests take .5s.\n",
+      "issue_id": 2771,
+      "issue_title": "SelectFdr has serious thresholding bug",
+      "issue_body": "The current code reads like:\n\n```\ndef _get_support_mask(self):\n    alpha = self.alpha\n    sv = np.sort(self.pvalues_)\n    threshold = sv[sv < alpha * np.arange(len(self.pvalues_))].max()\n    return self.pvalues_ <= threshold\n```\n\nBut this doesn't actually control FDR at all, the correct implementation should have:\n\n```\n    bf_alpha = alpha / len(self.pvalues_)\n    threshold = sv[sv < bf_alpha * np.arange(len(self.pvalues_))].max()\n```\n\nNote the k / m term in the equation at:\nhttp://en.wikipedia.org/wiki/False_discovery_rate#Benjamini.E2.80.93Hochberg_procedure\n",
+      "issue_closed_at": "2015-02-24T22:15:19Z",
+      "base_commit": "f6af4881a5a66fb21688379b39f9304898a11bc0",
+      "changes": [
+        {
+          "file": "sklearn/feature_selection/univariate_selection.py",
+          "type": "function",
+          "name": "_get_support_mask",
+          "class_name": "GenericUnivariateSelect",
+          "code": "def _get_support_mask(self):\n        check_is_fitted(self, 'scores_')\n\n        selector = self._make_selector()\n        selector.pvalues_ = self.pvalues_\n        selector.scores_ = self.scores_\n        return selector._get_support_mask()"
+        },
+        {
+          "file": "sklearn/feature_selection/univariate_selection.py",
+          "type": "class",
+          "name": "SelectFdr",
+          "code": "class SelectFdr(_BaseFilter):\n    \"\"\"Filter: Select the p-values for an estimated false discovery rate\n\n    This uses the Benjamini-Hochberg procedure. ``alpha`` is the target false\n    discovery rate.\n\n    Parameters\n    ----------\n    score_func : callable\n        Function taking two arrays X and y, and returning a pair of arrays\n        (scores, pvalues).\n\n    alpha : float, optional\n        The highest uncorrected p-value for features to keep.\n\n\n    Attributes\n    ----------\n    scores_ : array-like, shape=(n_features,)\n        Scores of features.\n\n    pvalues_ : array-like, shape=(n_features,)\n        p-values of feature scores.\n    \"\"\"\n\n    def __init__(self, score_func=f_classif, alpha=5e-2):\n        super(SelectFdr, self).__init__(score_func)\n        self.alpha = alpha\n\n    def _get_support_mask(self):\n        check_is_fitted(self, 'scores_')\n\n        alpha = self.alpha\n        sv = np.sort(self.pvalues_)\n        selected = sv[sv < alpha * np.arange(len(self.pvalues_))]\n        if selected.size == 0:\n            return np.zeros_like(self.pvalues_, dtype=bool)\n        return self.pvalues_ <= selected.max()"
+        },
+        {
+          "file": "sklearn/feature_selection/univariate_selection.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "GenericUnivariateSelect",
+          "code": "def __init__(self, score_func=f_classif, mode='percentile', param=1e-5):\n        super(GenericUnivariateSelect, self).__init__(score_func)\n        self.mode = mode\n        self.param = param"
+        }
+      ]
+    },
+    {
+      "pr_number": 5416,
+      "pr_title": "[MRG+1] BUG: reset internal state of scaler before fitting",
+      "pr_body": "Fixes #5408.\n",
+      "issue_id": 5408,
+      "issue_title": "Broken example: examples/svm/plot_rbf_parameters.py",
+      "issue_body": "```\n--------------------------------------------------------------------------\nValueError                                Traceback (most recent call last)\n/home/le243287/dev/scikit-learn/examples/svm/plot_rbf_parameters.py in <module>()\n    117 scaler = StandardScaler()\n    118 X = scaler.fit_transform(X)\n--> 119 X_2d = scaler.fit_transform(X_2d)\n    120 \n    121 ##############################################################################\n\n/home/le243287/dev/scikit-learn/sklearn/base.pyc in fit_transform(self, X, y, **fit_params)\n    453         if y is None:\n    454             # fit method of arity 1 (unsupervised transformation)\n--> 455             return self.fit(X, **fit_params).transform(X)\n    456         else:\n    457             # fit method of arity 2 (supervised transformation)\n\n/home/le243287/dev/scikit-learn/sklearn/preprocessing/data.pyc in fit(self, X, y)\n    501         y: Passthrough for ``Pipeline`` compatibility.\n    502         \"\"\"\n--> 503         return self.partial_fit(X, y)\n    504 \n    505     def partial_fit(self, X, y=None):\n\n/home/le243287/dev/scikit-learn/sklearn/preprocessing/data.pyc in partial_fit(self, X, y)\n    565             self.mean_, self.var_, self.n_samples_seen_ = \\\n    566                 _incremental_mean_and_var(X, self.mean_, self.var_,\n--> 567                                           self.n_samples_seen_)\n    568 \n    569         if self.with_std:\n\n/home/le243287/dev/scikit-learn/sklearn/utils/extmath.pyc in _incremental_mean_and_var(X, last_mean, last_variance, last_sample_count)\n    730     updated_sample_count = last_sample_count + new_sample_count\n    731 \n--> 732     updated_mean = (last_sum + new_sum) / updated_sample_count\n    733 \n    734     if last_variance is None:\n\nValueError: operands could not be broadcast together with shapes (4,) (2,)\n```\n",
+      "issue_closed_at": "2015-10-16T15:47:27Z",
+      "base_commit": "2300bdd86503fad0130c1ab433e6ecce2dbff2f1",
+      "changes": [
+        {
+          "file": "sklearn/preprocessing/data.py",
+          "type": "function",
+          "name": "data_range",
+          "class_name": "MinMaxScaler",
+          "code": "def data_range(self):\n        return self.data_range_"
+        },
+        {
+          "file": "sklearn/preprocessing/data.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "OneHotEncoder",
+          "code": "def __init__(self, n_values=\"auto\", categorical_features=\"all\",\n                 dtype=np.float, sparse=True, handle_unknown='error'):\n        self.n_values = n_values\n        self.categorical_features = categorical_features\n        self.dtype = dtype\n        self.sparse = sparse\n        self.handle_unknown = handle_unknown"
+        },
+        {
+          "file": "sklearn/preprocessing/data.py",
+          "type": "function",
+          "name": "fit",
+          "class_name": "OneHotEncoder",
+          "code": "def fit(self, X, y=None):\n        \"\"\"Fit OneHotEncoder to X.\n\n        Parameters\n        ----------\n        X : array-like, shape [n_samples, n_feature]\n            Input array of type int.\n\n        Returns\n        -------\n        self\n        \"\"\"\n        self.fit_transform(X)\n        return self"
+        },
+        {
+          "file": "sklearn/preprocessing/data.py",
+          "type": "class",
+          "name": "MaxAbsScaler",
+          "code": "class MaxAbsScaler(BaseEstimator, TransformerMixin):\n    \"\"\"Scale each feature by its maximum absolute value.\n\n    This estimator scales and translates each feature individually such\n    that the maximal absolute value of each feature in the\n    training set will be 1.0. It does not shift/center the data, and\n    thus does not destroy any sparsity.\n\n    This scaler can also be applied to sparse CSR or CSC matrices.\n\n    Parameters\n    ----------\n    copy : boolean, optional, default is True\n        Set to False to perform inplace scaling and avoid a copy (if the input\n        is already a numpy array).\n\n    Attributes\n    ----------\n    scale_ : ndarray, shape (n_features,)\n        Per feature relative scaling of the data.\n\n    max_abs_ : ndarray, shape (n_features,)\n        Per feature maximum absolute value.\n\n    n_samples_seen_ : int\n        The number of samples processed by the estimator. Will be reset on\n        new calls to fit, but increments across ``partial_fit`` calls.\n    \"\"\"\n\n    def __init__(self, copy=True):\n        self.copy = copy\n\n    def fit(self, X, y=None):\n        \"\"\"Compute the maximum absolute value to be used for later scaling.\n\n        Parameters\n        ----------\n        X : {array-like, sparse matrix}, shape [n_samples, n_features]\n            The data used to compute the per-feature minimum and maximum\n            used for later scaling along the features axis.\n        \"\"\"\n        return self.partial_fit(X, y)\n\n    def partial_fit(self, X, y=None):\n        \"\"\"Online computation of max absolute value of X for later scaling.\n        All of X is processed as a single batch. This is intended for cases\n        when `fit` is not feasible due to very large number of `n_samples`\n        or because X is read from a continuous stream.\n\n        Parameters\n        ----------\n        X : {array-like, sparse matrix}, shape [n_samples_, n_features]\n            The data used to compute the mean and standard deviation\n            used for later scaling along the features axis.\n\n        y: Passthrough for ``Pipeline`` compatibility.\n        \"\"\"\n        X = check_array(X, accept_sparse=('csr', 'csc'), copy=self.copy,\n                        ensure_2d=False, estimator=self, dtype=FLOAT_DTYPES)\n\n        if X.ndim == 1:\n            warnings.warn(DEPRECATION_MSG_1D, DeprecationWarning)\n\n        if sparse.issparse(X):\n            mins, maxs = min_max_axis(X, axis=0)\n            max_abs = np.maximum(np.abs(mins), np.abs(maxs))\n        else:\n            max_abs = np.abs(X).max(axis=0)\n\n        # First pass\n        if not hasattr(self, 'n_samples_seen_'):\n            self.n_samples_seen_ = X.shape[0]\n        # Next passes\n        else:\n            max_abs = np.maximum(self.max_abs_, max_abs)\n            self.n_samples_seen_ += X.shape[0]\n\n        self.max_abs_ = max_abs\n        self.scale_ = _handle_zeros_in_scale(max_abs)\n        return self\n\n    def transform(self, X, y=None):\n        \"\"\"Scale the data\n\n        Parameters\n        ----------\n        X : {array-like, sparse matrix}\n            The data that should be scaled.\n        \"\"\"\n        check_is_fitted(self, 'scale_')\n        X = check_array(X, accept_sparse=('csr', 'csc'), copy=self.copy,\n                        ensure_2d=False, estimator=self, dtype=FLOAT_DTYPES)\n\n        if X.ndim == 1:\n            warnings.warn(DEPRECATION_MSG_1D, DeprecationWarning)\n\n        if sparse.issparse(X):\n            if X.shape[0] == 1:\n                inplace_row_scale(X, 1.0 / self.scale_)\n            else:\n                inplace_column_scale(X, 1.0 / self.scale_)\n        else:\n            X /= self.scale_\n        return X\n\n    def inverse_transform(self, X):\n        \"\"\"Scale back the data to the original representation\n\n        Parameters\n        ----------\n        X : {array-like, sparse matrix}\n            The data that should be transformed back.\n        \"\"\"\n        check_is_fitted(self, 'scale_')\n        X = check_array(X, accept_sparse=('csr', 'csc'), copy=self.copy,\n                        ensure_2d=False, estimator=self, dtype=FLOAT_DTYPES)\n        if X.ndim == 1:\n            warnings.warn(DEPRECATION_MSG_1D, DeprecationWarning)\n\n        if sparse.issparse(X):\n            if X.shape[0] == 1:\n                inplace_row_scale(X, self.scale_)\n            else:\n                inplace_column_scale(X, self.scale_)\n        else:\n            X *= self.scale_\n        return X"
+        }
+      ]
+    },
+    {
+      "pr_number": 2523,
+      "pr_title": "[MRG] FIX #2481: add warning for bug in old numpy with unicode",
+      "pr_body": "This is a fix for  #2481 which causes the jenkins tests to fail with numpy 1.3.0.\n",
+      "issue_id": 2481,
+      "issue_title": "LabelEncoder doesn't work correctly for unicode labels in Python 2.6 + numpy 1.3",
+      "issue_body": "LabelEncoder works incorrectly for unicode labels in Python 2.6 + numpy 1.3. This is currently untested; to reproduce replace bytestrings with unicode strings here: https://github.com/scikit-learn/scikit-learn/blob/master/sklearn/preprocessing/tests/test_label.py#L191\n\nThis is the cause of Jenkins failure that https://github.com/scikit-learn/scikit-learn/pull/2462 triggered.\n",
+      "issue_closed_at": "2013-10-16T12:24:23Z",
+      "base_commit": "a2580d6fe04340f535c624ae48b4a52a66cbc839",
+      "changes": [
+        {
+          "file": "sklearn/preprocessing/label.py",
+          "type": "line",
+          "name": "line 8",
+          "code": "\nfrom ..base import BaseEstimator, TransformerMixin\n\nfrom ..utils.fixes import unique\nfrom ..utils import deprecated, column_or_1d\n\nfrom ..utils.multiclass import unique_labels"
+        },
+        {
+          "file": "sklearn/preprocessing/label.py",
+          "type": "line",
+          "name": "line 25",
+          "code": "    'LabelEncoder',\n]\n\n\nclass LabelEncoder(BaseEstimator, TransformerMixin):\n    \"\"\"Encode labels with value between 0 and n_classes-1."
+        },
+        {
+          "file": "sklearn/preprocessing/label.py",
+          "type": "function",
+          "name": "fit",
+          "class_name": "LabelBinarizer",
+          "code": "def fit(self, y):\n        \"\"\"Fit label binarizer\n\n        Parameters\n        ----------\n        y : numpy array of shape (n_samples,) or sequence of sequences\n            Target values. In the multilabel case the nested sequences can\n            have variable lengths.\n\n        Returns\n        -------\n        self : returns an instance of self.\n        \"\"\"\n        y_type = type_of_target(y)\n        self.multilabel_ = y_type.startswith('multilabel')\n        if self.multilabel_:\n            self.indicator_matrix_ = y_type == 'multilabel-indicator'\n\n        self.classes_ = unique_labels(y)\n\n        return self"
+        },
+        {
+          "file": "sklearn/preprocessing/label.py",
+          "type": "function",
+          "name": "fit_transform",
+          "class_name": "LabelEncoder",
+          "code": "def fit_transform(self, y):\n        \"\"\"Fit label encoder and return encoded labels\n\n        Parameters\n        ----------\n        y : array-like of shape [n_samples]\n            Target values.\n\n        Returns\n        -------\n        y : array-like of shape [n_samples]\n        \"\"\"\n        y = column_or_1d(y, warn=True)\n        self.classes_, y = unique(y, return_inverse=True)\n        return y"
+        },
+        {
+          "file": "sklearn/preprocessing/label.py",
+          "type": "function",
+          "name": "transform",
+          "class_name": "LabelBinarizer",
+          "code": "def transform(self, y):\n        \"\"\"Transform multi-class labels to binary labels\n\n        The output of transform is sometimes referred to by some authors as the\n        1-of-K coding scheme.\n\n        Parameters\n        ----------\n        y : numpy array of shape [n_samples] or sequence of sequences\n            Target values. In the multilabel case the nested sequences can\n            have variable lengths.\n\n        Returns\n        -------\n        Y : numpy array of shape [n_samples, n_classes]\n        \"\"\"\n        self._check_fitted()\n\n        y_is_multilabel = type_of_target(y).startswith('multilabel')\n\n        if y_is_multilabel and not self.multilabel_:\n            raise ValueError(\"The object was not fitted with multilabel\"\n                             \" input.\")\n\n        return label_binarize(y, self.classes_,\n                              multilabel=self.multilabel_,\n                              pos_label=self.pos_label,\n                              neg_label=self.neg_label)"
+        }
+      ]
+    }
+  ]
+}

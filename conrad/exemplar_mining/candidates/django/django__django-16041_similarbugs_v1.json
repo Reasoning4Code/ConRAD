@@ -1,0 +1,137 @@
+{
+  "instance_id": "django__django-16041",
+  "repo": "django/django",
+  "created_at": "2022-09-09T10:07:29Z",
+  "problem_statement": "Rendering empty_form crashes when empty_permitted is passed to form_kwargs\nDescription\n\t\nIssue\nWhen explicitly setting form_kwargs = {'empty_permitted':True} or form_kwargs = {'empty_permitted':False} , a KeyError occurs when rendering a template that uses a formset's empty_form.\nExpected Behavior\nempty_permitted is ignored for formset.empty_form since empty_permitted is irrelevant for empty_form, as empty_form is not meant to be used to pass data and therefore does not need to be validated.\nSteps to Reproduce\n# views.py\nfrom django.shortcuts import render\nfrom .models import MyModel\ndef test_view(request):\n\tcontext = {}\n\tff = modelformset_factory(MyModel, fields = ['a_field'])\n\tcontext['formset'] = ff(\n\t\tqueryset = MyModel.objects.none(),\n\t\tform_kwargs = {'empty_permitted':True} # or form_kwargs = {'empty_permitted':False}\n\t)\n\treturn render(request, 'my_app/my_model_formset.html', context)\n# urls.py\nfrom django.urls import path, include\nfrom .views import test_view\nurlpatterns = [\n\tpath('test', test_view)\n]\n# my_model_formset.html\n{% extends \"my_app/base.html\" %}\n{% block content %}\n<form id=\"my-form\" method=\"post\">\n {% csrf_token %}\n {{ formset }}\n <input type=\"submit\" value=\"Save\">\n</form>\n{{ formset.empty_form }}\n{% endblock %}\n",
+  "patch": "diff --git a/django/forms/formsets.py b/django/forms/formsets.py\n--- a/django/forms/formsets.py\n+++ b/django/forms/formsets.py\n@@ -257,14 +257,15 @@ def extra_forms(self):\n \n     @property\n     def empty_form(self):\n-        form = self.form(\n-            auto_id=self.auto_id,\n-            prefix=self.add_prefix(\"__prefix__\"),\n-            empty_permitted=True,\n-            use_required_attribute=False,\n+        form_kwargs = {\n             **self.get_form_kwargs(None),\n-            renderer=self.renderer,\n-        )\n+            \"auto_id\": self.auto_id,\n+            \"prefix\": self.add_prefix(\"__prefix__\"),\n+            \"empty_permitted\": True,\n+            \"use_required_attribute\": False,\n+            \"renderer\": self.renderer,\n+        }\n+        form = self.form(**form_kwargs)\n         self.add_fields(form, None)\n         return form\n \n",
+  "similar_bug_items": [
+    {
+      "pr_number": 7036,
+      "pr_title": "Fixed #27024 -- Prevented logging error with empty string as geometry widget value",
+      "pr_body": "Thanks Gavin Wahl for the report.\n",
+      "issue_id": 27024,
+      "issue_title": "BaseGeometryWidget logs a false positive: Error creating geometry from value ''",
+      "issue_body": "When using a form with a PointField (or presumably anything using BaseGeometryWidget), if you\nDon't fill out the map field\nCause a ValidationError for another field\nSubmit the form\nThis error-level message will be logged:\nError creating geometry from value ''\nThere should not be any error logged because there is no error. Maybe\nBaseGeometryWidget.deserialize\nneeds to check for\nEMPTY_VALUES\n?",
+      "issue_closed_at": "2016-08-08T09:25:25",
+      "base_commit": "2a11d2d7a7d5c6609c85dbc631fad6b8a8645a64",
+      "changes": [
+        {
+          "file": "django/contrib/gis/admin/widgets.py",
+          "type": "function",
+          "name": "render",
+          "class_name": "OpenLayersWidget",
+          "code": "def render(self, name, value, attrs=None):\n        # Update the template parameters with any attributes passed in.\n        if attrs:\n            self.params.update(attrs)\n            self.params['editable'] = self.params['modifiable']\n        else:\n            self.params['editable'] = True\n\n        # Defaulting the WKT value to a blank string -- this\n        # will be tested in the JavaScript and the appropriate\n        # interface will be constructed.\n        self.params['wkt'] = ''\n\n        # If a string reaches here (via a validation error on another\n        # field) then just reconstruct the Geometry.\n        if isinstance(value, six.string_types):\n            try:\n                value = GEOSGeometry(value)\n            except (GEOSException, ValueError) as err:\n                logger.error(\"Error creating geometry from value '%s' (%s)\", value, err)\n                value = None\n\n        if (value and value.geom_type.upper() != self.geom_type and\n                self.geom_type != 'GEOMETRY'):\n            value = None\n\n        # Constructing the dictionary of the map options.\n        self.params['map_options'] = self.map_options()\n\n        # Constructing the JavaScript module name using the name of\n        # the GeometryField (passed in via the `attrs` keyword).\n        # Use the 'name' attr for the field name (rather than 'field')\n        self.params['name'] = name\n        # note: we must switch out dashes for underscores since js\n        # functions are created using the module variable\n        js_safe_name = self.params['name'].replace('-', '_')\n        self.params['module'] = 'geodjango_%s' % js_safe_name\n\n        if value:\n            # Transforming the geometry to the projection used on the\n            # OpenLayers map.\n            srid = self.params['srid']\n            if value.srid != srid:\n                try:\n                    ogr = value.ogr\n                    ogr.transform(srid)\n                    wkt = ogr.wkt\n                except GDALException as err:\n                    logger.error(\n                        \"Error transforming geometry from srid '%s' to srid '%s' (%s)\",\n                        value.srid, srid, err\n                    )\n                    wkt = ''\n            else:\n                wkt = value.wkt\n\n            # Setting the parameter WKT with that of the transformed\n            # geometry.\n            self.params['wkt'] = wkt\n\n        self.params.update(geo_context)\n        return loader.render_to_string(self.template, self.params)"
+        },
+        {
+          "file": "django/contrib/gis/forms/widgets.py",
+          "type": "function",
+          "name": "deserialize",
+          "class_name": "BaseGeometryWidget",
+          "code": "def deserialize(self, value):\n        try:\n            return GEOSGeometry(value, self.map_srid)\n        except (GEOSException, ValueError) as err:\n            logger.error(\"Error creating geometry from value '%s' (%s)\", value, err)\n        return None"
+        }
+      ]
+    },
+    {
+      "pr_number": 9112,
+      "pr_title": "Fixed #27846 -- clear all cached reverse relationships on refresh_from_db()",
+      "pr_body": "https://code.djangoproject.com/ticket/27846",
+      "issue_id": 27846,
+      "issue_title": "refresh_from_db() doesn't clear reverse OneToOneFields",
+      "issue_body": "Sorry for the poor summary, it is difficult to explain in words. I have a project to demo this bug attached to this ticket, but I will try to explain the bug anyway in steps and the setup.\nSetup:\n2 models (A and B)\nB has a OneToOne to A\nBoth A and B have a field (ie TextField)\nSetup either a signal or override save() for A to update B's TextField to equal that of A's on save() or post_save for signals\nSteps:\nCreate instance of A\nGet another copy of the instance of A via A.objects.get()\nCreate instance of B using the copy of the instance of A\nDo refresh_from_db() on original instance of A\nTry to access B from A\nThe project I have provided is a slim version of this problem that demonstrates it with signals, overriden save(), and basic set and save inside the test. The basic set and save works, but the other two fail when using the above steps. Run the test suite to see.",
+      "issue_closed_at": "2017-10-12T16:25:22",
+      "base_commit": "df0aebc893973c78d7d2cda712ba4133dbe29b6e",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "refresh_from_db",
+          "class_name": "Model",
+          "code": "def refresh_from_db(self, using=None, fields=None):\n        \"\"\"\n        Reload field values from the database.\n\n        By default, the reloading happens from the database this instance was\n        loaded from, or by the read router if this instance wasn't loaded from\n        any database. The using parameter will override the default.\n\n        Fields can be used to specify which fields to reload. The fields\n        should be an iterable of field attnames. If fields is None, then\n        all non-deferred fields are reloaded.\n\n        When accessing deferred fields of an instance, the deferred loading\n        of the field will call this method.\n        \"\"\"\n        if fields is not None:\n            if len(fields) == 0:\n                return\n            if any(LOOKUP_SEP in f for f in fields):\n                raise ValueError(\n                    'Found \"%s\" in fields argument. Relations and transforms '\n                    'are not allowed in fields.' % LOOKUP_SEP)\n\n        db = using if using is not None else self._state.db\n        db_instance_qs = self.__class__._default_manager.using(db).filter(pk=self.pk)\n\n        # Use provided fields, if not set then reload all non-deferred fields.\n        deferred_fields = self.get_deferred_fields()\n        if fields is not None:\n            fields = list(fields)\n            db_instance_qs = db_instance_qs.only(*fields)\n        elif deferred_fields:\n            fields = [f.attname for f in self._meta.concrete_fields\n                      if f.attname not in deferred_fields]\n            db_instance_qs = db_instance_qs.only(*fields)\n\n        db_instance = db_instance_qs.get()\n        non_loaded_fields = db_instance.get_deferred_fields()\n        for field in self._meta.concrete_fields:\n            if field.attname in non_loaded_fields:\n                # This field wasn't refreshed - skip ahead.\n                continue\n            setattr(self, field.attname, getattr(db_instance, field.attname))\n            # Throw away stale foreign key references.\n            if field.is_relation and field.is_cached(self):\n                rel_instance = field.get_cached_value(self)\n                local_val = getattr(db_instance, field.attname)\n                related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)\n                if local_val != related_val or (local_val is None and related_val is None):\n                    field.delete_cached_value(self)\n        self._state.db = db_instance._state.db"
+        }
+      ]
+    },
+    {
+      "pr_number": 9396,
+      "pr_title": "[1.11.x] Fixed #28856 -- Fixed an issue with caching of coerced gfk pointing to mti model.",
+      "pr_body": "https://code.djangoproject.com/ticket/28856\r\n\r\nSee #9395 for the patch against master.",
+      "issue_id": 28856,
+      "issue_title": "GenericForeignKey attributes create new instances on every access",
+      "issue_body": "Given these models:\nclass OtherSuper(models.Model):\n    pass\n\n\nclass OtherSub(OtherSuper):\n    pass\n\n\nclass Ref(models.Model):\n    obj_type = models.ForeignKey(ContentType, on_delete=models.PROTECT)\n    obj_id = models.CharField(max_length=255)\n    obj = GenericForeignKey('obj_type', 'obj_id')\nI get this behavior:\nIn [1]: ref = Ref.objects.create(obj=OtherSub.objects.create())\n\nIn [2]: id(ref.obj) == id(ref.obj)\nOut[2]: True\n\nIn [3]: ref.refresh_from_db()\n\nIn [4]: id(ref.obj) == id(ref.obj)\nOut[4]: False\nEach time\nref.obj\nis accessed, a new instance is created for its value. This is a problem, since doing something like\nref.obj.field = 1; ref.obj.save()\nwon't actually update the field in the database. This only happens when the referenced object is an instance of a model that subclasses another model. (So, it wouldn't happen if referencing\nOtherSuper\nin the models above.) The\nrefresh_from_db()\ncall is also necessary to reproduce this in a simple test like the above; it happens with any instance created from an existing DB record.\nI've written a regression test against stable/1.10.x . I'll attach a patch.\nI discovered this because I have code that does the above (changes a field on the related model and calls save). I call this a regression because it works correctly on 1.9.\nI'm not sure what the underly bug is; I looked at the diff in\ncontenttypes\nbetween 1.9 and 1.10, and there are more than a few changes. Hopefully someone who understands the\nGenericForeignKey\nimplementation can figure this out.",
+      "issue_closed_at": "2017-12-08T13:15:18",
+      "base_commit": "3545e844885608932a692d952c12cd863e2320b5",
+      "changes": [
+        {
+          "file": "django/contrib/contenttypes/fields.py",
+          "type": "function",
+          "name": "__get__",
+          "class_name": "GenericForeignKey",
+          "code": "def __get__(self, instance, cls=None):\n        if instance is None:\n            return self\n\n        # Don't use getattr(instance, self.ct_field) here because that might\n        # reload the same ContentType over and over (#5570). Instead, get the\n        # content type ID here, and later when the actual instance is needed,\n        # use ContentType.objects.get_for_id(), which has a global cache.\n        f = self.model._meta.get_field(self.ct_field)\n        ct_id = getattr(instance, f.get_attname(), None)\n        pk_val = getattr(instance, self.fk_field)\n\n        try:\n            rel_obj = getattr(instance, self.cache_attr)\n        except AttributeError:\n            rel_obj = None\n        else:\n            if rel_obj and (ct_id != self.get_content_type(obj=rel_obj, using=instance._state.db).id or\n                            rel_obj._meta.pk.to_python(pk_val) != rel_obj._get_pk_val()):\n                rel_obj = None\n\n        if rel_obj is not None:\n            return rel_obj\n\n        if ct_id is not None:\n            ct = self.get_content_type(id=ct_id, using=instance._state.db)\n            try:\n                rel_obj = ct.get_object_for_this_type(pk=pk_val)\n            except ObjectDoesNotExist:\n                pass\n        setattr(instance, self.cache_attr, rel_obj)\n        return rel_obj"
+        }
+      ]
+    },
+    {
+      "pr_number": 8754,
+      "pr_title": "Fixed #28391 -- Fixed Cast() with CharField and max_length on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/28391",
+      "issue_id": 28391,
+      "issue_title": "Cast doesn't take into account CharField's max_length on MySQL.",
+      "issue_body": "Correct behavior, e.g. (based on\ndb_functions/test_cast.py\n):\n>>> Author.objects.create(name='Bob', age=1111)\n>>> numbers = Author.objects.annotate(cast_string=Cast('age', models.CharField(max_length=3)))\n>>> numbers.get().cast_string\n111\non MySQL it returns\n1111\n(related with\n#28371\n).",
+      "issue_closed_at": "2017-07-17T14:12:39",
+      "base_commit": "feeafdad02e2874e2e2f879a825d3527f6b193ad",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite cannot handle us only partially reading from a cursor's result set\n    # and then writing the same rows to the database in another cursor. This\n    # setting ensures we always read result sets fully into memory all in one\n    # go.\n    can_use_chunked_reads = False\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    has_bulk_insert = True\n    supports_column_check_constraints = False\n    autocommits_when_autocommit_is_off = True\n    can_introspect_decimal_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n\n    @cached_property\n    def uses_savepoints(self):\n        return Database.sqlite_version_info >= (3, 6, 8)\n\n    @cached_property\n    def supports_index_column_ordering(self):\n        return Database.sqlite_version_info >= (3, 3, 0)\n\n    @cached_property\n    def can_release_savepoints(self):\n        return self.uses_savepoints\n\n    @cached_property\n    def can_share_in_memory_db(self):\n        return (\n            Database.__name__ == 'sqlite3.dbapi2' and\n            Database.sqlite_version_info >= (3, 7, 13)\n        )\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "clean",
+          "class_name": "Field",
+          "code": "def clean(self, value, model_instance):\n        \"\"\"\n        Convert the value's type and run validation. Validation errors\n        from to_python() and validate() are propagated. Return the correct\n        value if no error is raised.\n        \"\"\"\n        value = self.to_python(value)\n        self.validate(value, model_instance)\n        self.run_validators(value)\n        return value"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "db_type",
+          "class_name": "Field",
+          "code": "def db_type(self, connection):\n        \"\"\"\n        Return the database column data type for this field, for the provided\n        connection.\n        \"\"\"\n        # The default implementation of this method looks at the\n        # backend-specific data_types dictionary, looking up the field by its\n        # \"internal type\".\n        #\n        # A Field class can implement the get_internal_type() method to specify\n        # which *preexisting* Django Field class it's most similar to -- i.e.,\n        # a custom field might be represented by a TEXT column type, which is\n        # the same as the TextField Django field type, which means the custom\n        # field's get_internal_type() returns 'TextField'.\n        #\n        # But the limitation of the get_internal_type() / data_types approach\n        # is that it cannot handle database column types that aren't already\n        # mapped to one of the built-in Django field types. In this case, you\n        # can implement db_type() instead of get_internal_type() to specify\n        # exactly which wacky database column type you want to use.\n        data = DictWrapper(self.__dict__, connection.ops.quote_name, \"qn_\")\n        try:\n            return connection.data_types[self.get_internal_type()] % data\n        except KeyError:\n            return None"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "class",
+          "name": "Cast",
+          "code": "class Cast(Func):\n    \"\"\"Coerce an expression to a new field type.\"\"\"\n    function = 'CAST'\n    template = '%(function)s(%(expressions)s AS %(db_type)s)'\n\n    mysql_types = {\n        fields.CharField: 'char',\n        fields.IntegerField: 'signed integer',\n        fields.BigIntegerField: 'signed integer',\n        fields.SmallIntegerField: 'signed integer',\n        fields.FloatField: 'signed',\n        fields.PositiveIntegerField: 'unsigned integer',\n        fields.PositiveSmallIntegerField: 'unsigned integer',\n    }\n\n    def __init__(self, expression, output_field):\n        super().__init__(expression, output_field=output_field)\n\n    def as_sql(self, compiler, connection, **extra_context):\n        if 'db_type' not in extra_context:\n            extra_context['db_type'] = self.output_field.db_type(connection)\n        return super().as_sql(compiler, connection, **extra_context)\n\n    def as_mysql(self, compiler, connection):\n        extra_context = {}\n        output_field_class = type(self.output_field)\n        if output_field_class in self.mysql_types:\n            extra_context['db_type'] = self.mysql_types[output_field_class]\n        return self.as_sql(compiler, connection, **extra_context)\n\n    def as_postgresql(self, compiler, connection):\n        # CAST would be valid too, but the :: shortcut syntax is more readable.\n        return self.as_sql(compiler, connection, template='%(expressions)s::%(db_type)s')"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "function",
+          "name": "as_mysql",
+          "class_name": "Length",
+          "code": "def as_mysql(self, compiler, connection):\n        return super().as_sql(compiler, connection, function='CHAR_LENGTH')"
+        }
+      ]
+    },
+    {
+      "pr_number": 14267,
+      "pr_title": "[3.2.x] Fixed #32548 -- Fixed crash when combining Q() objects with boolean expressions.",
+      "pr_body": "See [comment](https://code.djangoproject.com/ticket/32651#comment:4).\r\n\r\nBackport of 00b0786de533dbb3f6208d8d5eaddbf765b4e5b8 from main.\r\n\r\nRegression in 466920f6d726eee90d5566e0a9948e92b33a122e.\r\n\r\nI will forwardport release notes.",
+      "issue_id": 32548,
+      "issue_title": "Combining Q() objects with boolean expressions crashes.",
+      "issue_body": "Currently Q objects with 1 child are treated differently during deconstruct.\n>>> from django.db.models import Q\n>>> Q(x=1).deconstruct()\n('django.db.models.Q', (), {'x': 1})\n>>> Q(x=1, y=2).deconstruct()\n('django.db.models.Q', (('x', 1), ('y', 2)), {})\nThis causes issues when deconstructing Q objects with a non-subscriptable child.\n>>> from django.contrib.auth import get_user_model\n>>> from django.db.models import Exists\n>>> Q(Exists(get_user_model().objects.filter(username='jim'))).deconstruct()\nTraceback (most recent call last):\n  File \"<console>\", line 1, in <module>\n  File \"...\", line 90, in deconstruct\n    kwargs = {child[0]: child[1]}\nTypeError: 'Exists' object is not subscriptable\nPatch\n​\nhttps://github.com/django/django/pull/14126\nremoves the special case, meaning single-child Q objects deconstruct into args instead of kwargs. A more backward-compatible approach would be to keep the special case and explicitly check that the child is a length-2 tuple, but it's unlikely that anyone is relying on this undocumented behavior.",
+      "issue_closed_at": "2021-03-18T00:11:10",
+      "base_commit": "65dfb06a1ab56c238cc80f5e1c31f61210c4577d",
+      "changes": [
+        {
+          "file": "django/db/models/query_utils.py",
+          "type": "function",
+          "name": "deconstruct",
+          "class_name": "Q",
+          "code": "def deconstruct(self):\n        path = '%s.%s' % (self.__class__.__module__, self.__class__.__name__)\n        if path.startswith('django.db.models.query_utils'):\n            path = path.replace('django.db.models.query_utils', 'django.db.models')\n        args, kwargs = (), {}\n        if len(self.children) == 1 and not isinstance(self.children[0], Q):\n            child = self.children[0]\n            kwargs = {child[0]: child[1]}\n        else:\n            args = tuple(self.children)\n            if self.connector != self.default:\n                kwargs = {'_connector': self.connector}\n        if self.negated:\n            kwargs['_negated'] = True\n        return path, args, kwargs"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "instance_id": "sympy__sympy-18189",
+  "repo": "sympy/sympy",
+  "created_at": "2019-12-31T15:45:24Z",
+  "problem_statement": "diophantine: incomplete results depending on syms order with permute=True\n```\r\nIn [10]: diophantine(n**4 + m**4 - 2**4 - 3**4, syms=(m,n), permute=True)\r\nOut[10]: {(-3, -2), (-3, 2), (-2, -3), (-2, 3), (2, -3), (2, 3), (3, -2), (3, 2)}\r\n\r\nIn [11]: diophantine(n**4 + m**4 - 2**4 - 3**4, syms=(n,m), permute=True)\r\nOut[11]: {(3, 2)}\r\n```\r\n\ndiophantine: incomplete results depending on syms order with permute=True\n```\r\nIn [10]: diophantine(n**4 + m**4 - 2**4 - 3**4, syms=(m,n), permute=True)\r\nOut[10]: {(-3, -2), (-3, 2), (-2, -3), (-2, 3), (2, -3), (2, 3), (3, -2), (3, 2)}\r\n\r\nIn [11]: diophantine(n**4 + m**4 - 2**4 - 3**4, syms=(n,m), permute=True)\r\nOut[11]: {(3, 2)}\r\n```\r\n\n",
+  "patch": "diff --git a/sympy/solvers/diophantine.py b/sympy/solvers/diophantine.py\n--- a/sympy/solvers/diophantine.py\n+++ b/sympy/solvers/diophantine.py\n@@ -182,7 +182,7 @@ def diophantine(eq, param=symbols(\"t\", integer=True), syms=None,\n             if syms != var:\n                 dict_sym_index = dict(zip(syms, range(len(syms))))\n                 return {tuple([t[dict_sym_index[i]] for i in var])\n-                            for t in diophantine(eq, param)}\n+                            for t in diophantine(eq, param, permute=permute)}\n         n, d = eq.as_numer_denom()\n         if n.is_number:\n             return set()\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 15286,
+      "pr_title": "Implemented finding equation of Ellipse using slope as parameter and another method for calculation of circumference of ellipse - continued",
+      "pr_body": "Implemented finding equation of Ellipse using slope as parameter.\r\n\r\nWhen the rotated ellipse is supported, this calculation can still be used but the `_slope` keyword will not be needed: the slope will be an attribute of the rotated ellipse.\r\n\r\nFixes #2815\r\nFixes #6952\r\nCloses #15053 \r\n\r\nThis PR uses the approach to finding equation of ellipse using slope, length of semi minor axis and length of semi major axis as inputs given [here](https://math.stackexchange.com/questions/108270/what-is-the-equation-of-an-ellipse-that-is-not-aligned-with-the-axis/646971#646971)\r\nThis could be an added functionality to the equation finding method in class `Ellipse`.\r\nThanks to @smichr  for providing the approach.\r\n\r\nNote : This is a continuation of #15053 \r\nPlease take a look at this PR and suggest changes. I will be glad to implement them.\r\nThanks.\r\n\r\n#### Release Notes\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\n* geometry\r\n   * Implemented private method for finding equation of Ellipse using `_slope` as parameter\r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 6952,
+      "issue_title": "recognize elliptical integrals",
+      "issue_body": "```\nThis requires about 2 minutes\n\n>>> Ellipse((0,0),3,1).circumference.n()\n13.3648932205553\n\n\nThis is nearly instantaneous\n\n>>> def EllipseCircumference(a, b):\n...    \"\"\"\n...    Compute the circumference of an ellipse with semi-axes a and b.\n...    Require a >= 0 and b >= 0.  Relative accuracy is about 0.5^53.\n...    \"\"\"\n...    import math\n...    x, y = max(a, b), min(a, b)\n...    digits = 53; tol = math.sqrt(math.pow(0.5, digits))\n...    if digits * y < tol * x: return 4 * x\n...    s = 0; m = 1\n...    while x - y > tol * y:\n...       x, y = 0.5 * (x + y), math.sqrt(x * y)\n...       m *= 2; s += m * math.pow(x - y, 2)\n...    return math.pi * (math.pow(a + b, 2) - s) / (x + y)\n...\n>>> EllipseCircumference(3,1)\n13.364893220555258\n>>>\n\nPerhaps recognition of such integrals by integrate/Integral.evalf would be a good idea.\n```\n\nOriginal issue for #6952: http://code.google.com/p/sympy/issues/detail?id=3853\nOriginal author: https://code.google.com/u/117933771799683895267/\n",
+      "issue_closed_at": "2018-10-01T21:27:53Z",
+      "base_commit": "5997e30a33f92e6b4b4d351e835feb7379a0e31d",
+      "changes": [
+        {
+          "file": "sympy/geometry/ellipse.py",
+          "type": "function",
+          "name": "encloses_point",
+          "class_name": "Ellipse",
+          "code": "def encloses_point(self, p):\n        \"\"\"\n        Return True if p is enclosed by (is inside of) self.\n\n        Notes\n        -----\n        Being on the border of self is considered False.\n\n        Parameters\n        ==========\n\n        p : Point\n\n        Returns\n        =======\n\n        encloses_point : True, False or None\n\n        See Also\n        ========\n\n        sympy.geometry.point.Point\n\n        Examples\n        ========\n\n        >>> from sympy import Ellipse, S\n        >>> from sympy.abc import t\n        >>> e = Ellipse((0, 0), 3, 2)\n        >>> e.encloses_point((0, 0))\n        True\n        >>> e.encloses_point(e.arbitrary_point(t).subs(t, S.Half))\n        False\n        >>> e.encloses_point((4, 0))\n        False\n\n        \"\"\"\n        p = Point(p, dim=2)\n        if p in self:\n            return False\n\n        if len(self.foci) == 2:\n            # if the combined distance from the foci to p (h1 + h2) is less\n            # than the combined distance from the foci to the minor axis\n            # (which is the same as the major axis length) then p is inside\n            # the ellipse\n            h1, h2 = [f.distance(p) for f in self.foci]\n            test = 2*self.major - (h1 + h2)\n        else:\n            test = self.radius - self.center.distance(p)\n\n        return fuzzy_bool(test.is_positive)"
+        },
+        {
+          "file": "sympy/geometry/ellipse.py",
+          "type": "function",
+          "name": "equation",
+          "class_name": "Circle",
+          "code": "def equation(self, x='x', y='y'):\n        \"\"\"The equation of the circle.\n\n        Parameters\n        ==========\n\n        x : str or Symbol, optional\n            Default value is 'x'.\n        y : str or Symbol, optional\n            Default value is 'y'.\n\n        Returns\n        =======\n\n        equation : SymPy expression\n\n        Examples\n        ========\n\n        >>> from sympy import Point, Circle\n        >>> c1 = Circle(Point(0, 0), 5)\n        >>> c1.equation()\n        x**2 + y**2 - 25\n\n        \"\"\"\n        x = _symbol(x, real=True)\n        y = _symbol(y, real=True)\n        t1 = (x - self.center.x)**2\n        t2 = (y - self.center.y)**2\n        return t1 + t2 - self.major**2"
+        },
+        {
+          "file": "sympy/geometry/ellipse.py",
+          "type": "function",
+          "name": "equation",
+          "class_name": "Circle",
+          "code": "def equation(self, x='x', y='y'):\n        \"\"\"The equation of the circle.\n\n        Parameters\n        ==========\n\n        x : str or Symbol, optional\n            Default value is 'x'.\n        y : str or Symbol, optional\n            Default value is 'y'.\n\n        Returns\n        =======\n\n        equation : SymPy expression\n\n        Examples\n        ========\n\n        >>> from sympy import Point, Circle\n        >>> c1 = Circle(Point(0, 0), 5)\n        >>> c1.equation()\n        x**2 + y**2 - 25\n\n        \"\"\"\n        x = _symbol(x, real=True)\n        y = _symbol(y, real=True)\n        t1 = (x - self.center.x)**2\n        t2 = (y - self.center.y)**2\n        return t1 + t2 - self.major**2"
+        }
+      ]
+    },
+    {
+      "pr_number": 8627,
+      "pr_title": "Bug Fix #8626",
+      "pr_body": "Let me know if a test case is needed\n",
+      "issue_id": 8626,
+      "issue_title": "bug in physics/mechanics/lagrange.py",
+      "issue_body": "When providing a `forcelist` with more than one force, not all terms are computed,\nthis comes from the fact that the iterator `flist = zip(*_f_list_parser(self.forcelist, N))` is consumed in the first iteration of the loop.\n\nI propose a following PR that fixes the bug, let me know if I need to also provide a test case.\n\nBest,\nGuillaume\n",
+      "issue_closed_at": "2015-01-06T16:57:16Z",
+      "base_commit": "65f7c8c2c9c1927eaa8520c4ce06864f93a20ad1",
+      "changes": [
+        {
+          "file": "sympy/physics/mechanics/lagrange.py",
+          "type": "function",
+          "name": "form_lagranges_equations",
+          "class_name": "LagrangesMethod",
+          "code": "def form_lagranges_equations(self):\n        \"\"\"Method to form Lagrange's equations of motion.\n\n        Returns a vector of equations of motion using Lagrange's equations of\n        the second kind.\n        \"\"\"\n\n        qds = self._qdots\n        qdd_zero = dict((i, 0) for i in self._qdoubledots)\n        n = len(self.q)\n\n        # Internally we represent the EOM as four terms:\n        # EOM = term1 - term2 - term3 - term4 = 0\n\n        # First term\n        self._term1 = self._L.jacobian(qds)\n        self._term1 = self._term1.diff(dynamicsymbols._t).T\n\n        # Second term\n        self._term2 = self._L.jacobian(self.q).T\n\n        # Third term\n        if self.coneqs:\n            coneqs = self.coneqs\n            m = len(coneqs)\n            # Creating the multipliers\n            self.lam_vec = Matrix(dynamicsymbols('lam1:' + str(m + 1)))\n            self.lam_coeffs = -coneqs.jacobian(qds)\n            self._term3 = self.lam_coeffs.T * self.lam_vec\n            # Extracting the coeffecients of the qdds from the diff coneqs\n            diffconeqs = coneqs.diff(dynamicsymbols._t)\n            self._m_cd = diffconeqs.jacobian(self._qdoubledots)\n            # The remaining terms i.e. the 'forcing' terms in diff coneqs\n            self._f_cd = -diffconeqs.subs(qdd_zero)\n        else:\n            self._term3 = zeros(n, 1)\n\n        # Fourth term\n        if self.forcelist:\n            N = self.inertial\n            self._term4 = zeros(n, 1)\n            flist = zip(*_f_list_parser(self.forcelist, N))\n            for i, qd in enumerate(qds):\n                for obj, force in self.forcelist:\n                    self._term4[i] = sum(v.diff(qd, N) & f for (v, f) in flist)\n        else:\n            self._term4 = zeros(n, 1)\n\n        # Form the dynamic mass and forcing matrices\n        without_lam = self._term1 - self._term2 - self._term4\n        self._m_d = without_lam.jacobian(self._qdoubledots)\n        self._f_d = -without_lam.subs(qdd_zero)\n\n        # Form the EOM\n        self.eom = without_lam - self._term3\n        return self.eom"
+        }
+      ]
+    },
+    {
+      "pr_number": 13437,
+      "pr_title": "Fix bell(n) for n=oo, and negative/non-integer 'n'",
+      "pr_body": "This PR uses commits of #9198 (maintaining ownership to original author). And tries to address the requested changes on PR #9198 .\r\nFixes #9184",
+      "issue_id": 9184,
+      "issue_title": "bell(n).limit(n, oo) should be oo rather than bell(oo)",
+      "issue_body": "`bell(n).limit(n,oo)` should take the value infinity, but the current output is `bell(oo)`. As the Bell numbers represent the number of partitions of a set, it seems natural that `bell(oo)` should be able to be evaluated rather than be returned unevaluated. This issue is also in line with the recent fixes to the corresponding limit for the Fibonacci numbers and Lucas numbers.\n\n```\nfrom sympy import *\nn = symbols('n')\nbell(n).limit(n,oo)\n\nOutput:\nbell(oo)\n```\n\nI'm new to Sympy, so I'd appreciate the opportunity to fix this bug myself if that's alright.\n",
+      "issue_closed_at": "2017-10-13T04:35:13Z",
+      "base_commit": "674afc619d7f5c519b6a5393a8b0532a131e57e0",
+      "changes": [
+        {
+          "file": "sympy/functions/combinatorial/numbers.py",
+          "type": "function",
+          "name": "_bell_incomplete_poly",
+          "class_name": "bell",
+          "code": "def _bell_incomplete_poly(n, k, symbols):\n        r\"\"\"\n        The second kind of Bell polynomials (incomplete Bell polynomials).\n\n        Calculated by recurrence formula:\n\n        .. math:: B_{n,k}(x_1, x_2, \\dotsc, x_{n-k+1}) =\n                \\sum_{m=1}^{n-k+1}\n                \\x_m \\binom{n-1}{m-1} B_{n-m,k-1}(x_1, x_2, \\dotsc, x_{n-m-k})\n\n        where\n            B_{0,0} = 1;\n            B_{n,0} = 0; for n>=1\n            B_{0,k} = 0; for k>=1\n\n        \"\"\"\n        if (n == 0) and (k == 0):\n            return S.One\n        elif (n == 0) or (k == 0):\n            return S.Zero\n        s = S.Zero\n        a = S.One\n        for m in range(1, n - k + 2):\n            s += a * bell._bell_incomplete_poly(\n                n - m, k - 1, symbols) * symbols[m - 1]\n            a = a * (n - m) / m\n        return expand_mul(s)"
+        }
+      ]
+    },
+    {
+      "pr_number": 15349,
+      "pr_title": "quaternions: fix a sign mistake in the definition of the rotation matrix",
+      "pr_body": "quaternions: fix a sign mistake in definition of rotation matrix\r\n<!-- Your title above should be a short description of what\r\nwas changed. Do not include the issue number in the title. -->\r\n\r\n#### References to other Issues or PRs\r\n<!-- If this pull request fixes an issue, write \"Fixes #NNNN\" in that exact\r\nformat, e.g. \"Fixes #1234\". See\r\nhttps://github.com/blog/1506-closing-issues-via-pull-requests .-->\r\n\r\nFixes #15193.\r\n#### Brief description of what is fixed or changed\r\nSign was corrected. A unit test added. Other unit tests fixed with the correct values.\r\n\r\n#### Other comments\r\n\r\n\r\n#### Release Notes\r\n\r\n<!-- Write the release notes for this release below. See\r\nhttps://github.com/sympy/sympy/wiki/Writing-Release-Notes for more information\r\non how to write release notes. The bot will check your release notes\r\nautomatically to see if they are formatted correctly. -->\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\n* algebras\r\n    * fix sign mistake in Quaternion.to_rotation_matrix method\r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 15193,
+      "issue_title": "Incorrect result with Quaterniont.to_rotation_matrix()",
+      "issue_body": "https://github.com/sympy/sympy/blob/ab14b02dba5a7e3e4fb1e807fc8a954f1047a1a1/sympy/algebras/quaternion.py#L489\r\n\r\nThere appears to be an error in the `Quaternion.to_rotation_matrix()` output.  The simplest example I created to illustrate the problem is as follows:\r\n\r\n```\r\n>>import sympy\r\n>>print('Sympy version: ', sympy.__version__)\r\nSympy version: 1.2\r\n\r\n>> from sympy import *\r\n>> x = symbols('x')\r\n>> q = Quaternion(cos(x/2), sin(x/2), 0, 0)\r\n>> trigsimp(q.to_rotation_matrix())\r\nMatrix([\r\n[1,      0,      0],\r\n[0, cos(x), sin(x)],\r\n[0, sin(x), cos(x)]])\r\n```\r\nOne of the `sin(x)` functions should be negative.  What was the reference of the original equations?  ",
+      "issue_closed_at": "2018-10-07T10:54:51Z",
+      "base_commit": "768da1c6f6ec907524b8ebbf6bf818c92b56101b",
+      "changes": [
+        {
+          "file": "sympy/algebras/quaternion.py",
+          "type": "function",
+          "name": "to_rotation_matrix",
+          "class_name": "Quaternion",
+          "code": "def to_rotation_matrix(self, v=None):\n        \"\"\"Returns the equivalent rotation transformation matrix of the quaternion\n        which represents rotation about the origin if v is not passed.\n\n        Example\n        ========\n\n        >>> from sympy.algebras.quaternion import Quaternion\n        >>> from sympy import symbols, trigsimp, cos, sin\n        >>> x = symbols('x')\n        >>> q = Quaternion(cos(x/2), 0, 0, sin(x/2))\n        >>> trigsimp(q.to_rotation_matrix())\n        Matrix([\n        [cos(x), -sin(x), 0],\n        [sin(x),  cos(x), 0],\n        [     0,       0, 1]])\n\n        Generates a 4x4 transformation matrix (used for rotation about a point\n        other than the origin) if the point(v) is passed as an argument.\n\n        Example\n        ========\n\n        >>> from sympy.algebras.quaternion import Quaternion\n        >>> from sympy import symbols, trigsimp, cos, sin\n        >>> x = symbols('x')\n        >>> q = Quaternion(cos(x/2), 0, 0, sin(x/2))\n        >>> trigsimp(q.to_rotation_matrix((1, 1, 1)))\n         Matrix([\n        [cos(x), -sin(x), 0,  sin(x) - cos(x) + 1],\n        [sin(x),  cos(x), 0, -sin(x) - cos(x) + 1],\n        [     0,       0, 1,                    0],\n        [     0,       0, 0,                    1]])\n        \"\"\"\n\n        q = self\n        s = q.norm()**-2\n        m00 = 1 - 2*s*(q.c**2 + q.d**2)\n        m01 = 2*s*(q.b*q.c - q.d*q.a)\n        m02 = 2*s*(q.b*q.d + q.c*q.a)\n\n        m10 = 2*s*(q.b*q.c + q.d*q.a)\n        m11 = 1 - 2*s*(q.b**2 + q.d**2)\n        m12 = 2*s*(q.c*q.d + q.b*q.a)\n\n        m20 = 2*s*(q.b*q.d - q.c*q.a)\n        m21 = 2*s*(q.c*q.d + q.b*q.a)\n        m22 = 1 - 2*s*(q.b**2 + q.c**2)\n\n        if not v:\n            return Matrix([[m00, m01, m02], [m10, m11, m12], [m20, m21, m22]])\n\n        else:\n            (x, y, z) = v\n\n            m03 = x - x*m00 - y*m01 - z*m02\n            m13 = y - x*m10 - y*m11 - z*m12\n            m23 = z - x*m20 - y*m21 - z*m22\n            m30 = m31 = m32 = 0\n            m33 = 1\n\n            return Matrix([[m00, m01, m02, m03], [m10, m11, m12, m13],\n                          [m20, m21, m22, m23], [m30, m31, m32, m33]])"
+        }
+      ]
+    },
+    {
+      "pr_number": 8548,
+      "pr_title": "Issue #6988: expand_log(exp(x), force=True) = x",
+      "pr_body": "This is a try to fix issue #6988. If I made some mistake just let me know, as I'm still new to sympy development.\n\n```\nIn [9]: expand_log(log(exp(x)), force=True)\nOut[9]: x\n\nIn [10]: expand_log(log(y**(x)), force=True)\nOut[10]: x\u22c5log(y)\n```\n",
+      "issue_id": 6988,
+      "issue_title": "expand_log(exp(x), force=True) should give x",
+      "issue_body": "```\nIn [5]: expand_log(log(exp(x)), force=True)\nOut[5]:\n   \u239b x\u239e\nlog\u239d\u212f \u23a0\n\nIn [6]: expand_log(log(y**(x)), force=True)\nOut[6]: x\u22c5log(y) Issue 1799 is probably to blame.\n```\n\nOriginal issue for #6988: http://code.google.com/p/sympy/issues/detail?id=3889\nOriginal author: https://code.google.com/u/asmeurer@gmail.com/\n",
+      "issue_closed_at": "2014-12-03T13:34:14Z",
+      "base_commit": "e6fc53f27ee872b27bc79b96529fc4bf34d4f023",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/exponential.py",
+          "type": "function",
+          "name": "_eval_expand_log",
+          "class_name": "log",
+          "code": "def _eval_expand_log(self, deep=True, **hints):\n        from sympy import unpolarify\n        from sympy.concrete import Sum, Product\n        force = hints.get('force', False)\n        arg = self.args[0]\n        if arg.is_Integer:\n            # remove perfect powers\n            p = perfect_power(int(arg))\n            if p is not False:\n                return p[1]*self.func(p[0])\n        elif arg.is_Mul:\n            expr = []\n            nonpos = []\n            for x in arg.args:\n                if force or x.is_positive or x.is_polar:\n                    a = self.func(x)\n                    if isinstance(a, log):\n                        expr.append(self.func(x)._eval_expand_log(**hints))\n                    else:\n                        expr.append(a)\n                elif x.is_negative:\n                    a = self.func(-x)\n                    expr.append(a)\n                    nonpos.append(S.NegativeOne)\n                else:\n                    nonpos.append(x)\n            return Add(*expr) + log(Mul(*nonpos))\n        elif arg.is_Pow:\n            if force or (arg.exp.is_real and arg.base.is_positive) or \\\n                    arg.base.is_polar:\n                b = arg.base\n                e = arg.exp\n                a = self.func(b)\n                if isinstance(a, log):\n                    return unpolarify(e) * a._eval_expand_log(**hints)\n                else:\n                    return unpolarify(e) * a\n        elif isinstance(arg, Product):\n            if arg.function.is_positive:\n                return Sum(log(arg.function), *arg.limits)\n\n        return self.func(arg)"
+        }
+      ]
+    }
+  ]
+}

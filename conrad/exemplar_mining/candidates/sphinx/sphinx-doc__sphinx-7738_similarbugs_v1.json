@@ -1,0 +1,185 @@
+{
+  "instance_id": "sphinx-doc__sphinx-7738",
+  "repo": "sphinx-doc/sphinx",
+  "created_at": "2020-05-27T16:48:09Z",
+  "problem_statement": "overescaped trailing underscore on attribute with napoleon\n**Describe the bug**\r\nAttribute name `hello_` shows up as `hello\\_` in the html (visible backslash) with napoleon.\r\n\r\n**To Reproduce**\r\nSteps to reproduce the behavior:\r\n\r\nempty `__init__.py`\r\n`a.py` contains\r\n```python\r\nclass A:\r\n    \"\"\"\r\n    Attributes\r\n    ----------\r\n    hello_: int\r\n        hi\r\n    \"\"\"\r\n    pass\r\n```\r\nrun `sphinx-quickstart`\r\nadd `'sphinx.ext.autodoc', 'sphinx.ext.napoleon'` to extensions in conf.py.\r\nadd `.. autoclass:: a.A` to index.rst\r\nPYTHONPATH=. make clean html\r\nopen _build/html/index.html in web browser and see the ugly backslash.\r\n\r\n**Expected behavior**\r\nNo backslash, a similar output to what I get for\r\n```rst\r\n    .. attribute:: hello_\r\n        :type: int\r\n\r\n        hi\r\n```\r\n(the type shows up differently as well, but that's not the point here)\r\nOlder versions like 2.4.3 look ok to me.\r\n\r\n**Environment info**\r\n- OS: Linux debian testing\r\n- Python version: 3.8.3\r\n- Sphinx version: 3.0.4\r\n- Sphinx extensions:  sphinx.ext.autodoc, sphinx.ext.napoleon\r\n- Extra tools:\n",
+  "patch": "diff --git a/sphinx/ext/napoleon/docstring.py b/sphinx/ext/napoleon/docstring.py\n--- a/sphinx/ext/napoleon/docstring.py\n+++ b/sphinx/ext/napoleon/docstring.py\n@@ -318,7 +318,7 @@ def _dedent(self, lines: List[str], full: bool = False) -> List[str]:\n             return [line[min_indent:] for line in lines]\n \n     def _escape_args_and_kwargs(self, name: str) -> str:\n-        if name.endswith('_'):\n+        if name.endswith('_') and getattr(self._config, 'strip_signature_backslash', False):\n             name = name[:-1] + r'\\_'\n \n         if name[:2] == '**':\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 6226,
+      "pr_title": "C++, fix parsing of full xrefs.",
+      "pr_body": "If a full xref has a short xref as prefix, e.g., ``T f()``, parsing would fail.\r\n\r\n### Relates\r\n- Fixes #6208\r\n\r\n",
+      "issue_id": 6208,
+      "issue_title": "Cross-referencing a function that returns a pointer with :cpp:func: causes error \"Invalid definition: Expected end of definition\"",
+      "issue_body": "**Describe the bug**\r\nWhile using the :cpp:func: directive to cross-reference a C++ function that returns a pointer, you will receivean error that the * character in the reference is \"unparseable\". This makes it impossible to cross-reference a function with a pointer return value\r\n\r\n**To Reproduce**\r\nSteps to reproduce the behavior:\r\n\r\nSource (C++): \r\n```\r\nclass Foo\r\n{\r\n    public:\r\n        Foo* Bar();\r\n}   \r\n```\r\nSphinx (reStructuredText):\r\n```\r\n:cpp:func:`Foo* Foo::Bar()`\r\n```\r\n\r\nResult:\r\n```\r\nWARNING: Unpareseable C++ cross-reference: 'Foo*'\r\nInvalid definition: Expected end of definition. [error at 4]\r\n   Foo*\r\n   ---^\r\n```\r\n\r\n**Expected behavior**\r\nThe expected behavior is to output a properly cross-referenced link to the Foo* Foo::Bar() function.\r\n\r\n**Your project**\r\nN/A\r\n\r\n**Screenshots**\r\nN/A\r\n\r\n**Environment info**\r\n- OS: [e.g. Unix/Linux/Mac/Win/other with version]\r\n- Python version: 3.7.0\r\n- Sphinx version: 2.0.0+\r\n- Sphinx extensions:  breathe\r\n- Extra tools: N/A",
+      "issue_closed_at": "2019-04-04T16:57:06Z",
+      "base_commit": "8925358eca5fb640543d8c531427f5e50063c782",
+      "changes": [
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "function",
+          "name": "parse_xref_object",
+          "class_name": "DefinitionParser",
+          "code": "def parse_xref_object(self):\n        # type: () -> Tuple[Any, bool]\n        pos = self.pos\n        try:\n            templatePrefix = self._parse_template_declaration_prefix(objectType=\"xref\")\n            name = self._parse_nested_name()\n            # if there are '()' left, just skip them\n            self.skip_ws()\n            self.skip_string('()')\n            templatePrefix = self._check_template_consistency(name, templatePrefix,\n                                                              fullSpecShorthand=True)\n            res1 = ASTNamespace(name, templatePrefix)\n            res1.objectType = 'xref'  # type: ignore\n            return res1, True\n        except DefinitionError as e1:\n            try:\n                self.pos = pos\n                res2 = self.parse_declaration('function', 'function')\n                # if there are '()' left, just skip them\n                self.skip_ws()\n                self.skip_string('()')\n                return res2, False\n            except DefinitionError as e2:\n                errs = []\n                errs.append((e1, \"If shorthand ref\"))\n                errs.append((e2, \"If full function ref\"))\n                msg = \"Error in cross-reference.\"\n                raise self._make_multi_error(errs, msg)"
+        },
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "function",
+          "name": "parse_xref_object",
+          "class_name": "DefinitionParser",
+          "code": "def parse_xref_object(self):\n        # type: () -> Tuple[Any, bool]\n        pos = self.pos\n        try:\n            templatePrefix = self._parse_template_declaration_prefix(objectType=\"xref\")\n            name = self._parse_nested_name()\n            # if there are '()' left, just skip them\n            self.skip_ws()\n            self.skip_string('()')\n            templatePrefix = self._check_template_consistency(name, templatePrefix,\n                                                              fullSpecShorthand=True)\n            res1 = ASTNamespace(name, templatePrefix)\n            res1.objectType = 'xref'  # type: ignore\n            return res1, True\n        except DefinitionError as e1:\n            try:\n                self.pos = pos\n                res2 = self.parse_declaration('function', 'function')\n                # if there are '()' left, just skip them\n                self.skip_ws()\n                self.skip_string('()')\n                return res2, False\n            except DefinitionError as e2:\n                errs = []\n                errs.append((e1, \"If shorthand ref\"))\n                errs.append((e2, \"If full function ref\"))\n                msg = \"Error in cross-reference.\"\n                raise self._make_multi_error(errs, msg)"
+        },
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "function",
+          "name": "warn",
+          "class_name": "Warner",
+          "code": "def warn(self, msg):\n                if emitWarnings:\n                    logger.warning(msg, location=node)"
+        },
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "function",
+          "name": "findWarning",
+          "class_name": null,
+          "code": "def findWarning(e):  # as arg to stop flake8 from complaining\n                if typ != 'any' and typ != 'func':\n                    return target, e\n                # hax on top of the paren hax to try to get correct errors\n                parser2 = DefinitionParser(target[:-2], warner, env.config)\n                try:\n                    parser2.parse_xref_object()\n                    parser2.assert_end()\n                except DefinitionError as e2:\n                    return target[:-2], e2\n                # strange, that we don't get the error now, use the original\n                return target, e"
+        }
+      ]
+    },
+    {
+      "pr_number": 5590,
+      "pr_title": "Move language-specific data into a new JS file, language_data.js",
+      "pr_body": "Subject: Make search work with old templates\r\n\r\n### Feature or Bugfix\r\nBugfix\r\n\r\n### Purpose\r\nNot all templates use `documentation_options.js`. The examples are old versions of sphinx-rtd-theme and many other third-party themes. However currently searchtools.js does not work without some classes, which are defined in `documentation_options.js`. This pull request moves these classes to a separate file `language_data.js` which is always included, even for old templates.\r\n\r\n### Relates\r\nFixes #5460.",
+      "issue_id": 5460,
+      "issue_title": "Search does not work for docs built with 1.8.0",
+      "issue_body": "Subject: Docs built with sphinx 1.8.0 have broken search\r\n\r\n\r\n### Problem\r\n- Search returns no results for all queries. When I build using 1.7.9 everything works fine. \r\n\r\n#### Procedure to reproduce the problem\r\n\r\n - build docs with sphinx 1.8.0\r\n - try to search the docs using the search textbox\r\n - no results ever show\r\n\r\n#### Expected results\r\n Search works\r\n\r\n### Environment info\r\n- OS: Fedora 28\r\n- Python version: 3.6\r\n- Sphinx version: 1.8.0\r\n",
+      "issue_closed_at": "2018-11-11T08:58:46Z",
+      "base_commit": "66867111c8444d95cbd25e888077a5178cc1caa0",
+      "changes": [
+        {
+          "file": "doc/conf.py",
+          "type": "line",
+          "name": "line 44",
+          "code": "epub_exclude_files = ['_static/opensearch.xml', '_static/doctools.js',\n                      '_static/jquery.js', '_static/searchtools.js',\n                      '_static/underscore.js', '_static/basic.css',\n                      'search.html', '_static/websupport.js']\nepub_fix_images = False\nepub_max_image_width = 0"
+        },
+        {
+          "file": "sphinx/builders/html.py",
+          "type": "function",
+          "name": "init_js_files",
+          "class_name": "StandaloneHTMLBuilder",
+          "code": "def init_js_files(self):\n        # type: () -> None\n        self.add_js_file('jquery.js')\n        self.add_js_file('underscore.js')\n        self.add_js_file('doctools.js')\n\n        for filename, attrs in self.app.registry.js_files:\n            self.add_js_file(filename, **attrs)\n\n        for filename, attrs in self.get_builder_config('js_files', 'html'):\n            self.add_js_file(filename, **attrs)\n\n        if self.config.language and self._get_translations_js():\n            self.add_js_file('translations.js')"
+        }
+      ]
+    },
+    {
+      "pr_number": 5174,
+      "pr_title": "Fix #5164: incremental build has broken with external source_parser",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #5164 \r\n",
+      "issue_id": 5164,
+      "issue_title": "All sources are re-built, even if nothing has changed (using nbsphinx extension)",
+      "issue_body": "This problem was introduced in PR #4966. Before that, everything was working fine.\r\n\r\nThis only happens when the `nbsphinx` extension is used (but maybe other extensions are affected, too?).\r\n\r\n#### Procedure to reproduce the problem\r\n\r\nThis can be reproduced by building the docs for the `nbsphinx` module.\r\nInstallation instructions: https://github.com/spatialaudio/nbsphinx/blob/master/CONTRIBUTING.rst\r\n\r\nIn short:\r\n\r\n```\r\ngit clone https://github.com/spatialaudio/nbsphinx.git\r\ncd nbsphinx\r\npython3 -m pip install -e . --user\r\npython3 setup.py build_sphinx\r\n```\r\n\r\nAll source files (including Jupyter notebooks) are built at this point.\r\n\r\nIf I re-build immediately after that (without touching any files) ...\r\n\r\n```\r\npython3 setup.py build_sphinx\r\n```\r\n\r\n... all source files are built again.\r\n\r\n#### Expected results\r\n\r\nThe second time the source files should not be processed again.\r\nInstead, there should be this message:\r\n\r\n```\r\nbuilding [mo]: targets for 0 po files that are out of date\r\nbuilding [html]: targets for 0 source files that are out of date\r\nupdating environment: 0 added, 0 changed, 0 removed\r\nlooking for now-outdated files... none found\r\nno targets are out of date.\r\n```\r\n\r\n### Reproducible project / your project\r\n- https://github.com/spatialaudio/nbsphinx\r\n\r\n### Environment info\r\n- OS: Linux\r\n- Python version: Python 3.6.6rc1+\r\n- Sphinx version: `master` branch, every commit after PR #4966 (commit 3ffde92c54c6e9d594b2a41a365a90dc0dcbac6c)",
+      "issue_closed_at": "2018-07-17T14:07:25Z",
+      "base_commit": "6c12dba968a71e35e390a057a5d13c53cc26c8ce",
+      "changes": [
+        {
+          "file": "sphinx/registry.py",
+          "type": "line",
+          "name": "line 39",
+          "code": "    from docutils.transforms import Transform  # NOQA\n    from sphinx.application import Sphinx  # NOQA\n    from sphinx.builders import Builder  # NOQA\n    from sphinx.domains import Domain, Index  # NOQA\n    from sphinx.environment import BuildEnvironment  # NOQA\n    from sphinx.ext.autodoc import Documenter  # NOQA"
+        },
+        {
+          "file": "sphinx/registry.py",
+          "type": "function",
+          "name": "add_source_suffix",
+          "class_name": "SphinxComponentRegistry",
+          "code": "def add_source_suffix(self, suffix, filetype, override=False):\n        # type: (unicode, unicode, bool) -> None\n        logger.debug('[app] adding source_suffix: %r, %r', suffix, filetype)\n        if suffix in self.source_suffix and not override:\n            raise ExtensionError(__('source_parser for %r is already registered') % suffix)\n        else:\n            self.source_suffix[suffix] = filetype"
+        },
+        {
+          "file": "sphinx/registry.py",
+          "type": "function",
+          "name": "add_source_parser",
+          "class_name": "SphinxComponentRegistry",
+          "code": "def add_source_parser(self, *args, **kwargs):\n        # type: (Any, bool) -> None\n        logger.debug('[app] adding search source_parser: %r', args)\n        if len(args) == 1:\n            # new sytle arguments: (source_parser)\n            suffix = None       # type: unicode\n            parser = args[0]    # type: Type[Parser]\n        else:\n            # old style arguments: (suffix, source_parser)\n            warnings.warn('app.add_source_parser() does not support suffix argument. '\n                          'Use app.add_source_suffix() instead.',\n                          RemovedInSphinx30Warning)\n            suffix = args[0]\n            parser = args[1]\n\n        if suffix:\n            self.add_source_suffix(suffix, suffix)\n\n        if len(parser.supported) == 0:\n            warnings.warn('Old source_parser has been detected. Please fill Parser.supported '\n                          'attribute: %s' % parser.__name__,\n                          RemovedInSphinx30Warning)\n\n        # create a map from filetype to parser\n        for filetype in parser.supported:\n            if filetype in self.source_parsers and not kwargs.get('override'):\n                raise ExtensionError(__('source_parser for %r is already registered') %\n                                     filetype)\n            else:\n                self.source_parsers[filetype] = parser\n\n        # also maps suffix to parser\n        #\n        # This rescues old styled parsers which does not have ``supported`` filetypes.\n        if suffix:\n            self.source_parsers[suffix] = parser"
+        },
+        {
+          "file": "sphinx/registry.py",
+          "type": "function",
+          "name": "get_envversion",
+          "class_name": "SphinxComponentRegistry",
+          "code": "def get_envversion(self, app):\n        # type: (Sphinx) -> Dict[unicode, unicode]\n        from sphinx.environment import ENV_VERSION\n        envversion = {ext.name: ext.metadata['env_version'] for ext in app.extensions.values()\n                      if ext.metadata.get('env_version')}\n        envversion['sphinx'] = ENV_VERSION\n        return envversion"
+        },
+        {
+          "file": "sphinx/registry.py",
+          "type": "function",
+          "name": "merge_source_suffix",
+          "class_name": null,
+          "code": "def merge_source_suffix(app):\n    # type: (Sphinx) -> None\n    \"\"\"Merge source_suffix which specified by user and added by extensions.\"\"\"\n    for suffix, filetype in iteritems(app.registry.source_suffix):\n        if suffix not in app.config.source_suffix:\n            app.config.source_suffix[suffix] = filetype\n        elif app.config.source_suffix[suffix] is None:\n            # filetype is not specified (default filetype).\n            # So it overrides default filetype by extensions setting.\n            app.config.source_suffix[suffix] = filetype\n\n    # copy config.source_suffix to registry\n    app.registry.source_suffix = app.config.source_suffix"
+        }
+      ]
+    },
+    {
+      "pr_number": 5470,
+      "pr_title": "Fixes #5426: [Napoleon] Better handling of inline attributes",
+      "pr_body": "Fixes #5426: [Napoleon] Better handling of inline attributes\r\n\r\n### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- Better handling of inline attributes by Napoleon to support both Napoleon style attribute docstrings and the specifically formatted docstring for class data members.\r\n",
+      "issue_id": 5426,
+      "issue_title": "TypeError in docutils/writers/_html_base.py for autodoc'd class data member",
+      "issue_body": "This bug does not occur with previous versions of Sphinx.\r\n\r\nA class's data member must have a specifically formatted docstring.\r\n\r\nThe first part of the docstring (the main text) must match the regular expression /:\\s*$/ (ends with a colon). After the colon, any amount of whitespace may be present. The text thereafter is an enumerated list (both - and * work) of any number of items. The first list item matches the expression /:/ (contains a colon).\r\n\r\n# Environment\r\n\r\n- OS: OSX 10.13.6\r\n- Python version: 3.7 (installed via homebrew). Also happens in 3.6.4.\r\n- Sphinx version: 1.8.0\r\n\r\n# Test Case\r\n\r\nRun autodoc on the following and generate HTML:\r\n\r\n```python\r\nclass SomeClass:\r\n  some_data = 0\r\n  \"\"\"data member description:\r\n\r\n  - a: b\r\n  \"\"\"\r\n```\r\n\r\n# Actual Result\r\n\r\nSphinx crashes with the following output:\r\n\r\n```writing output...                                                                                                                                          \r\nException occurred:\r\n  File \".../site-packages/docutils/writers/_html_base.py\", line 399, in set_class_on_child\r\n    child['classes'].append(class_)\r\nTypeError: string indices must be integers\r\n```\r\n\r\n# Error logs / results\r\n\r\n```\r\n# Sphinx version: 1.8.0\r\n# Python version: 3.7.0 (CPython)\r\n# Docutils version: 0.14 \r\n# Jinja2 version: 2.10\r\n# Last messages:\r\n#   writing output... [ 59%] someclass\r\n#   \r\n# Loaded extensions:\r\n#   sphinx.ext.mathjax (1.8.0) from /.venv/lib/python3.7/site-packages/sphinx/ext/mathjax.py\r\n#   alabaster (0.7.11) from /.venv/lib/python3.7/site-packages/alabaster/__init__.py\r\n#   sphinx.ext.autodoc (1.8.0) from /.venv/lib/python3.7/site-packages/sphinx/ext/autodoc/__init__.py\r\n#   sphinx.ext.napoleon (1.8.0) from /.venv/lib/python3.7/site-packages/sphinx/ext/napoleon/__init__.py\r\nTraceback (most recent call last):\r\n  File \"/.venv/lib/python3.7/site-packages/sphinx/cmd/build.py\", line 304, in build_main\r\n    app.build(args.force_all, filenames)\r\n  File \"/.venv/lib/python3.7/site-packages/sphinx/application.py\", line 341, in build\r\n    self.builder.build_update()\r\n  File \"/.venv/lib/python3.7/site-packages/sphinx/builders/__init__.py\", line 347, in build_update\r\n    len(to_build))\r\n  File \"/.venv/lib/python3.7/site-packages/sphinx/builders/__init__.py\", line 412, in build\r\n    self.write(docnames, list(updated_docnames), method)\r\n  File \"/.venv/lib/python3.7/site-packages/sphinx/builders/__init__.py\", line 593, in write\r\n    self._write_serial(sorted(docnames))\r\n  File \"/.venv/lib/python3.7/site-packages/sphinx/builders/__init__.py\", line 604, in _write_serial\r\n    self.write_doc(docname, doctree)\r\n  File \"/.venv/lib/python3.7/site-packages/sphinx/builders/html.py\", line 730, in write_doc\r\n    self.docwriter.write(doctree, destination)\r\n  File \"/.venv/lib/python3.7/site-packages/docutils/writers/__init__.py\", line 80, in write\r\n    self.translate()\r\n  File \"/.venv/lib/python3.7/site-packages/sphinx/writers/html.py\", line 58, in translate\r\n    self.document.walkabout(visitor)\r\n  File \"/.venv/lib/python3.7/site-packages/docutils/nodes.py\", line 174, in walkabout\r\n    if child.walkabout(visitor):\r\n  File \"/.venv/lib/python3.7/site-packages/docutils/nodes.py\", line 174, in walkabout\r\n    if child.walkabout(visitor):\r\n  File \"/.venv/lib/python3.7/site-packages/docutils/nodes.py\", line 174, in walkabout\r\n    if child.walkabout(visitor):\r\n  [Previous line repeated 4 more times]\r\n  File \"/.venv/lib/python3.7/site-packages/docutils/nodes.py\", line 166, in walkabout\r\n    visitor.dispatch_visit(self)\r\n  File \"/.venv/lib/python3.7/site-packages/docutils/nodes.py\", line 1882, in dispatch_visit\r\n    return method(node)\r\n  File \"/.venv/lib/python3.7/site-packages/docutils/writers/html4css1/__init__.py\", line 402, in visit_field_body\r\n    self.set_class_on_child(node, 'first', 0)\r\n  File \"/.venv/lib/python3.7/site-packages/docutils/writers/_html_base.py\", line 399, in set_class_on_child\r\n    child['classes'].append(class_)\r\nTypeError: string indices must be integers\r\n```\r\n\r\n",
+      "issue_closed_at": "2018-09-23T13:26:17Z",
+      "base_commit": "37d58ab9d5b27403226c7e6ddc1cc48b905db297",
+      "changes": [
+        {
+          "file": "sphinx/ext/napoleon/__init__.py",
+          "type": "line",
+          "name": "line 9",
+          "code": "    :license: BSD, see LICENSE for details.\n\"\"\"\n\nimport sphinx\nfrom sphinx.application import Sphinx\nfrom sphinx.ext.napoleon.docstring import GoogleDocstring, NumpyDocstring\n"
+        },
+        {
+          "file": "sphinx/ext/napoleon/__init__.py",
+          "type": "function",
+          "name": "setup",
+          "class_name": null,
+          "code": "def setup(app):\n    # type: (Sphinx) -> Dict[unicode, Any]\n    \"\"\"Sphinx extension setup function.\n\n    When the extension is loaded, Sphinx imports this module and executes\n    the ``setup()`` function, which in turn notifies Sphinx of everything\n    the extension offers.\n\n    Parameters\n    ----------\n    app : sphinx.application.Sphinx\n        Application object representing the Sphinx process\n\n    See Also\n    --------\n    `The Sphinx documentation on Extensions\n    <http://sphinx-doc.org/extensions.html>`_\n\n    `The Extension Tutorial <http://sphinx-doc.org/extdev/tutorial.html>`_\n\n    `The Extension API <http://sphinx-doc.org/extdev/appapi.html>`_\n\n    \"\"\"\n    if not isinstance(app, Sphinx):\n        return  # probably called by tests\n\n    _patch_python_domain()\n\n    app.setup_extension('sphinx.ext.autodoc')\n    app.connect('autodoc-process-docstring', _process_docstring)\n    app.connect('autodoc-skip-member', _skip_member)\n\n    for name, (default, rebuild) in Config._config_values.items():\n        app.add_config_value(name, default, rebuild)\n    return {'version': sphinx.__display_version__, 'parallel_read_safe': True}"
+        },
+        {
+          "file": "sphinx/ext/napoleon/__init__.py",
+          "type": "function",
+          "name": "setup",
+          "class_name": null,
+          "code": "def setup(app):\n    # type: (Sphinx) -> Dict[unicode, Any]\n    \"\"\"Sphinx extension setup function.\n\n    When the extension is loaded, Sphinx imports this module and executes\n    the ``setup()`` function, which in turn notifies Sphinx of everything\n    the extension offers.\n\n    Parameters\n    ----------\n    app : sphinx.application.Sphinx\n        Application object representing the Sphinx process\n\n    See Also\n    --------\n    `The Sphinx documentation on Extensions\n    <http://sphinx-doc.org/extensions.html>`_\n\n    `The Extension Tutorial <http://sphinx-doc.org/extdev/tutorial.html>`_\n\n    `The Extension API <http://sphinx-doc.org/extdev/appapi.html>`_\n\n    \"\"\"\n    if not isinstance(app, Sphinx):\n        return  # probably called by tests\n\n    _patch_python_domain()\n\n    app.setup_extension('sphinx.ext.autodoc')\n    app.connect('autodoc-process-docstring', _process_docstring)\n    app.connect('autodoc-skip-member', _skip_member)\n\n    for name, (default, rebuild) in Config._config_values.items():\n        app.add_config_value(name, default, rebuild)\n    return {'version': sphinx.__display_version__, 'parallel_read_safe': True}"
+        },
+        {
+          "file": "sphinx/ext/napoleon/docstring.py",
+          "type": "function",
+          "name": "_consume_inline_attribute",
+          "class_name": "GoogleDocstring",
+          "code": "def _consume_inline_attribute(self):\n        # type: () -> Tuple[unicode, List[unicode]]\n        line = next(self._line_iter)\n        _type, colon, _desc = self._partition_field_on_colon(line)\n        if not colon:\n            _type, _desc = _desc, _type\n        _descs = [_desc] + self._dedent(self._consume_to_end())\n        _descs = self.__class__(_descs, self._config).lines()\n        return _type, _descs"
+        }
+      ]
+    },
+    {
+      "pr_number": 6592,
+      "pr_title": "Fix #6589: autodoc: Formatting issues with autodoc_typehints='none'",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #6589 ",
+      "issue_id": 6589,
+      "issue_title": "Formatting issues with autodoc_typehints='none'",
+      "issue_body": "**Describe the bug**\r\n\r\nWhen using `autodoc_typehints='none'`, I see two issues currently:\r\n\r\n1. When an annotated parameter has a default value, spaces are inserted around `=` where they are not for unannotated parameters. Consider:\r\n\r\n   ```python\r\n   def foo(x=True, y: bool = True, z = True):\r\n       return x and y and z\r\n   ```\r\n\r\n   The result looks like:\r\n\r\n   **foo**(*x=True, y = True, z=True*)\r\n\r\n2. Return types are not removed. Consider:\r\n\r\n   ```python\r\n   def bar(x: int) -> int:\r\n       return x * 2\r\n   ```\r\n\r\n   The result looks like:\r\n\r\n   **bar**(*x*) -> int\r\n\r\n**To Reproduce**\r\nSteps to reproduce the behavior:\r\n\r\nUse the above examples with the `autodoc_typehints='none'` option, or with the attached project (see below).\r\n\r\n**Expected behavior**\r\n\r\nI expect the annotated and unannotated parameters to be rendered similarly and for return type annotations to be removed as well, as if they were not there originally.\r\n\r\n**Your project**\r\n\r\nSee attached [foobar.zip](https://github.com/sphinx-doc/sphinx/files/3406054/foobar.zip)\r\n\r\n**Environment info**\r\n- OS: [Pop!_OS 18.10]\r\n- Python version: 3.6.8\r\n- Sphinx version: 2.1.2\r\n- Sphinx extensions:  [sphinx.ext.autodoc]\r\n\r\n**Additional context**\r\n\r\n- #6361 \r\n- #5868 \r\n- https://github.com/agronholm/sphinx-autodoc-typehints/pull/78\r\n\r\n",
+      "issue_closed_at": "2019-08-02T13:37:16Z",
+      "base_commit": "4732ec5edf9e53e2fa78cd5e1ff6bee92f1b27b7",
+      "changes": [
+        {
+          "file": "sphinx/util/inspect.py",
+          "type": "function",
+          "name": "format_args",
+          "class_name": "Signature",
+          "code": "def format_args(self, show_annotation: bool = True) -> str:\n        args = []\n        last_kind = None\n        for i, param in enumerate(self.parameters.values()):\n            # skip first argument if subject is bound method\n            if self.skip_first_argument and i == 0:\n                continue\n\n            arg = StringIO()\n\n            # insert '*' between POSITIONAL args and KEYWORD_ONLY args::\n            #     func(a, b, *, c, d):\n            if param.kind == param.KEYWORD_ONLY and last_kind in (param.POSITIONAL_OR_KEYWORD,\n                                                                  param.POSITIONAL_ONLY,\n                                                                  None):\n                args.append('*')\n\n            if param.kind in (param.POSITIONAL_ONLY,\n                              param.POSITIONAL_OR_KEYWORD,\n                              param.KEYWORD_ONLY):\n                arg.write(param.name)\n                if show_annotation and param.annotation is not param.empty:\n                    if isinstance(param.annotation, str) and param.name in self.annotations:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(self.annotations[param.name]))\n                    else:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(param.annotation))\n                if param.default is not param.empty:\n                    if param.annotation is param.empty:\n                        arg.write('=')\n                        arg.write(object_description(param.default))\n                    else:\n                        arg.write(' = ')\n                        arg.write(object_description(param.default))\n            elif param.kind == param.VAR_POSITIONAL:\n                arg.write('*')\n                arg.write(param.name)\n            elif param.kind == param.VAR_KEYWORD:\n                arg.write('**')\n                arg.write(param.name)\n\n            args.append(arg.getvalue())\n            last_kind = param.kind\n\n        if self.return_annotation is inspect.Parameter.empty:\n            return '(%s)' % ', '.join(args)\n        else:\n            if 'return' in self.annotations:\n                annotation = self.format_annotation(self.annotations['return'])\n            else:\n                annotation = self.format_annotation(self.return_annotation)\n\n            return '(%s) -> %s' % (', '.join(args), annotation)"
+        },
+        {
+          "file": "sphinx/util/inspect.py",
+          "type": "function",
+          "name": "format_args",
+          "class_name": "Signature",
+          "code": "def format_args(self, show_annotation: bool = True) -> str:\n        args = []\n        last_kind = None\n        for i, param in enumerate(self.parameters.values()):\n            # skip first argument if subject is bound method\n            if self.skip_first_argument and i == 0:\n                continue\n\n            arg = StringIO()\n\n            # insert '*' between POSITIONAL args and KEYWORD_ONLY args::\n            #     func(a, b, *, c, d):\n            if param.kind == param.KEYWORD_ONLY and last_kind in (param.POSITIONAL_OR_KEYWORD,\n                                                                  param.POSITIONAL_ONLY,\n                                                                  None):\n                args.append('*')\n\n            if param.kind in (param.POSITIONAL_ONLY,\n                              param.POSITIONAL_OR_KEYWORD,\n                              param.KEYWORD_ONLY):\n                arg.write(param.name)\n                if show_annotation and param.annotation is not param.empty:\n                    if isinstance(param.annotation, str) and param.name in self.annotations:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(self.annotations[param.name]))\n                    else:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(param.annotation))\n                if param.default is not param.empty:\n                    if param.annotation is param.empty:\n                        arg.write('=')\n                        arg.write(object_description(param.default))\n                    else:\n                        arg.write(' = ')\n                        arg.write(object_description(param.default))\n            elif param.kind == param.VAR_POSITIONAL:\n                arg.write('*')\n                arg.write(param.name)\n            elif param.kind == param.VAR_KEYWORD:\n                arg.write('**')\n                arg.write(param.name)\n\n            args.append(arg.getvalue())\n            last_kind = param.kind\n\n        if self.return_annotation is inspect.Parameter.empty:\n            return '(%s)' % ', '.join(args)\n        else:\n            if 'return' in self.annotations:\n                annotation = self.format_annotation(self.annotations['return'])\n            else:\n                annotation = self.format_annotation(self.return_annotation)\n\n            return '(%s) -> %s' % (', '.join(args), annotation)"
+        }
+      ]
+    }
+  ]
+}

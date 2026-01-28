@@ -1,0 +1,136 @@
+{
+  "instance_id": "django__django-12470",
+  "repo": "django/django",
+  "created_at": "2020-02-19T04:48:55Z",
+  "problem_statement": "Inherited model doesn't correctly order by \"-pk\" when specified on Parent.Meta.ordering\nDescription\n\t\nGiven the following model definition:\nfrom django.db import models\nclass Parent(models.Model):\n\tclass Meta:\n\t\tordering = [\"-pk\"]\nclass Child(Parent):\n\tpass\nQuerying the Child class results in the following:\n>>> print(Child.objects.all().query)\nSELECT \"myapp_parent\".\"id\", \"myapp_child\".\"parent_ptr_id\" FROM \"myapp_child\" INNER JOIN \"myapp_parent\" ON (\"myapp_child\".\"parent_ptr_id\" = \"myapp_parent\".\"id\") ORDER BY \"myapp_parent\".\"id\" ASC\nThe query is ordered ASC but I expect the order to be DESC.\n",
+  "patch": "diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py\n--- a/django/db/models/sql/compiler.py\n+++ b/django/db/models/sql/compiler.py\n@@ -709,9 +709,9 @@ def find_ordering_name(self, name, opts, alias=None, default_order='ASC',\n         field, targets, alias, joins, path, opts, transform_function = self._setup_joins(pieces, opts, alias)\n \n         # If we get to this point and the field is a relation to another model,\n-        # append the default ordering for that model unless the attribute name\n-        # of the field is specified.\n-        if field.is_relation and opts.ordering and getattr(field, 'attname', None) != name:\n+        # append the default ordering for that model unless it is the pk\n+        # shortcut or the attribute name of the field that is specified.\n+        if field.is_relation and opts.ordering and getattr(field, 'attname', None) != name and name != 'pk':\n             # Firstly, avoid infinite loops.\n             already_seen = already_seen or set()\n             join_tuple = tuple(getattr(self.query.alias_map[j], 'join_cols', None) for j in joins)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 9412,
+      "pr_title": "Fixed #28876 -- Fixed class-based model indexes and constraints names for models with quoted db_table.",
+      "pr_body": "https://code.djangoproject.com/ticket/28876",
+      "issue_id": 28876,
+      "issue_title": "badly formed Table Index and constraint's name when  `Meta.db_table` is set with quoted string",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-05T16:01:30",
+      "base_commit": "f2ec89691236b59f54f9cf41bccd79a5853af36c",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_rename_field_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _rename_field_sql(self, table, old_field, new_field, new_type):\n        return self.sql_rename_column % {\n            \"table\": self.quote_name(table),\n            \"old_column\": self.quote_name(old_field.column),\n            \"new_column\": self.quote_name(new_field.column),\n            \"type\": new_type,\n        }"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "create_fk_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def create_fk_name(*args, **kwargs):\n            return self.quote_name(self._create_index_name(*args, **kwargs))"
+        },
+        {
+          "file": "django/db/models/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import hashlib\n\nfrom django.utils.encoding import force_bytes\n\n__all__ = ['Index']"
+        },
+        {
+          "file": "django/db/models/indexes.py",
+          "type": "function",
+          "name": "set_name_with_model",
+          "class_name": "Index",
+          "code": "def set_name_with_model(self, model):\n        \"\"\"\n        Generate a unique name for the index.\n\n        The name is divided into 3 parts - table name (12 chars), field name\n        (8 chars) and unique hash + suffix (10 chars). Each part is made to\n        fit its size by truncating the excess length.\n        \"\"\"\n        table_name = model._meta.db_table\n        column_names = [model._meta.get_field(field_name).column for field_name, order in self.fields_orders]\n        column_names_with_order = [\n            (('-%s' if order else '%s') % column_name)\n            for column_name, (field_name, order) in zip(column_names, self.fields_orders)\n        ]\n        # The length of the parts of the name is based on the default max\n        # length of 30 characters.\n        hash_data = [table_name] + column_names_with_order + [self.suffix]\n        self.name = '%s_%s_%s' % (\n            table_name[:11],\n            column_names[0][:7],\n            '%s_%s' % (self._hash_generator(*hash_data), self.suffix),\n        )\n        assert len(self.name) <= self.max_name_length, (\n            'Index too long for multiple database support. Is self.suffix '\n            'longer than 3 characters?'\n        )\n        self.check_name()"
+        }
+      ]
+    },
+    {
+      "pr_number": 8213,
+      "pr_title": "Refs #27935 -- Fixed BrinIndex.max_name_length if a project's default database isn't PostgreSQL.",
+      "pr_body": "",
+      "issue_id": 27935,
+      "issue_title": "BrinIndex crashes if name  > 30 characters",
+      "issue_body": "",
+      "issue_closed_at": "2017-03-20T10:30:05",
+      "base_commit": "6cb0a3ac2836c044987f7a0cca0d1e99d52e002e",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from django.db import connection\nfrom django.db.models import Index\nfrom django.utils.functional import cached_property\n\n__all__ = ['BrinIndex', 'GinIndex']\n\n\nclass BrinIndex(Index):\n    suffix = 'brin'\n\n    def __init__(self, fields=[], name=None, pages_per_range=None):\n        if pages_per_range is not None and pages_per_range <= 0:"
+        },
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "function",
+          "name": "get_sql_create_template_values",
+          "class_name": "BrinIndex",
+          "code": "def get_sql_create_template_values(self, model, schema_editor, using):\n        parameters = super().get_sql_create_template_values(model, schema_editor, using=' USING brin')\n        if self.pages_per_range is not None:\n            parameters['extra'] = ' WITH (pages_per_range={})'.format(\n                schema_editor.quote_value(self.pages_per_range)) + parameters['extra']\n        return parameters"
+        }
+      ]
+    },
+    {
+      "pr_number": 11559,
+      "pr_title": "Refs #30557 -- Fixed crash of ordering by ptr fields when Meta.ordering contains F() expressions.",
+      "pr_body": "Thanks Can Sar\u0131g\u00f6l for the report.\r\n\r\nFollow up to 8c5f9906c56ac72fc4f13218dd90bdf9bc8a248b",
+      "issue_id": 30557,
+      "issue_title": "order_by() a parent model crash when Meta.ordering contains expressions.",
+      "issue_body": "",
+      "issue_closed_at": "2019-07-11T05:07:44",
+      "base_commit": "8c5f9906c56ac72fc4f13218dd90bdf9bc8a248b",
+      "changes": [
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "find_ordering_name",
+          "class_name": "SQLCompiler",
+          "code": "def find_ordering_name(self, name, opts, alias=None, default_order='ASC',\n                           already_seen=None):\n        \"\"\"\n        Return the table alias (the name might be ambiguous, the alias will\n        not be) and column name for ordering by the given 'name' parameter.\n        The 'name' is of the form 'field1__field2__...__fieldN'.\n        \"\"\"\n        name, order = get_order_dir(name, default_order)\n        descending = order == 'DESC'\n        pieces = name.split(LOOKUP_SEP)\n        field, targets, alias, joins, path, opts, transform_function = self._setup_joins(pieces, opts, alias)\n\n        # If we get to this point and the field is a relation to another model,\n        # append the default ordering for that model unless the attribute name\n        # of the field is specified.\n        if field.is_relation and opts.ordering and getattr(field, 'attname', None) != name:\n            # Firstly, avoid infinite loops.\n            already_seen = already_seen or set()\n            join_tuple = tuple(getattr(self.query.alias_map[j], 'join_cols', None) for j in joins)\n            if join_tuple in already_seen:\n                raise FieldError('Infinite loop caused by ordering.')\n            already_seen.add(join_tuple)\n\n            results = []\n            for item in opts.ordering:\n                if isinstance(item, OrderBy):\n                    results.append((item, False))\n                    continue\n                results.extend(self.find_ordering_name(item, opts, alias,\n                                                       order, already_seen))\n            return results\n        targets, alias, _ = self.query.trim_joins(targets, joins, path)\n        return [(OrderBy(transform_function(t, alias), descending=descending), False) for t in targets]"
+        }
+      ]
+    },
+    {
+      "pr_number": 9491,
+      "pr_title": "Fixed #28958 -- Fixed admin changelist crash when using a query expression in the page's ordering.",
+      "pr_body": "https://code.djangoproject.com/ticket/28958",
+      "issue_id": 28958,
+      "issue_title": "Admin changelist crashes when using query expression in the model's Meta.ordering or ModelAdmin.ordering",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-27T11:38:54",
+      "base_commit": "ef6c680f60a8e2ab45c936ec91f856fb3d7dc651",
+      "changes": [
+        {
+          "file": "django/contrib/admin/views/main.py",
+          "type": "line",
+          "name": "line 15",
+          "code": ")\nfrom django.core.paginator import InvalidPage\nfrom django.db import models\nfrom django.urls import reverse\nfrom django.utils.http import urlencode\nfrom django.utils.translation import gettext"
+        },
+        {
+          "file": "django/contrib/admin/views/main.py",
+          "type": "function",
+          "name": "get_ordering_field_columns",
+          "class_name": "ChangeList",
+          "code": "def get_ordering_field_columns(self):\n        \"\"\"\n        Return an OrderedDict of ordering field column numbers and asc/desc.\n        \"\"\"\n        # We must cope with more than one column having the same underlying sort\n        # field, so we base things on column numbers.\n        ordering = self._get_default_ordering()\n        ordering_fields = OrderedDict()\n        if ORDER_VAR not in self.params:\n            # for ordering specified on ModelAdmin or model Meta, we don't know\n            # the right column numbers absolutely, because there might be more\n            # than one column associated with that ordering, so we guess.\n            for field in ordering:\n                if field.startswith('-'):\n                    field = field[1:]\n                    order_type = 'desc'\n                else:\n                    order_type = 'asc'\n                for index, attr in enumerate(self.list_display):\n                    if self.get_ordering_field(attr) == field:\n                        ordering_fields[index] = order_type\n                        break\n        else:\n            for p in self.params[ORDER_VAR].split('.'):\n                none, pfx, idx = p.rpartition('-')\n                try:\n                    idx = int(idx)\n                except ValueError:\n                    continue  # skip it\n                ordering_fields[idx] = 'desc' if pfx == '-' else 'asc'\n        return ordering_fields"
+        }
+      ]
+    },
+    {
+      "pr_number": 4462,
+      "pr_title": "Fixed #24578 -- Fixed crash with QuerySet.update() on FK to O2O fields.",
+      "pr_body": "",
+      "issue_id": 24578,
+      "issue_title": "prepare_database_save breaks some OneToOneField's in 1.8",
+      "issue_body": "",
+      "issue_closed_at": "2015-04-09T07:21:57",
+      "base_commit": "20a98d863f00fc48f9c7fd783d8d0539c6be41f5",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "_get_next_or_previous_in_order",
+          "class_name": "Model",
+          "code": "def _get_next_or_previous_in_order(self, is_next):\n        cachename = \"__%s_order_cache\" % is_next\n        if not hasattr(self, cachename):\n            op = 'gt' if is_next else 'lt'\n            order = '_order' if is_next else '-_order'\n            order_field = self._meta.order_with_respect_to\n            obj = self._default_manager.filter(**{\n                order_field.name: getattr(self, order_field.attname)\n            }).filter(**{\n                '_order__%s' % op: self._default_manager.values('_order').filter(**{\n                    self._meta.pk.name: self.pk\n                })\n            }).order_by(order)[:1].get()\n            setattr(self, cachename, obj)\n        return getattr(self, cachename)"
+        }
+      ]
+    }
+  ]
+}

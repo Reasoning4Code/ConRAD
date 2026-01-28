@@ -1,0 +1,156 @@
+{
+  "instance_id": "sympy__sympy-13043",
+  "repo": "sympy/sympy",
+  "created_at": "2017-07-26T00:29:45Z",
+  "problem_statement": "decompose() function in intpoly returns a list of arbitrary order\nThe decompose() function, with separate=True, returns `list(poly_dict.values())`, which is ordered arbitrarily.  \r\n\r\nWhat is this used for? It should be sorted somehow, or returning a set (in which case, why not just use the returned dictionary and have the caller take the values). This is causing test failures for me after some changes to the core. \r\n\r\nCC @ArifAhmed1995 @certik \n",
+  "patch": "diff --git a/sympy/integrals/intpoly.py b/sympy/integrals/intpoly.py\n--- a/sympy/integrals/intpoly.py\n+++ b/sympy/integrals/intpoly.py\n@@ -556,7 +556,7 @@ def decompose(expr, separate=False):\n     >>> decompose(x**2 + x*y + x + y + x**3*y**2 + y**5)\n     {1: x + y, 2: x**2 + x*y, 5: x**3*y**2 + y**5}\n     >>> decompose(x**2 + x*y + x + y + x**3*y**2 + y**5, True)\n-    [x, y, x**2, y**5, x*y, x**3*y**2]\n+    {x, x**2, y, y**5, x*y, x**3*y**2}\n     \"\"\"\n     expr = S(expr)\n     poly_dict = {}\n@@ -569,7 +569,7 @@ def decompose(expr, separate=False):\n             degrees = [(sum(degree_list(monom, *symbols)), monom)\n                        for monom in expr.args]\n             if separate:\n-                return [monom[1] for monom in degrees]\n+                return {monom[1] for monom in degrees}\n             else:\n                 for monom in degrees:\n                     degree, term = monom\n@@ -593,7 +593,7 @@ def decompose(expr, separate=False):\n         poly_dict[0] = expr\n \n     if separate:\n-        return list(poly_dict.values())\n+        return set(poly_dict.values())\n     return poly_dict\n \n \n",
+  "similar_bug_items": [
+    {
+      "pr_number": 12952,
+      "pr_title": "Fix addition of a quantity and a number",
+      "pr_body": "closes #12918\r\n\r\ncc @schymans ",
+      "issue_id": 12918,
+      "issue_title": "Addition of a quantity and a number does not raise an error",
+      "issue_body": "If I add two quantities with inconsistent units, sympy rightly returns an error:\r\n```\r\n>>> from sympy.physics.units import kilogram, kelvin\r\n>>> try: print kilogram + kelvin\r\n>>> except Exception, error: print error\r\nsummation of quantities of incompatible dimensions\r\n```\r\nHowever, if one of the terms is a number, no error is raised:\r\n```\r\n>>> try: print kilogram + 1.1\r\n>>> except Exception, error: print error\r\nkilogram + 1.1\r\n```\r\n\r\nIf I add two quantities, one of which does not have a dimension, an error is raised:\r\n```\r\n>>> from sympy.physics.units import Quantity, mass\r\n>>> try: print Quantity('x', mass, kilogram) + Quantity('y', S.One, 1.1)\r\n>>> except Exception, error: print error\r\nsummation of quantities of incompatible dimensions\r\n```\r\n\r\nIf I add a quantity and a number, no error is raised:\r\n```\r\n>>> try: print Quantity('x', mass, kilogram) + Number(1.1)\r\n>>> except Exception, error: print error\r\nx + 1.1\r\n```\r\nI believe that this is a bug, as numbers should be treated like dimensionless quantities whenever they are used alongside with quantities.\r\n",
+      "issue_closed_at": "2017-07-12T20:13:26Z",
+      "base_commit": "195061bd91f2e888e6449ec05f2caca140067fb2",
+      "changes": [
+        {
+          "file": "sympy/core/power.py",
+          "type": "function",
+          "name": "_eval_is_rational",
+          "class_name": "Pow",
+          "code": "def _eval_is_rational(self):\n        p = self.func(*self.as_base_exp())  # in case it's unevaluated\n        if not p.is_Pow:\n            return p.is_rational\n        b, e = p.as_base_exp()\n        if e.is_Rational and b.is_Rational:\n            # we didn't check that e is not an Integer\n            # because Rational**Integer autosimplifies\n            return False\n        if e.is_integer:\n            if b.is_rational:\n                if fuzzy_not(b.is_zero) or e.is_nonnegative:\n                    return True\n                if b == e:  # always rational, even for 0**0\n                    return True\n            elif b.is_irrational:\n                return e.is_zero"
+        },
+        {
+          "file": "sympy/core/power.py",
+          "type": "function",
+          "name": "_eval_is_algebraic",
+          "class_name": "Pow",
+          "code": "def _eval_is_algebraic(self):\n        if self.base.is_zero or (self.base - 1).is_zero:\n            return True\n        elif self.exp.is_rational:\n            if self.base.is_algebraic is False:\n                return self.exp.is_nonzero\n            return self.base.is_algebraic\n        elif self.base.is_algebraic and self.exp.is_algebraic:\n            if ((fuzzy_not(self.base.is_zero)\n                and fuzzy_not((self.base - 1).is_zero))\n                or self.base.is_integer is False\n                or self.base.is_irrational):\n                return self.exp.is_rational"
+        },
+        {
+          "file": "sympy/physics/units/quantities.py",
+          "type": "function",
+          "name": "_Quantity_constructor_postprocessor_Add",
+          "class_name": null,
+          "code": "def _Quantity_constructor_postprocessor_Add(expr):\n    # Construction postprocessor for the addition,\n    # checks for dimension mismatches of the addends, thus preventing\n    # expressions like `meter + second` to be created.\n\n    deset = {\n        tuple(sorted(Dimension(\n            Quantity.get_dimensional_expr(i)\n        ).get_dimensional_dependencies().items()))\n        for i in expr.args\n        if i.free_symbols == set()  # do not raise if there are symbols\n                    # (free symbols could contain the units corrections)\n        and not i.is_number\n    }\n    # If `deset` has more than one element, then some dimensions do not\n    # match in the sum:\n    if len(deset) > 1:\n        raise ValueError(\"summation of quantities of incompatible dimensions\")\n    return expr"
+        }
+      ]
+    },
+    {
+      "pr_number": 8707,
+      "pr_title": "Fix real assumption for gamma function.",
+      "pr_body": "- [x] Updated code as suggested by Sergey.\n\n@pelegm @skirpichev \n",
+      "issue_id": 8657,
+      "issue_title": "gamma(x) is assumed (wrongly) to be real when x is real",
+      "issue_body": "It may be that `x` is -1, for example, where `gamma` is not defined (or rather is `zoo`). So, unless it is known that `x` is not a nonpositive integer, `gamma(x).is_real` should return `None` (currently it returns `True`).\n",
+      "issue_closed_at": "2014-12-31T11:14:57Z",
+      "base_commit": "ed054cc55f714dab9e809036151f0ca136397604",
+      "changes": [
+        {
+          "file": "sympy/functions/special/gamma_functions.py",
+          "type": "function",
+          "name": "_eval_conjugate",
+          "class_name": "loggamma",
+          "code": "def _eval_conjugate(self):\n        z = self.args[0]\n        if not z in (S.Zero, S.NegativeInfinity):\n            return self.func(z.conjugate())"
+        }
+      ]
+    },
+    {
+      "pr_number": 12236,
+      "pr_title": "Fixed apart() producing wrong answer",
+      "pr_body": "apart() produced a wrong result when given multivariate polynomial with fractional coefficients in a result. Division was done correctly, but the domain wasn't properly converted to a field. Now the default parameter `field=True` is set explicitly before conversion to polynomial.\r\n\r\nPreviously:\r\n`In [1]: apart(x/2, y)`\r\n`Out[1]: 0`\r\n\r\nNow:\r\n`In [1]: apart(x/2, y)`\r\n`Out[1]:`\r\nx\r\n\u2500\r\n2\r\n\r\nThis fixes #12177, #9123.",
+      "issue_id": 12177,
+      "issue_title": "Wrong result with apart",
+      "issue_body": "```\r\nPython 3.6.0 |Continuum Analytics, Inc.| (default, Dec 23 2016, 12:22:00) \r\nType \"copyright\", \"credits\" or \"license\" for more information.\r\n\r\nIPython 5.1.0 -- An enhanced Interactive Python.\r\n?         -> Introduction and overview of IPython's features.\r\n%quickref -> Quick reference.\r\nhelp      -> Python's own help system.\r\nobject?   -> Details about 'object', use 'object??' for extra details.\r\n\r\nIn [1]: from sympy import symbols\r\n\r\nIn [2]: a = symbols('a', real=True)\r\n\r\nIn [3]: t = symbols('t', real=True, negative=False)\r\n\r\nIn [4]: bug = a * (-t + (-t + 1) * (2 * t - 1)) / (2 * t - 1)\r\n\r\nIn [5]: bug.subs(a, 1)\r\nOut[5]: (-t + (-t + 1)*(2*t - 1))/(2*t - 1)\r\n\r\nIn [6]: bug.subs(a, 1).apart()\r\nOut[6]: -t + 1/2 - 1/(2*(2*t - 1))\r\n\r\nIn [7]: bug.subs(a, 1).apart(t)\r\nOut[7]: -t + 1/2 - 1/(2*(2*t - 1))\r\n\r\nIn [8]: bug.apart(t)\r\nOut[8]: -a*t\r\n\r\nIn [9]: import sympy; sympy.__version__\r\nOut[9]: '1.0'\r\n```",
+      "issue_closed_at": "2017-03-06T12:58:04Z",
+      "base_commit": "d60497958f6dea7f5e25bc41e9107a6a63694d01",
+      "changes": [
+        {
+          "file": "sympy/polys/domains/polynomialring.py",
+          "type": "function",
+          "name": "from_PolynomialRing",
+          "class_name": "PolynomialRing",
+          "code": "def from_PolynomialRing(K1, a, K0):\n        \"\"\"Convert a polynomial to ``dtype``. \"\"\"\n        try:\n            return a.set_ring(K1.ring)\n        except (CoercionFailed, GeneratorsError):\n            return None"
+        }
+      ]
+    },
+    {
+      "pr_number": 7525,
+      "pr_title": "fix indeterminacy in FiniteSet",
+      "pr_body": "This fixes #7456. I downloaded 3.4 and found a failing pythonhashseed for test_rv. After applying these mods the test no longer occurs so I think it's taken care of now. I reverted the sorting of random_symbols as it was not needed to fix this issue.\n\nIn addition, I noticed that a deprecation warning from numpy is emitted during testing because non-integer dimensions were being used to create a matrix, so I used randint instead.\n",
+      "issue_id": 7456,
+      "issue_title": "test_rv fails sometimes on Python 3.4",
+      "issue_body": "https://travis-ci.org/debugger22/sympy/jobs/24221323\nhttps://travis-ci.org/sympy/sympy/jobs/24353106\n\n```\nFile \"/home/travis/virtualenv/python3.4.0/lib/python3.4/site-packages/sympy/stats/tests/test_rv.py\", line 50, in test_pspace\n    assert pspace(2*X + Y) == ProductPSpace(Y.pspace, X.pspace)\nAssertionError\n________________________________________________________________________________\n_______________ sympy/stats/tests/test_rv.py:test_ProductPSpace ________________\n  File \"/home/travis/virtualenv/python3.4.0/lib/python3.4/site-packages/sympy/stats/tests/test_rv.py\", line 95, in test_ProductPSpace\n    assert pspace(X + Y) == ProductPSpace(py, px)\nAssertionError\n tests finished: 2608 passed, 2 failed, 43 skipped, 62 expected to fail, \n1 expected to fail but passed, in 2921.03 seconds \nDO *NOT* COMMIT!\nTraceback (most recent call last):\n  File \"<stdin>\", line 3, in <module>\nException: Tests failed\n```\n\n@asmeurer This is what I was talking about.\n",
+      "issue_closed_at": "2014-05-26T12:55:04Z",
+      "base_commit": "f945422d57a8f6419005d96192eae48d8dd53ce5",
+      "changes": [
+        {
+          "file": "sympy/sets/sets.py",
+          "type": "line",
+          "name": "line 7",
+          "code": "from sympy.core.singleton import Singleton, S\nfrom sympy.core.evalf import EvalfMixin\nfrom sympy.core.numbers import Float\nfrom sympy.core.compatibility import iterable, with_metaclass\nfrom sympy.core.evaluate import global_evaluate\nfrom sympy.core.decorators import deprecated\n"
+        },
+        {
+          "file": "sympy/sets/sets.py",
+          "type": "class",
+          "name": "FiniteSet",
+          "code": "class FiniteSet(Set, EvalfMixin):\n    \"\"\"\n    Represents a finite set of discrete numbers\n\n    Examples\n    ========\n\n        >>> from sympy import FiniteSet\n\n        >>> FiniteSet(1, 2, 3, 4)\n        {1, 2, 3, 4}\n        >>> 3 in FiniteSet(1, 2, 3, 4)\n        True\n\n    References\n    ==========\n    http://en.wikipedia.org/wiki/Finite_set\n    \"\"\"\n    is_FiniteSet = True\n    is_iterable = True\n\n    def __new__(cls, *args, **kwargs):\n        evaluate = kwargs.get('evaluate', global_evaluate[0])\n        if evaluate:\n            if len(args) == 1 and iterable(args[0]):\n                args = args[0]\n\n            args = list(map(sympify, args))\n\n            if len(args) == 0:\n                return EmptySet()\n\n\n        args = frozenset(args)  # remove duplicates\n        args = map(sympify, args)\n        args = frozenset(args)\n        obj = Basic.__new__(cls, *args)\n        obj._elements = args\n        return obj\n\n    def __iter__(self):\n        return iter(self.args)\n\n    def _intersect(self, other):\n        \"\"\"\n        This function should only be used internally\n\n        See Set._intersect for docstring\n        \"\"\"\n        if isinstance(other, self.__class__):\n            return self.__class__(*(self._elements & other._elements))\n        return self.__class__(el for el in self if el in other)\n\n    def _union(self, other):\n        \"\"\"\n        This function should only be used internally\n\n        See Set._union for docstring\n        \"\"\"\n        if other.is_FiniteSet:\n            return FiniteSet(*(self._elements | other._elements))\n\n        # If other set contains one of my elements, remove it from myself\n        if any(other.contains(x) is True for x in self):\n            return set((\n                FiniteSet(x for x in self if other.contains(x) is not True),\n                other))\n\n        return None\n\n    def _contains(self, other):\n        \"\"\"\n        Tests whether an element, other, is in the set.\n\n        Relies on Python's set class. This tests for object equality\n        All inputs are sympified\n\n        >>> from sympy import FiniteSet\n\n        >>> 1 in FiniteSet(1, 2)\n        True\n        >>> 5 in FiniteSet(1, 2)\n        False\n\n        \"\"\"\n        return other in self._elements\n\n    def _eval_imageset(self, f):\n        return FiniteSet(*map(f, self))\n\n    @property\n    def _complement(self):\n        \"\"\"\n        The complement of a real finite set is the Union of open Intervals\n        between the elements of the set.\n\n        >>> from sympy import FiniteSet\n        >>> FiniteSet(1, 2, 3).complement\n        (-oo, 1) U (1, 2) U (2, 3) U (3, oo)\n\n\n        \"\"\"\n        if not all(elem.is_number for elem in self):\n            raise ValueError(\"%s: Complement not defined for symbolic inputs\"\n                    % self)\n\n        # as there are only numbers involved, a straight sort is sufficient;\n        # default_sort_key is not needed\n        args = sorted(self.args)\n\n        intervals = []  # Build up a list of intervals between the elements\n        intervals += [Interval(S.NegativeInfinity, args[0], True, True)]\n        for a, b in zip(args[:-1], args[1:]):\n            intervals.append(Interval(a, b, True, True))  # open intervals\n        intervals.append(Interval(args[-1], S.Infinity, True, True))\n        return Union(intervals, evaluate=False)\n\n    @property\n    def _boundary(self):\n        return self\n\n    @property\n    def _inf(self):\n        from sympy.functions.elementary.miscellaneous import Min\n        return Min(*self)\n\n    @property\n    def _sup(self):\n        from sympy.functions.elementary.miscellaneous import Max\n        return Max(*self)\n\n    @property\n    def measure(self):\n        return 0\n\n    def __len__(self):\n        return len(self.args)\n\n    def __sub__(self, other):\n        return FiniteSet(el for el in self if el not in other)\n\n    def as_relational(self, symbol):\n        \"\"\"Rewrite a FiniteSet in terms of equalities and logic operators. \"\"\"\n        from sympy.core.relational import Eq\n        return Or(*[Eq(symbol, elem) for elem in self])\n\n    @property\n    def is_real(self):\n        return all(el.is_real for el in self)\n\n    def compare(self, other):\n        return (hash(self) - hash(other))\n\n    def _eval_evalf(self, prec):\n        return FiniteSet(elem.evalf(prec) for elem in self)\n\n    def _hashable_content(self):\n        return (self._elements,)\n\n    @property\n    def _sorted_args(self):\n        from sympy.utilities import default_sort_key\n        return sorted(self.args, key=default_sort_key)\n\n    def _eval_powerset(self):\n        return self.func(self.func(s) for s in subsets(self.args))\n\n    def __ge__(self, other):\n        return other.is_subset(self)\n\n    def __gt__(self, other):\n        return self != other and self >= other\n\n    def __le__(self, other):\n        return self.is_subset(other)\n\n    def __lt__(self, other):\n        return self != other and other >= self"
+        },
+        {
+          "file": "sympy/sets/sets.py",
+          "type": "function",
+          "name": "__new__",
+          "class_name": "FiniteSet",
+          "code": "def __new__(cls, *args, **kwargs):\n        evaluate = kwargs.get('evaluate', global_evaluate[0])\n        if evaluate:\n            if len(args) == 1 and iterable(args[0]):\n                args = args[0]\n\n            args = list(map(sympify, args))\n\n            if len(args) == 0:\n                return EmptySet()\n\n\n        args = frozenset(args)  # remove duplicates\n        args = map(sympify, args)\n        args = frozenset(args)\n        obj = Basic.__new__(cls, *args)\n        obj._elements = args\n        return obj"
+        },
+        {
+          "file": "sympy/stats/rv.py",
+          "type": "line",
+          "name": "line 16",
+          "code": "\nfrom sympy import (Basic, S, Expr, Symbol, Tuple, And, Add, Eq, lambdify,\n        sympify, Equality, solve, Lambda, DiracDelta)\nfrom sympy.core.compatibility import reduce, ordered\nfrom sympy.sets.sets import FiniteSet, ProductSet\nfrom sympy.abc import x\n"
+        },
+        {
+          "file": "sympy/stats/rv.py",
+          "type": "function",
+          "name": "as_boolean",
+          "class_name": "ProductDomain",
+          "code": "def as_boolean(self):\n        return And(*[domain.as_boolean() for domain in self.domains])"
+        }
+      ]
+    },
+    {
+      "pr_number": 8654,
+      "pr_title": "Fix TrigonometricFunction._eval_is_rational for rational args",
+      "pr_body": "closes #8653\n",
+      "issue_id": 8653,
+      "issue_title": "sin(n) is assumed (wrongly) to be irrational for an integer n",
+      "issue_body": "Check this:\n\n``` python\n>>> n = Symbol('n', integer=True)  # may be 0\n>>> sin(n).is_irrational\nTrue\n```\n\nwhile `sin(0)` is clearly rational.\n",
+      "issue_closed_at": "2014-12-21T11:20:39Z",
+      "base_commit": "2e4e90b1b0243c85949eb1633f0546466b00829f",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/exponential.py",
+          "type": "function",
+          "name": "_eval_is_rational",
+          "class_name": "log",
+          "code": "def _eval_is_rational(self):\n        s = self.func(*self.args)\n        if s.func == self.func:\n            if (self.args[0] - 1).is_zero:\n                return True\n            if s.args[0].is_rational:\n                return False\n        else:\n            return s.is_rational"
+        },
+        {
+          "file": "sympy/functions/elementary/exponential.py",
+          "type": "function",
+          "name": "_eval_is_rational",
+          "class_name": "log",
+          "code": "def _eval_is_rational(self):\n        s = self.func(*self.args)\n        if s.func == self.func:\n            if (self.args[0] - 1).is_zero:\n                return True\n            if s.args[0].is_rational:\n                return False\n        else:\n            return s.is_rational"
+        },
+        {
+          "file": "sympy/functions/elementary/trigonometric.py",
+          "type": "class",
+          "name": "TrigonometricFunction",
+          "code": "class TrigonometricFunction(Function):\n    \"\"\"Base class for trigonometric functions. \"\"\"\n\n    unbranched = True\n\n    def _eval_is_rational(self):\n        s = self.func(*self.args)\n        if s.func == self.func:\n            if s.args[0].is_rational:\n                return False\n        else:\n            return s.is_rational\n\n    def _eval_is_algebraic(self):\n        s = self.func(*self.args)\n        if s.func == self.func:\n            if self.args[0].is_nonzero and self.args[0].is_algebraic:\n                return False\n            pi_coeff = _pi_coeff(self.args[0])\n            if pi_coeff is not None and pi_coeff.is_rational:\n                return True\n        else:\n            return s.is_algebraic\n\n    def _eval_expand_complex(self, deep=True, **hints):\n        re_part, im_part = self.as_real_imag(deep=deep, **hints)\n        return re_part + im_part*S.ImaginaryUnit\n\n    def _as_real_imag(self, deep=True, **hints):\n        if self.args[0].is_real:\n            if deep:\n                hints['complex'] = False\n                return (self.args[0].expand(deep, **hints), S.Zero)\n            else:\n                return (self.args[0], S.Zero)\n        if deep:\n            re, im = self.args[0].expand(deep, **hints).as_real_imag()\n        else:\n            re, im = self.args[0].as_real_imag()\n        return (re, im)"
+        }
+      ]
+    }
+  ]
+}

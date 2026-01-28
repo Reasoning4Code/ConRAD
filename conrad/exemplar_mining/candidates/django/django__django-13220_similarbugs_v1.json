@@ -1,0 +1,136 @@
+{
+  "instance_id": "django__django-13220",
+  "repo": "django/django",
+  "created_at": "2020-07-21T19:54:16Z",
+  "problem_statement": "Allow ValidationErrors to equal each other when created identically\nDescription\n\t \n\t\t(last modified by kamni)\n\t \nCurrently ValidationErrors (django.core.exceptions.ValidationError) that have identical messages don't equal each other, which is counter-intuitive, and can make certain kinds of testing more complicated. Please add an __eq__ method that allows two ValidationErrors to be compared. \nIdeally, this would be more than just a simple self.messages == other.messages. It would be most helpful if the comparison were independent of the order in which errors were raised in a field or in non_field_errors.\n",
+  "patch": "diff --git a/django/core/exceptions.py b/django/core/exceptions.py\n--- a/django/core/exceptions.py\n+++ b/django/core/exceptions.py\n@@ -1,6 +1,9 @@\n \"\"\"\n Global Django exception and warning classes.\n \"\"\"\n+import operator\n+\n+from django.utils.hashable import make_hashable\n \n \n class FieldDoesNotExist(Exception):\n@@ -182,6 +185,23 @@ def __str__(self):\n     def __repr__(self):\n         return 'ValidationError(%s)' % self\n \n+    def __eq__(self, other):\n+        if not isinstance(other, ValidationError):\n+            return NotImplemented\n+        return hash(self) == hash(other)\n+\n+    def __hash__(self):\n+        # Ignore params and messages ordering.\n+        if hasattr(self, 'message'):\n+            return hash((\n+                self.message,\n+                self.code,\n+                tuple(sorted(make_hashable(self.params))) if self.params else None,\n+            ))\n+        if hasattr(self, 'error_dict'):\n+            return hash(tuple(sorted(make_hashable(self.error_dict))))\n+        return hash(tuple(sorted(self.error_list, key=operator.attrgetter('message'))))\n+\n \n class EmptyResultSet(Exception):\n     \"\"\"A database query predicate is impossible.\"\"\"\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10199,
+      "pr_title": "Fixed #26352 -- Made system check allow ManyToManyField to target the same model if through_fields differs.",
+      "pr_body": "See https://code.djangoproject.com/ticket/26352",
+      "issue_id": 26352,
+      "issue_title": "models.E003 check incorrectly prevents duplicate ManyToMany through-self that differ by through_fields",
+      "issue_body": "Let's say we're building a Twitter-style friendship model, where a user can follow other users, and can have users that follow them.\nA sensible way to model that might look like this:\nclass\nUser\n(\nmodels\n.\nModel\n):\nfriends\n=\nmodels\n.\nManyToManyField\n(\n'self'\n,\nthrough\n=\n'Followship'\n,\nsymmetrical\n=\nFalse\n,\nthrough_fields\n=\n(\n'user'\n,\n'target'\n),\nrelated_name\n=\n'+'\n)\nfollowers\n=\nmodels\n.\nManyToManyField\n(\n'self'\n,\nthrough\n=\n'Followship'\n,\nsymmetrical\n=\nFalse\n,\nthrough_fields\n=\n(\n'target'\n,\n'user'\n),\nrelated_name\n=\n'+'\n)\nclass\nFollowship\n(\nmodels\n.\nModel\n):\nuser\n=\nmodels\n.\nForeignKey\n(\nUser\n,\nmodels\n.\nCASCADE\n,\nrelated_name\n=\n'+'\n)\ntarget\n=\nmodels\n.\nForeignKey\n(\nUser\n,\nmodels\n.\nCASCADE\n,\nrelated_name\n=\n'+'\n)\nHere we have an intermediary table called \"Followship\", which relates a user to the target user that they are following.\nWe also have two helpful convenience ManyToMany fields defined on the user:\nuser.friends.all()\nreturns all other users that the user is following, while\nuser.followers.all()\nreturns the users that are following our current user.\nThe above models should work fine... but they don't, because Django's model checking framework throws the following error:\nusers.User: (models.E003) The model has two many-to-many relations through the intermediate model 'users.Followship'.\nI don't think this warning is warranted in this case, because the\nthrough_fields\narguments provided to the friends/followers ManyToManyFields mean that the relationships defined here make sense and the models should work correctly.\nI've tested this theory by disabling the warning entirely using an over-ride class method on user, like this:\nclass\nUser\n(\nmodels\n.\nModel\n):\nfriends\n=\nmodels\n.\nManyToManyField\n(\n'self'\n,\nthrough\n=\n'Followship'\n,\nsymmetrical\n=\nFalse\n,\nthrough_fields\n=\n(\n'user'\n,\n'target'\n),\nrelated_name\n=\n'+'\n)\nfollowers\n=\nmodels\n.\nManyToManyField\n(\n'self'\n,\nthrough\n=\n'Followship'\n,\nsymmetrical\n=\nFalse\n,\nthrough_fields\n=\n(\n'target'\n,\n'user'\n),\nrelated_name\n=\n'+'\n)\n@classmethod\ndef\n_check_m2m_through_same_relationship\n(\ncls\n):\n# Disable models.E003 check for this model\nreturn\n[]\nThis does the trick: the check is suppressed, and the models work as expected.\nI think the model check framework is being overly strict here. I think it should be modified to enable this pattern, provided the through_fields= parameters on the duplicate ManyToMany fields are present and differentiate the fields correctly.",
+      "issue_closed_at": "2018-08-22T11:28:35",
+      "base_commit": "f2d5dafec93e6b3100f004c559ebe21e2b783ae7",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "_check_m2m_through_same_relationship",
+          "class_name": "Model",
+          "code": "def _check_m2m_through_same_relationship(cls):\n        \"\"\" Check if no relationship model is used by more than one m2m field.\n        \"\"\"\n\n        errors = []\n        seen_intermediary_signatures = []\n\n        fields = cls._meta.local_many_to_many\n\n        # Skip when the target model wasn't found.\n        fields = (f for f in fields if isinstance(f.remote_field.model, ModelBase))\n\n        # Skip when the relationship model wasn't found.\n        fields = (f for f in fields if isinstance(f.remote_field.through, ModelBase))\n\n        for f in fields:\n            signature = (f.remote_field.model, cls, f.remote_field.through)\n            if signature in seen_intermediary_signatures:\n                errors.append(\n                    checks.Error(\n                        \"The model has two many-to-many relations through \"\n                        \"the intermediate model '%s'.\" % f.remote_field.through._meta.label,\n                        obj=cls,\n                        id='models.E003',\n                    )\n                )\n            else:\n                seen_intermediary_signatures.append(signature)\n        return errors"
+        }
+      ]
+    },
+    {
+      "pr_number": 11169,
+      "pr_title": "Fixed #30318 --  Added check for importability of arguments of custom error handler views.",
+      "pr_body": "…mported\r\n\r\nThanks to Jon on Stack Overflow for reporting the issue.",
+      "issue_id": 30318,
+      "issue_title": "Add new system check message when custom error handler 'path.to.view' cannot be imported",
+      "issue_body": "#29642\nadded checks for the signatures of custom error handlers.\nWhen the 'path.to.view' cannot be imported, it raises ModuleNotFoundError or ViewDoesNotExist, as seen in this Stack Overflow question:\n​\nhttps://stackoverflow.com/q/55481810/113962\nI suggest we catch the exception, and add another check code, e.g.\n* **urls.E008**: The custom ``handlerXXX`` view ``'path.to.view'`` cannot be imported.",
+      "issue_closed_at": "2019-04-25T04:38:58",
+      "base_commit": "fc9566d42daf28cdaa25a5db1b5ade253ceb064f",
+      "changes": [
+        {
+          "file": "django/urls/resolvers.py",
+          "type": "line",
+          "name": "line 15",
+          "code": "from django.conf import settings\nfrom django.core.checks import Error, Warning\nfrom django.core.checks.urls import check_resolver\nfrom django.core.exceptions import ImproperlyConfigured\nfrom django.utils.datastructures import MultiValueDict\nfrom django.utils.functional import cached_property\nfrom django.utils.http import RFC3986_SUBDELIMS, escape_leading_slashes"
+        },
+        {
+          "file": "django/urls/resolvers.py",
+          "type": "function",
+          "name": "_check_custom_error_handlers",
+          "class_name": "URLResolver",
+          "code": "def _check_custom_error_handlers(self):\n        messages = []\n        # All handlers take (request, exception) arguments except handler500\n        # which takes (request).\n        for status_code, num_parameters in [(400, 2), (403, 2), (404, 2), (500, 1)]:\n            handler, param_dict = self.resolve_error_handler(status_code)\n            signature = inspect.signature(handler)\n            args = [None] * num_parameters\n            try:\n                signature.bind(*args)\n            except TypeError:\n                msg = (\n                    \"The custom handler{status_code} view '{path}' does not \"\n                    \"take the correct number of arguments ({args}).\"\n                ).format(\n                    status_code=status_code,\n                    path=handler.__module__ + '.' + handler.__qualname__,\n                    args='request, exception' if num_parameters == 2 else 'request',\n                )\n                messages.append(Error(msg, id='urls.E007'))\n        return messages"
+        }
+      ]
+    },
+    {
+      "pr_number": 8629,
+      "pr_title": "Fixed #28293 -- Fixed union(), intersection(), and difference() when combining with an EmptyQuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/28293",
+      "issue_id": 28293,
+      "issue_title": "QuerySet.union(QuerySet.none()) results in an empty queryset, should be the original queryset",
+      "issue_body": "Tested on Django 1.11.2.\nAs\nQuerySet.union()\nuses the SQL\nUNION\noperator, I would expect \"SET1 UNION <EMPTY SET>\" to result in SET1. Currently it results in the empty set.\n>>> from django.contrib.auth.models import User\n>>> User.objects.count()\n100\n>>> list(User.objects.all().union(User.objects.none()))\n[]\nFrom\n​\nhttps://www.postgresql.org/docs/current/static/queries-union.html\nUNION effectively appends the result of query2 to the result of query1 ...\nQuerySet.difference()\nlooks to suffer from the same issue.",
+      "issue_closed_at": "2017-06-13T01:16:29",
+      "base_commit": "9dc83c356d363c090f3351c908cad6f823aeb7bf",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_combinator_query",
+          "class_name": "QuerySet",
+          "code": "def _combinator_query(self, combinator, *other_qs, all=False):\n        # Clone the query to inherit the select list and everything\n        clone = self._clone()\n        # Clear limits and ordering so they can be reapplied\n        clone.query.clear_ordering(True)\n        clone.query.clear_limits()\n        clone.query.combined_queries = (self.query,) + tuple(qs.query for qs in other_qs)\n        clone.query.combinator = combinator\n        clone.query.combinator_all = all\n        return clone"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = (compiler.as_sql() for compiler in compilers)\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 13162,
+      "pr_title": "Fixed #31769 -- Improved default naming of merged migrations.",
+      "pr_body": "https://code.djangoproject.com/ticket/31769",
+      "issue_id": 31769,
+      "issue_title": "Improve default name of merge migrations.",
+      "issue_body": "Currently, merge migrations filenames are created with a timestamp. For example:\n0003_merge_20160102_0304.py\nThis name is more opaque than necessary. When one reads it, it isn't immediately clear which migrations were merged. One must inspect the file to find that information.\nInstead, I suggest the default filename should be created by combining the files being merged. This way, it includes the information without requiring one to inspect the file. This information is also useful in the\nmigrate\ncommand's output. As it is most likely to merge two migrations files, this should remain a reasonable length.\nFor example:\n0003_merge_0002_conflicting_second_0002_second.py\nIf preferable, we could decide to join the names in other ways too. For example, separate names by\n__\n(two underscores) or exclude prefix numbers. To start, I'll go with the easiest approach unless there is strong preference for a different naming scheme.",
+      "issue_closed_at": "2020-07-20T13:34:20",
+      "base_commit": "80f92177eb2a175579f4a6907ef5a358863bddca",
+      "changes": [
+        {
+          "file": "django/core/management/commands/makemigrations.py",
+          "type": "function",
+          "name": "all_items_equal",
+          "class_name": "Command",
+          "code": "def all_items_equal(seq):\n                return all(item == seq[0] for item in seq[1:])"
+        }
+      ]
+    },
+    {
+      "pr_number": 9345,
+      "pr_title": "Fixed #28792 -- Fixed index name truncation of namespaced tables.",
+      "pr_body": "Refs #27458, #27843.",
+      "issue_id": 28792,
+      "issue_title": "Index names can be incorrectly truncated when using a namespaced table name",
+      "issue_body": "When using a namespaced\n_meta.db_table\n(e.g. Oracle's\n'schema\".\"table'\n) it's possible that\n_create_index_name\nreturns an index name truncating the namespace resulting in an invalid identifier or one that isn't namespaced anymore and thus created in the user's namespace.\nFor example, given the following model:\nclass\nFoo\n(\nmodels\n.\nModel\n):\nfield\n=\nmodels\n.\nIntegerField\n(\nindex\n=\nTrue\n)\nclass\nMeta\n:\ndb_table\n=\n'long_name\".\"table_name'\nThe resulting index name will be\n'long_name\"_field_d21c9e0a'\nwhich is invalid SQL even when quoted to\n'\"long_name\"_field_d21c9e0a\"'\n.\nMarking as a release blocker because this is a regression which I believe was introduced by\n#27458\nand wasn't addressed by\n#27843\n. I confirm that this uses to work on Django 1.10 but was broken on 1.11 as I stumbled upon the issue when upgrading a Django 1.8 LTS codebase to 1.11 LTS on the 1.10 -> 1.11 step.\nThe tests added by\n#27458\njust happened to work because the index name truncation cut the string the in a way that both double quotes are stripped. It should be possible to tweak the table names to trigger the errors but I felt like directly testing\n_create_index_name\nwas more appropriate.",
+      "issue_closed_at": "2017-11-14T20:53:46",
+      "base_commit": "532a4f22ad94db320cb0fd66f4c7ee57d17ac65a",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "line",
+          "name": "line 5",
+          "code": "from django.db.backends.ddl_references import (\n    Columns, ForeignKeyName, IndexName, Statement, Table,\n)\nfrom django.db.backends.utils import strip_quotes\nfrom django.db.models import Index\nfrom django.db.transaction import TransactionManagementError, atomic\nfrom django.utils import timezone"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_create_index_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _create_index_name(self, table_name, column_names, suffix=\"\"):\n        \"\"\"\n        Generate a unique name for an index/unique constraint.\n\n        The name is divided into 3 parts: the table name, the column names,\n        and a unique digest and suffix.\n        \"\"\"\n        table_name = strip_quotes(table_name)\n        hash_data = [table_name] + list(column_names)\n        hash_suffix_part = '%s%s' % (self._digest(*hash_data), suffix)\n        max_length = self.connection.ops.max_name_length() or 200\n        # If everything fits into max_length, use that name.\n        index_name = '%s_%s_%s' % (table_name, '_'.join(column_names), hash_suffix_part)\n        if len(index_name) <= max_length:\n            return index_name\n        # Shorten a long suffix.\n        if len(hash_suffix_part) > max_length / 3:\n            hash_suffix_part = hash_suffix_part[:max_length // 3]\n        other_length = (max_length - len(hash_suffix_part)) // 2 - 1\n        index_name = '%s_%s_%s' % (\n            table_name[:other_length],\n            '_'.join(column_names)[:other_length],\n            hash_suffix_part,\n        )\n        # Prepend D if needed to prevent the name from starting with an\n        # underscore or a number (not permitted on Oracle).\n        if index_name[0] == \"_\" or index_name[0].isdigit():\n            index_name = \"D%s\" % index_name[:-1]\n        return index_name"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "import functools\nimport hashlib\nimport logging\nimport re\nfrom time import time\n\nfrom django.conf import settings"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "function",
+          "name": "rev_typecast_decimal",
+          "class_name": null,
+          "code": "def rev_typecast_decimal(d):\n    if d is None:\n        return None\n    return str(d)"
+        }
+      ]
+    }
+  ]
+}

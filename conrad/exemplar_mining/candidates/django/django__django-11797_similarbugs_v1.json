@@ -1,0 +1,178 @@
+{
+  "instance_id": "django__django-11797",
+  "repo": "django/django",
+  "created_at": "2019-09-20T02:23:19Z",
+  "problem_statement": "Filtering on query result overrides GROUP BY of internal query\nDescription\n\t\nfrom django.contrib.auth import models\na = models.User.objects.filter(email__isnull=True).values('email').annotate(m=Max('id')).values('m')\nprint(a.query) # good\n# SELECT MAX(\"auth_user\".\"id\") AS \"m\" FROM \"auth_user\" WHERE \"auth_user\".\"email\" IS NULL GROUP BY \"auth_user\".\"email\"\nprint(a[:1].query) # good\n# SELECT MAX(\"auth_user\".\"id\") AS \"m\" FROM \"auth_user\" WHERE \"auth_user\".\"email\" IS NULL GROUP BY \"auth_user\".\"email\" LIMIT 1\nb = models.User.objects.filter(id=a[:1])\nprint(b.query) # GROUP BY U0.\"id\" should be GROUP BY U0.\"email\"\n# SELECT ... FROM \"auth_user\" WHERE \"auth_user\".\"id\" = (SELECT U0.\"id\" FROM \"auth_user\" U0 WHERE U0.\"email\" IS NULL GROUP BY U0.\"id\" LIMIT 1)\n",
+  "patch": "diff --git a/django/db/models/lookups.py b/django/db/models/lookups.py\n--- a/django/db/models/lookups.py\n+++ b/django/db/models/lookups.py\n@@ -262,9 +262,9 @@ def process_rhs(self, compiler, connection):\n         from django.db.models.sql.query import Query\n         if isinstance(self.rhs, Query):\n             if self.rhs.has_limit_one():\n-                # The subquery must select only the pk.\n-                self.rhs.clear_select_clause()\n-                self.rhs.add_fields(['pk'])\n+                if not self.rhs.has_select_fields:\n+                    self.rhs.clear_select_clause()\n+                    self.rhs.add_fields(['pk'])\n             else:\n                 raise ValueError(\n                     'The QuerySet value for an exact lookup must be limited to '\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8629,
+      "pr_title": "Fixed #28293 -- Fixed union(), intersection(), and difference() when combining with an EmptyQuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/28293",
+      "issue_id": 28293,
+      "issue_title": "QuerySet.union(QuerySet.none()) results in an empty queryset, should be the original queryset",
+      "issue_body": "Tested on Django 1.11.2.\nAs\nQuerySet.union()\nuses the SQL\nUNION\noperator, I would expect \"SET1 UNION <EMPTY SET>\" to result in SET1. Currently it results in the empty set.\n>>> from django.contrib.auth.models import User\n>>> User.objects.count()\n100\n>>> list(User.objects.all().union(User.objects.none()))\n[]\nFrom\n​\nhttps://www.postgresql.org/docs/current/static/queries-union.html\nUNION effectively appends the result of query2 to the result of query1 ...\nQuerySet.difference()\nlooks to suffer from the same issue.",
+      "issue_closed_at": "2017-06-13T01:16:29",
+      "base_commit": "9dc83c356d363c090f3351c908cad6f823aeb7bf",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_combinator_query",
+          "class_name": "QuerySet",
+          "code": "def _combinator_query(self, combinator, *other_qs, all=False):\n        # Clone the query to inherit the select list and everything\n        clone = self._clone()\n        # Clear limits and ordering so they can be reapplied\n        clone.query.clear_ordering(True)\n        clone.query.clear_limits()\n        clone.query.combined_queries = (self.query,) + tuple(qs.query for qs in other_qs)\n        clone.query.combinator = combinator\n        clone.query.combinator_all = all\n        return clone"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = (compiler.as_sql() for compiler in compilers)\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 10715,
+      "pr_title": "Fixed #29932 -- Fixed combining compound queries with sub compound queries on SQLite and Oracle.",
+      "pr_body": "Ticket [29932](https://code.djangoproject.com/ticket/29932).",
+      "issue_id": 29932,
+      "issue_title": "QuerySet.difference() after intersection() returns incorrect results on SQLite and Oracle",
+      "issue_body": "Considering a simple model\nfrom\ndjango.db\nimport\nmodels\nclass\nFoo\n(\nmodels\n.\nModel\n):\npass\nHere is the minimal way to encounter this issue\nFoo\n.\nobjects\n.\ncreate\n(\npk\n=\n1\n)\nFoo\n.\nobjects\n.\ncreate\n(\npk\n=\n2\n)\na\n=\nFoo\n.\nobjects\n.\nall\n()\nb\n=\nFoo\n.\nobjects\n.\nintersection\n(\nFoo\n.\nobjects\n.\nfilter\n(\npk\n=\n1\n))\nassert\na\n.\ncount\n()\n==\n2\nassert\nb\n.\ncount\n()\n==\n1\ndiff\n=\na\n.\ndifference\n(\nb\n)\nassert\ndiff\n.\nexists\n()\n# fails with SQLite!\nThis operation however works as expected on PostgreSQL.",
+      "issue_closed_at": "2018-12-06T14:51:03",
+      "base_commit": "ae180fa4b7f927a4aeae772975927c9888bb0cb0",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite can read from a cursor since SQLite 3.6.5, subject to the caveat\n    # that statements within a connection aren't isolated from each other. See\n    # https://sqlite.org/isolation.html.\n    can_use_chunked_reads = True\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    autocommits_when_autocommit_is_off = sys.version_info < (3, 6)\n    can_introspect_decimal_field = False\n    can_introspect_duration_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_atomic_references_rename = False\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n    supports_cast_with_precision = False\n    time_cast_precision = 3\n    can_release_savepoints = True\n    supports_partial_indexes = Database.version_info >= (3, 8, 0)\n    # Is \"ALTER TABLE ... RENAME COLUMN\" supported?\n    can_alter_table_rename_column = Database.sqlite_version_info >= (3, 25, 0)\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries if not query.is_empty()\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = ()\n        for compiler in compilers:\n            try:\n                # If the columns list is limited, then all combined queries\n                # must have the same columns list. Set the selects defined on\n                # the query on all combined queries, if not already set.\n                if not compiler.query.values_select and self.query.values_select:\n                    compiler.query.set_values((\n                        *self.query.extra_select,\n                        *self.query.values_select,\n                        *self.query.annotation_select,\n                    ))\n                parts += (compiler.as_sql(),)\n            except EmptyResultSet:\n                # Omit the empty queryset with UNION and with DIFFERENCE if the\n                # first queryset is nonempty.\n                if combinator == 'union' or (combinator == 'difference' and parts):\n                    continue\n                raise\n        if not parts:\n            raise EmptyResultSet\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 7571,
+      "pr_title": "Fixed #24959 -- Negative timedeltas to date interval.",
+      "pr_body": "Negative `timedelta` is normalized (see [documentation](https://docs.python.org/3.6/library/datetime.html#timedelta-objects)) e.g.\r\n```python\r\n>>> timedelta(hours=-1)\r\n(-1, 82800)\r\n```\r\nthat cause incorrect behavior in `date_interval_sql`. I fixed this in MySQL and Oracle backend.\r\n",
+      "issue_id": 24959,
+      "issue_title": "Allow using negative timedeltas in expressions on MySQL and Oracle",
+      "issue_body": "If I have a\ntimedelta\nobject in python that represents a negative difference, e.g.:\ndelta = timedelta(seconds=-3600)\nprint delta2\n -1 day, 23:00:00\nThe resultant SQL generated by\ndate_interval_sql\nfor the MySQL backend would be something like:\nUPDATE `my_table`\nSET ...\n        `my_datetime` = (`my_table`.`my_datetime` + INTERVAL '-1 0:0:82800:0' DAY_MICROSECOND),\nWHERE (...)\nAND\nwhat we want is the following:\nUPDATE `my_table`\nSET  ...\n`my_datetime` = (`my_table`.`my_datetime` + INTERVAL '-0 0:0:3600:0' DAY_MICROSECOND),\nWHERE (...)\nIn layman's terms - the two layers are not convertible in a one-to-one sense.  A\ntimedelta\nin for the example above in Python means:\ngo back one day and *add* 23 hours\n.  So some\ndatetime + delta\nwould just subtract one hour.\nIn MySQL, however,\nINTERVAL '-1 0:0:82800:0' DAY_MICROSECOND\nmeans:\nadd a negative one day and 23 hours\n.",
+      "issue_closed_at": "2016-11-23T08:11:06",
+      "base_commit": "b1a9041535db5d03dab7f205669f0ab7a47de854",
+      "changes": [
+        {
+          "file": "django/db/backends/mysql/operations.py",
+          "type": "function",
+          "name": "time_trunc_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def time_trunc_sql(self, lookup_type, field_name):\n        fields = {\n            'hour': '%%H:00:00',\n            'minute': '%%H:%%i:00',\n            'second': '%%H:%%i:%%s',\n        }  # Use double percents to escape.\n        if lookup_type in fields:\n            format_str = fields[lookup_type]\n            return \"CAST(DATE_FORMAT(%s, '%s') AS TIME)\" % (field_name, format_str)\n        else:\n            return \"TIME(%s)\" % (field_name)"
+        },
+        {
+          "file": "django/db/backends/oracle/operations.py",
+          "type": "function",
+          "name": "date_extract_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def date_extract_sql(self, lookup_type, field_name):\n        if lookup_type == 'week_day':\n            # TO_CHAR(field, 'D') returns an integer from 1-7, where 1=Sunday.\n            return \"TO_CHAR(%s, 'D')\" % field_name\n        elif lookup_type == 'week':\n            # IW = ISO week number\n            return \"TO_CHAR(%s, 'IW')\" % field_name\n        else:\n            # http://docs.oracle.com/cd/B19306_01/server.102/b14200/functions050.htm\n            return \"EXTRACT(%s FROM %s)\" % (lookup_type.upper(), field_name)"
+        }
+      ]
+    },
+    {
+      "pr_number": 10910,
+      "pr_title": "Fixed #30128 -- Fixed handling timedelta timezone in database functions.",
+      "pr_body": "Ticket: [#30128](https://code.djangoproject.com/ticket/30128)",
+      "issue_id": 30128,
+      "issue_title": "Using database functions with tzinfo=datetime.timezone(datetime.timedelta(...)) results in an incorrect query",
+      "issue_body": "I haven’t checked this bug with other databases, but it definitely works improperly with postgres.\nDjango ORM create incorrect query when I use timezone determined like \"timezone(timedelta(hours=some_hours))\".\n\"timezone(timedelta(hours=5))\" in query will look like \"UTC+05:00\", but postgres doesn't know this timezone name and handle it as POSIX style.\n\"UTC\" part will be interpreted as some zone abbreviation and timezone will be shifted by 5 hours to the west (positive shift is shift to the west in accordance with POSIX standart), i.e. actually timezone will be equal to UTC-5.\nFrom\n​\nhttps://www.postgresql.org/docs/10/datatype-datetime.html\n:\n\"In addition to the timezone names and abbreviations, PostgreSQL will accept POSIX-style time zone specifications of the form STDoffset or STDoffsetDST, where STD is a zone abbreviation, offset is a numeric offset in hours west from UTC\"\nChecked with:\ndjango==2.1.5\npsycopg2==2.7.6.1\npostgreSQL==10.6\nUsing the following example model:\nclass test(models.Model):\n    class Meta:\n        db_table = 'test_timezones'\n\n    datetime = models.DateTimeField()\nSample of bug is bellow:\n>>> from datetime import timezone, timedelta\n>>> from django.db.models.functions import ExtractWeekDay\n>>> from django_issues.models import test\n>>> from django.db.models.functions import ExtractHour\n>>> from pytz import timezone as pytz_timezone\n>>> print(test.objects.annotate(hour=ExtractHour('datetime')).values('datetime', 'hour').get())\n{'datetime': datetime.datetime(2018, 1, 1, 7, 0, tzinfo=<UTC>), 'hour': 7}\n>>> tz = timezone(timedelta(hours=5))\n>>> print(tz)\nUTC+05:00\n>>> print(test.objects.annotate(hour=ExtractHour('datetime', tzinfo=tz)).values('datetime', 'hour').get())\n{'datetime': datetime.datetime(2018, 1, 1, 7, 0, tzinfo=<UTC>), 'hour': 2}\n>>> print(test.objects.annotate(hour=ExtractHour('datetime', tzinfo=tz)).values('datetime', 'hour').query)\nSELECT \"test_timezones\".\"datetime\", EXTRACT('hour' FROM \"test_timezones\".\"datetime\" AT TIME ZONE 'UTC+05:00') AS \"hour\" FROM \"test_timezones\"\n>>> tz2 = pytz_timezone('Asia/Yekaterinburg')\n>>> print(tz2)\nAsia/Yekaterinburg\n>>> print(test.objects.annotate(hour=ExtractHour('datetime', tzinfo=tz2)).values('datetime', 'hour').get())\n{'datetime': datetime.datetime(2018, 1, 1, 7, 0, tzinfo=<UTC>), 'hour': 12}",
+      "issue_closed_at": "2019-06-13T03:17:18",
+      "base_commit": "3dca8738cbbbb5674f795169e5ea25e2002f2d71",
+      "changes": [
+        {
+          "file": "django/db/backends/mysql/operations.py",
+          "type": "function",
+          "name": "date_trunc_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def date_trunc_sql(self, lookup_type, field_name):\n        fields = {\n            'year': '%%Y-01-01',\n            'month': '%%Y-%%m-01',\n        }  # Use double percents to escape.\n        if lookup_type in fields:\n            format_str = fields[lookup_type]\n            return \"CAST(DATE_FORMAT(%s, '%s') AS DATE)\" % (field_name, format_str)\n        elif lookup_type == 'quarter':\n            return \"MAKEDATE(YEAR(%s), 1) + INTERVAL QUARTER(%s) QUARTER - INTERVAL 1 QUARTER\" % (\n                field_name, field_name\n            )\n        elif lookup_type == 'week':\n            return \"DATE_SUB(%s, INTERVAL WEEKDAY(%s) DAY)\" % (\n                field_name, field_name\n            )\n        else:\n            return \"DATE(%s)\" % (field_name)"
+        },
+        {
+          "file": "django/db/backends/oracle/operations.py",
+          "type": "function",
+          "name": "date_trunc_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def date_trunc_sql(self, lookup_type, field_name):\n        # https://docs.oracle.com/en/database/oracle/oracle-database/18/sqlrf/ROUND-and-TRUNC-Date-Functions.html\n        if lookup_type in ('year', 'month'):\n            return \"TRUNC(%s, '%s')\" % (field_name, lookup_type.upper())\n        elif lookup_type == 'quarter':\n            return \"TRUNC(%s, 'Q')\" % field_name\n        elif lookup_type == 'week':\n            return \"TRUNC(%s, 'IW')\" % field_name\n        else:\n            return \"TRUNC(%s)\" % field_name"
+        },
+        {
+          "file": "django/db/backends/oracle/operations.py",
+          "type": "function",
+          "name": "_convert_field_to_tz",
+          "class_name": "DatabaseOperations",
+          "code": "def _convert_field_to_tz(self, field_name, tzname):\n        if not settings.USE_TZ:\n            return field_name\n        if not self._tzname_re.match(tzname):\n            raise ValueError(\"Invalid time zone name: %s\" % tzname)\n        # Convert from connection timezone to the local time, returning\n        # TIMESTAMP WITH TIME ZONE and cast it back to TIMESTAMP to strip the\n        # TIME ZONE details.\n        if self.connection.timezone_name != tzname:\n            return \"CAST((FROM_TZ(%s, '%s') AT TIME ZONE '%s') AS TIMESTAMP)\" % (\n                field_name,\n                self.connection.timezone_name,\n                tzname,\n            )\n        return field_name"
+        },
+        {
+          "file": "django/db/backends/postgresql/operations.py",
+          "type": "function",
+          "name": "date_trunc_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def date_trunc_sql(self, lookup_type, field_name):\n        # https://www.postgresql.org/docs/current/functions-datetime.html#FUNCTIONS-DATETIME-TRUNC\n        return \"DATE_TRUNC('%s', %s)\" % (lookup_type, field_name)"
+        },
+        {
+          "file": "django/db/backends/sqlite3/base.py",
+          "type": "function",
+          "name": "_sqlite_datetime_parse",
+          "class_name": null,
+          "code": "def _sqlite_datetime_parse(dt, tzname=None, conn_tzname=None):\n    if dt is None:\n        return None\n    try:\n        dt = backend_utils.typecast_timestamp(dt)\n    except (TypeError, ValueError):\n        return None\n    if conn_tzname:\n        dt = dt.replace(tzinfo=pytz.timezone(conn_tzname))\n    if tzname is not None and tzname != conn_tzname:\n        dt = timezone.localtime(dt, pytz.timezone(tzname))\n    return dt"
+        }
+      ]
+    },
+    {
+      "pr_number": 8754,
+      "pr_title": "Fixed #28391 -- Fixed Cast() with CharField and max_length on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/28391",
+      "issue_id": 28391,
+      "issue_title": "Cast doesn't take into account CharField's max_length on MySQL.",
+      "issue_body": "Correct behavior, e.g. (based on\ndb_functions/test_cast.py\n):\n>>> Author.objects.create(name='Bob', age=1111)\n>>> numbers = Author.objects.annotate(cast_string=Cast('age', models.CharField(max_length=3)))\n>>> numbers.get().cast_string\n111\non MySQL it returns\n1111\n(related with\n#28371\n).",
+      "issue_closed_at": "2017-07-17T14:12:39",
+      "base_commit": "feeafdad02e2874e2e2f879a825d3527f6b193ad",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite cannot handle us only partially reading from a cursor's result set\n    # and then writing the same rows to the database in another cursor. This\n    # setting ensures we always read result sets fully into memory all in one\n    # go.\n    can_use_chunked_reads = False\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    has_bulk_insert = True\n    supports_column_check_constraints = False\n    autocommits_when_autocommit_is_off = True\n    can_introspect_decimal_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n\n    @cached_property\n    def uses_savepoints(self):\n        return Database.sqlite_version_info >= (3, 6, 8)\n\n    @cached_property\n    def supports_index_column_ordering(self):\n        return Database.sqlite_version_info >= (3, 3, 0)\n\n    @cached_property\n    def can_release_savepoints(self):\n        return self.uses_savepoints\n\n    @cached_property\n    def can_share_in_memory_db(self):\n        return (\n            Database.__name__ == 'sqlite3.dbapi2' and\n            Database.sqlite_version_info >= (3, 7, 13)\n        )\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "clean",
+          "class_name": "Field",
+          "code": "def clean(self, value, model_instance):\n        \"\"\"\n        Convert the value's type and run validation. Validation errors\n        from to_python() and validate() are propagated. Return the correct\n        value if no error is raised.\n        \"\"\"\n        value = self.to_python(value)\n        self.validate(value, model_instance)\n        self.run_validators(value)\n        return value"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "db_type",
+          "class_name": "Field",
+          "code": "def db_type(self, connection):\n        \"\"\"\n        Return the database column data type for this field, for the provided\n        connection.\n        \"\"\"\n        # The default implementation of this method looks at the\n        # backend-specific data_types dictionary, looking up the field by its\n        # \"internal type\".\n        #\n        # A Field class can implement the get_internal_type() method to specify\n        # which *preexisting* Django Field class it's most similar to -- i.e.,\n        # a custom field might be represented by a TEXT column type, which is\n        # the same as the TextField Django field type, which means the custom\n        # field's get_internal_type() returns 'TextField'.\n        #\n        # But the limitation of the get_internal_type() / data_types approach\n        # is that it cannot handle database column types that aren't already\n        # mapped to one of the built-in Django field types. In this case, you\n        # can implement db_type() instead of get_internal_type() to specify\n        # exactly which wacky database column type you want to use.\n        data = DictWrapper(self.__dict__, connection.ops.quote_name, \"qn_\")\n        try:\n            return connection.data_types[self.get_internal_type()] % data\n        except KeyError:\n            return None"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "class",
+          "name": "Cast",
+          "code": "class Cast(Func):\n    \"\"\"Coerce an expression to a new field type.\"\"\"\n    function = 'CAST'\n    template = '%(function)s(%(expressions)s AS %(db_type)s)'\n\n    mysql_types = {\n        fields.CharField: 'char',\n        fields.IntegerField: 'signed integer',\n        fields.BigIntegerField: 'signed integer',\n        fields.SmallIntegerField: 'signed integer',\n        fields.FloatField: 'signed',\n        fields.PositiveIntegerField: 'unsigned integer',\n        fields.PositiveSmallIntegerField: 'unsigned integer',\n    }\n\n    def __init__(self, expression, output_field):\n        super().__init__(expression, output_field=output_field)\n\n    def as_sql(self, compiler, connection, **extra_context):\n        if 'db_type' not in extra_context:\n            extra_context['db_type'] = self.output_field.db_type(connection)\n        return super().as_sql(compiler, connection, **extra_context)\n\n    def as_mysql(self, compiler, connection):\n        extra_context = {}\n        output_field_class = type(self.output_field)\n        if output_field_class in self.mysql_types:\n            extra_context['db_type'] = self.mysql_types[output_field_class]\n        return self.as_sql(compiler, connection, **extra_context)\n\n    def as_postgresql(self, compiler, connection):\n        # CAST would be valid too, but the :: shortcut syntax is more readable.\n        return self.as_sql(compiler, connection, template='%(expressions)s::%(db_type)s')"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "function",
+          "name": "as_mysql",
+          "class_name": "Length",
+          "code": "def as_mysql(self, compiler, connection):\n        return super().as_sql(compiler, connection, function='CHAR_LENGTH')"
+        }
+      ]
+    }
+  ]
+}

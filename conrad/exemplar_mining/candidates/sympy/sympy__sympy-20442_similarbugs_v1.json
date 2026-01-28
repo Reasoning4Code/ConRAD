@@ -1,0 +1,138 @@
+{
+  "instance_id": "sympy__sympy-20442",
+  "repo": "sympy/sympy",
+  "created_at": "2020-11-17T22:23:42Z",
+  "problem_statement": "convert_to seems to combine orthogonal units\nTested in sympy 1.4, not presently in a position to install 1.5+.\r\nSimple example. Consider `J = kg*m**2/s**2 => J*s = kg*m**2/s`. The convert_to behavior is odd:\r\n```\r\n>>>convert_to(joule*second,joule)\r\n    joule**(7/9)\r\n```\r\nI would expect the unchanged original expression back, an expression in terms of base units, or an error. It appears that convert_to can only readily handle conversions where the full unit expression is valid.\r\n\r\nNote that the following three related examples give sensible results:\r\n```\r\n>>>convert_to(joule*second,joule*second)\r\n    joule*second\r\n```\r\n```\r\n>>>convert_to(J*s, kg*m**2/s)\r\n    kg*m**2/s\r\n```\r\n```\r\n>>>convert_to(J*s,mins)\r\n    J*mins/60\r\n```\n",
+  "patch": "diff --git a/sympy/physics/units/util.py b/sympy/physics/units/util.py\n--- a/sympy/physics/units/util.py\n+++ b/sympy/physics/units/util.py\n@@ -4,6 +4,7 @@\n \n from sympy import Add, Mul, Pow, Tuple, sympify\n from sympy.core.compatibility import reduce, Iterable, ordered\n+from sympy.matrices.common import NonInvertibleMatrixError\n from sympy.physics.units.dimensions import Dimension\n from sympy.physics.units.prefixes import Prefix\n from sympy.physics.units.quantities import Quantity\n@@ -30,7 +31,11 @@ def _get_conversion_matrix_for_expr(expr, target_units, unit_system):\n     camat = Matrix([[dimension_system.get_dimensional_dependencies(i, mark_dimensionless=True).get(j, 0) for i in target_dims] for j in canon_dim_units])\n     exprmat = Matrix([dim_dependencies.get(k, 0) for k in canon_dim_units])\n \n-    res_exponents = camat.solve_least_squares(exprmat, method=None)\n+    try:\n+        res_exponents = camat.solve(exprmat)\n+    except NonInvertibleMatrixError:\n+        return None\n+\n     return res_exponents\n \n \n",
+  "similar_bug_items": [
+    {
+      "pr_number": 19705,
+      "pr_title": "Fix handling of addition and multiplication of Dimensions for get_dimensional_dependencies",
+      "pr_body": "#### References to other Issues or PRs\r\nFixes #18738\r\n\r\n#### Brief description of what is fixed or changed\r\nFixes some cases where the method get_dimensional_dependencies of DimensionSystem raises exceptions when handling adding and multiplying dimensions. This addresses issue #18738 (at least the first half dealing with Dimensions, the second comment dealing with Quantities still doesn't work).\r\n\r\nThe following example previously raised an exception and now works properly:\r\n```\r\nIn [3]: from sympy.physics.units import length, mass, acceleration, time, pressure, force\r\nIn [4]: from sympy.physics.units.systems.si import dimsys_SI\r\nIn [5]: dimsys_SI.get_dimensional_dependencies(mass * length / time**2 + force - pressure * length**2)\r\nOut[5]: {'mass': 1, 'length': 1, 'time': -2}\r\n```\r\n\r\n#### Other comments\r\nAs part of the fix, the following two lines needed to be moved from the beginning of get_dimensional_dependencies to the beginning of _get_dimensional_dependencies_from_name:\r\n```\r\n        if isinstance(name, Dimension):\r\n            name = name.name\r\n\r\n        if isinstance(name, str):\r\n            name = Symbol(name)\r\n```\r\n\r\nThis had to be done to allow the recursion of the multiplication and addition operators to work properly. This is what fixed #18738 even though I was just trying to get the addition case above to work.  Additionally, an exception now gets raised if _def_dimensional_dependencies_for_name does not handle the input so that more useful error messages are provided then what is shown in #18738.\r\n\r\nIf the user attempts to add incompatible dimensions and then calls get_dimensional_dependencies, an exception is raised.  For example the following will raise an exception:\r\n\r\n`In [4]: dimsys_SI.get_dimensional_dependencies(mass * length / time**2 + pressure)`\r\n\r\nTests have been added for issue #18738 and for the addition cases listed above.\r\n\r\n#### Release Notes\r\n<!-- BEGIN RELEASE NOTES -->\r\n* physics.units\r\n  * Fixed some dimensional analysis bugs with the addition and multiplication operators.\r\n<!-- END RELEASE NOTES -->",
+      "issue_id": 18738,
+      "issue_title": "Dimensional analysis: AttributeError in get_dimensional_dependencies with simple example",
+      "issue_body": "Hi all, \r\n\r\nI am trying to get a simple example of a dimensional analysis (as described in [this tutorial](https://docs.sympy.org/latest/modules/physics/units/examples.html#dimensional-analysis) ) to work. Unfortunately, an AttributeError is raised inside the method `get_dimensional_dependencies`.\r\n\r\nHere is a minimal example:\r\n```\r\nfrom sympy import init_printing, symbols, sqrt\r\nfrom sympy.physics.units.systems.si import dimsys_SI\r\nfrom sympy.physics.units import length\r\ninit_printing()\r\n\r\na, b = symbols(\"a b\")\r\nc = sqrt(a**2 + b**2)\r\nc_dim = c.subs({a: length, b: length})\r\n\r\nprint(c_dim) \r\n# >> sqrt(2)*Dimension(sqrt(length**2))\r\n\r\ndimsys_SI.equivalent_dims(c_dim, length) \r\n# >> AttributeError: 'NoneType' object has no attribute 'items' \r\n```\r\n\r\nIt seems that `get_dimensional_dependencies` has problems handling non-dimensional terms (i.e. the `sqrt(2)` term in `c_dim` in the above example). Oddly, when I try to do the substitution 'manually', this term is eliminated:\r\n```\r\nc_dim = sqrt(length**2 + length**2)\r\nprint(c_dim) \r\n# >> Dimension(sqrt(length**2))\r\n```\r\n\r\nIs this intended behavior? It does make sense that multiplying a dimension with a dimensionless value should just give back the dimension as result. However, how come the `sqrt(2)`-term is not eliminated when substituting symbols for dimensions using `subs`?\r\n\r\nI hope I haven't just misunderstood the tutorial/docs. Happy for any help or hints. Also, I would be willing to dive into the code if someone would point me into the right direction.\r\n\r\nThis may be related to the bug discussed [here](https://gitter.im/sympy/sympy?at=5dc0c052fb4dab784a65dfb1).\r\n\r\nThe above example was tested with Python 2.7 and 3.7 and sympy 1.5.1.",
+      "issue_closed_at": "2020-07-17T11:37:09Z",
+      "base_commit": "f46f4488c7cb7aff9666e26ce1bfb980f98e97a7",
+      "changes": [
+        {
+          "file": "sympy/physics/units/dimensions.py",
+          "type": "function",
+          "name": "dimensional_dependencies",
+          "class_name": "DimensionSystem",
+          "code": "def dimensional_dependencies(self):\n        return self.args[2]"
+        },
+        {
+          "file": "sympy/physics/units/dimensions.py",
+          "type": "function",
+          "name": "_get_dimensional_dependencies_for_name",
+          "class_name": "DimensionSystem",
+          "code": "def _get_dimensional_dependencies_for_name(self, name):\n\n        if name.is_Symbol:\n            # Dimensions not included in the dependencies are considered\n            # as base dimensions:\n            return dict(self.dimensional_dependencies.get(name, {name: 1}))\n\n        if name.is_Number:\n            return {}\n\n        get_for_name = self._get_dimensional_dependencies_for_name\n\n        if name.is_Mul:\n            ret = collections.defaultdict(int)\n            dicts = [get_for_name(i) for i in name.args]\n            for d in dicts:\n                for k, v in d.items():\n                    ret[k] += v\n            return {k: v for (k, v) in ret.items() if v != 0}\n\n        if name.is_Pow:\n            dim = get_for_name(name.base)\n            return {k: v*name.exp for (k, v) in dim.items()}\n\n        if name.is_Function:\n            args = (Dimension._from_dimensional_dependencies(\n                get_for_name(arg)) for arg in name.args)\n            result = name.func(*args)\n\n            if isinstance(result, Dimension):\n                return self.get_dimensional_dependencies(result)\n            elif result.func == name.func:\n                return {}\n            else:\n                return get_for_name(result)"
+        },
+        {
+          "file": "sympy/physics/units/dimensions.py",
+          "type": "function",
+          "name": "_get_dimensional_dependencies_for_name",
+          "class_name": "DimensionSystem",
+          "code": "def _get_dimensional_dependencies_for_name(self, name):\n\n        if name.is_Symbol:\n            # Dimensions not included in the dependencies are considered\n            # as base dimensions:\n            return dict(self.dimensional_dependencies.get(name, {name: 1}))\n\n        if name.is_Number:\n            return {}\n\n        get_for_name = self._get_dimensional_dependencies_for_name\n\n        if name.is_Mul:\n            ret = collections.defaultdict(int)\n            dicts = [get_for_name(i) for i in name.args]\n            for d in dicts:\n                for k, v in d.items():\n                    ret[k] += v\n            return {k: v for (k, v) in ret.items() if v != 0}\n\n        if name.is_Pow:\n            dim = get_for_name(name.base)\n            return {k: v*name.exp for (k, v) in dim.items()}\n\n        if name.is_Function:\n            args = (Dimension._from_dimensional_dependencies(\n                get_for_name(arg)) for arg in name.args)\n            result = name.func(*args)\n\n            if isinstance(result, Dimension):\n                return self.get_dimensional_dependencies(result)\n            elif result.func == name.func:\n                return {}\n            else:\n                return get_for_name(result)"
+        }
+      ]
+    },
+    {
+      "pr_number": 15519,
+      "pr_title": "Exit _eval_derivative_n_times when None is obtained",
+      "pr_body": "#### References to other Issues or PRs\r\n\r\nFixes #15518 \r\n\r\n#### Brief description of what is fixed or changed\r\n\r\nThe method `_eval_derivative_n_times` contains a loop that involves calling `_eval_derivative`. The latter may return None when evaluation is not implemented. In such a case the loop should be aborted (returning None) instead of trying to differentiate None.\r\n\r\n#### Release Notes\r\n\r\n<!-- Write the release notes for this release below. See\r\nhttps://github.com/sympy/sympy/wiki/Writing-Release-Notes for more information\r\non how to write release notes. The bot will check your release notes\r\nautomatically to see if they are formatted correctly. -->\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\n* core\r\n  * Fixed a bug in the creation of higher order derivatives that cannot be evaluated.  \r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 15518,
+      "issue_title": "Higher order derivatives that cannot be evaluated, like re(x).diff(x, 2), raise an exception",
+      "issue_body": "This issue arose in a [comment on another issue]( https://github.com/sympy/sympy/issues/15457#issuecomment-436453327) but since it's actually unrelated, is posted here separately. \r\n```\r\n>>> re(x).diff(x, 2)\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"/home/ubuntu/sympy/sympy/core/expr.py\", line 3047, in diff\r\n    return Derivative(self, *symbols, **assumptions)\r\n  File \"/home/ubuntu/sympy/sympy/core/function.py\", line 1370, in __new__\r\n    obj = expr._eval_derivative_n_times(v, count)\r\n  File \"/home/ubuntu/sympy/sympy/core/basic.py\", line 1688, in _eval_derivative_n_times\r\n    obj2 = obj._accept_eval_derivative(s)\r\nAttributeError: 'NoneType' object has no attribute '_accept_eval_derivative'\r\n```\r\nThis happens whenever a higher-order derivative is requested for a function that does not have an explicit derivative. The expected output is \r\n```\r\nDerivative(re(x), (x, 2))\r\n```\r\nA PR is forthcoming. \r\n",
+      "issue_closed_at": "2018-11-24T11:36:42Z",
+      "base_commit": "61e5c20c02328815270ddda385f0108a2b40d24d",
+      "changes": [
+        {
+          "file": "sympy/core/basic.py",
+          "type": "function",
+          "name": "_eval_derivative_n_times",
+          "class_name": "Basic",
+          "code": "def _eval_derivative_n_times(self, s, n):\n        # This is the default evaluator for derivatives (as called by `diff`\n        # and `Derivative`), it will attempt a loop to derive the expression\n        # `n` times by calling the corresponding `_eval_derivative` method,\n        # while leaving the derivative unevaluated if `n` is symbolic.  This\n        # method should be overridden if the object has a closed form for its\n        # symbolic n-th derivative.\n        from sympy import Integer\n        if isinstance(n, (int, Integer)):\n            obj = self\n            for i in range(n):\n                obj2 = obj._accept_eval_derivative(s)\n                if obj == obj2:\n                    break\n                obj = obj2\n            return obj\n        else:\n            return None"
+        }
+      ]
+    },
+    {
+      "pr_number": 15286,
+      "pr_title": "Implemented finding equation of Ellipse using slope as parameter and another method for calculation of circumference of ellipse - continued",
+      "pr_body": "Implemented finding equation of Ellipse using slope as parameter.\r\n\r\nWhen the rotated ellipse is supported, this calculation can still be used but the `_slope` keyword will not be needed: the slope will be an attribute of the rotated ellipse.\r\n\r\nFixes #2815\r\nFixes #6952\r\nCloses #15053 \r\n\r\nThis PR uses the approach to finding equation of ellipse using slope, length of semi minor axis and length of semi major axis as inputs given [here](https://math.stackexchange.com/questions/108270/what-is-the-equation-of-an-ellipse-that-is-not-aligned-with-the-axis/646971#646971)\r\nThis could be an added functionality to the equation finding method in class `Ellipse`.\r\nThanks to @smichr  for providing the approach.\r\n\r\nNote : This is a continuation of #15053 \r\nPlease take a look at this PR and suggest changes. I will be glad to implement them.\r\nThanks.\r\n\r\n#### Release Notes\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\n* geometry\r\n   * Implemented private method for finding equation of Ellipse using `_slope` as parameter\r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 6952,
+      "issue_title": "recognize elliptical integrals",
+      "issue_body": "```\nThis requires about 2 minutes\n\n>>> Ellipse((0,0),3,1).circumference.n()\n13.3648932205553\n\n\nThis is nearly instantaneous\n\n>>> def EllipseCircumference(a, b):\n...    \"\"\"\n...    Compute the circumference of an ellipse with semi-axes a and b.\n...    Require a >= 0 and b >= 0.  Relative accuracy is about 0.5^53.\n...    \"\"\"\n...    import math\n...    x, y = max(a, b), min(a, b)\n...    digits = 53; tol = math.sqrt(math.pow(0.5, digits))\n...    if digits * y < tol * x: return 4 * x\n...    s = 0; m = 1\n...    while x - y > tol * y:\n...       x, y = 0.5 * (x + y), math.sqrt(x * y)\n...       m *= 2; s += m * math.pow(x - y, 2)\n...    return math.pi * (math.pow(a + b, 2) - s) / (x + y)\n...\n>>> EllipseCircumference(3,1)\n13.364893220555258\n>>>\n\nPerhaps recognition of such integrals by integrate/Integral.evalf would be a good idea.\n```\n\nOriginal issue for #6952: http://code.google.com/p/sympy/issues/detail?id=3853\nOriginal author: https://code.google.com/u/117933771799683895267/\n",
+      "issue_closed_at": "2018-10-01T21:27:53Z",
+      "base_commit": "5997e30a33f92e6b4b4d351e835feb7379a0e31d",
+      "changes": [
+        {
+          "file": "sympy/geometry/ellipse.py",
+          "type": "function",
+          "name": "encloses_point",
+          "class_name": "Ellipse",
+          "code": "def encloses_point(self, p):\n        \"\"\"\n        Return True if p is enclosed by (is inside of) self.\n\n        Notes\n        -----\n        Being on the border of self is considered False.\n\n        Parameters\n        ==========\n\n        p : Point\n\n        Returns\n        =======\n\n        encloses_point : True, False or None\n\n        See Also\n        ========\n\n        sympy.geometry.point.Point\n\n        Examples\n        ========\n\n        >>> from sympy import Ellipse, S\n        >>> from sympy.abc import t\n        >>> e = Ellipse((0, 0), 3, 2)\n        >>> e.encloses_point((0, 0))\n        True\n        >>> e.encloses_point(e.arbitrary_point(t).subs(t, S.Half))\n        False\n        >>> e.encloses_point((4, 0))\n        False\n\n        \"\"\"\n        p = Point(p, dim=2)\n        if p in self:\n            return False\n\n        if len(self.foci) == 2:\n            # if the combined distance from the foci to p (h1 + h2) is less\n            # than the combined distance from the foci to the minor axis\n            # (which is the same as the major axis length) then p is inside\n            # the ellipse\n            h1, h2 = [f.distance(p) for f in self.foci]\n            test = 2*self.major - (h1 + h2)\n        else:\n            test = self.radius - self.center.distance(p)\n\n        return fuzzy_bool(test.is_positive)"
+        },
+        {
+          "file": "sympy/geometry/ellipse.py",
+          "type": "function",
+          "name": "equation",
+          "class_name": "Circle",
+          "code": "def equation(self, x='x', y='y'):\n        \"\"\"The equation of the circle.\n\n        Parameters\n        ==========\n\n        x : str or Symbol, optional\n            Default value is 'x'.\n        y : str or Symbol, optional\n            Default value is 'y'.\n\n        Returns\n        =======\n\n        equation : SymPy expression\n\n        Examples\n        ========\n\n        >>> from sympy import Point, Circle\n        >>> c1 = Circle(Point(0, 0), 5)\n        >>> c1.equation()\n        x**2 + y**2 - 25\n\n        \"\"\"\n        x = _symbol(x, real=True)\n        y = _symbol(y, real=True)\n        t1 = (x - self.center.x)**2\n        t2 = (y - self.center.y)**2\n        return t1 + t2 - self.major**2"
+        },
+        {
+          "file": "sympy/geometry/ellipse.py",
+          "type": "function",
+          "name": "equation",
+          "class_name": "Circle",
+          "code": "def equation(self, x='x', y='y'):\n        \"\"\"The equation of the circle.\n\n        Parameters\n        ==========\n\n        x : str or Symbol, optional\n            Default value is 'x'.\n        y : str or Symbol, optional\n            Default value is 'y'.\n\n        Returns\n        =======\n\n        equation : SymPy expression\n\n        Examples\n        ========\n\n        >>> from sympy import Point, Circle\n        >>> c1 = Circle(Point(0, 0), 5)\n        >>> c1.equation()\n        x**2 + y**2 - 25\n\n        \"\"\"\n        x = _symbol(x, real=True)\n        y = _symbol(y, real=True)\n        t1 = (x - self.center.x)**2\n        t2 = (y - self.center.y)**2\n        return t1 + t2 - self.major**2"
+        }
+      ]
+    },
+    {
+      "pr_number": 8548,
+      "pr_title": "Issue #6988: expand_log(exp(x), force=True) = x",
+      "pr_body": "This is a try to fix issue #6988. If I made some mistake just let me know, as I'm still new to sympy development.\n\n```\nIn [9]: expand_log(log(exp(x)), force=True)\nOut[9]: x\n\nIn [10]: expand_log(log(y**(x)), force=True)\nOut[10]: x\u22c5log(y)\n```\n",
+      "issue_id": 6988,
+      "issue_title": "expand_log(exp(x), force=True) should give x",
+      "issue_body": "```\nIn [5]: expand_log(log(exp(x)), force=True)\nOut[5]:\n   \u239b x\u239e\nlog\u239d\u212f \u23a0\n\nIn [6]: expand_log(log(y**(x)), force=True)\nOut[6]: x\u22c5log(y) Issue 1799 is probably to blame.\n```\n\nOriginal issue for #6988: http://code.google.com/p/sympy/issues/detail?id=3889\nOriginal author: https://code.google.com/u/asmeurer@gmail.com/\n",
+      "issue_closed_at": "2014-12-03T13:34:14Z",
+      "base_commit": "e6fc53f27ee872b27bc79b96529fc4bf34d4f023",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/exponential.py",
+          "type": "function",
+          "name": "_eval_expand_log",
+          "class_name": "log",
+          "code": "def _eval_expand_log(self, deep=True, **hints):\n        from sympy import unpolarify\n        from sympy.concrete import Sum, Product\n        force = hints.get('force', False)\n        arg = self.args[0]\n        if arg.is_Integer:\n            # remove perfect powers\n            p = perfect_power(int(arg))\n            if p is not False:\n                return p[1]*self.func(p[0])\n        elif arg.is_Mul:\n            expr = []\n            nonpos = []\n            for x in arg.args:\n                if force or x.is_positive or x.is_polar:\n                    a = self.func(x)\n                    if isinstance(a, log):\n                        expr.append(self.func(x)._eval_expand_log(**hints))\n                    else:\n                        expr.append(a)\n                elif x.is_negative:\n                    a = self.func(-x)\n                    expr.append(a)\n                    nonpos.append(S.NegativeOne)\n                else:\n                    nonpos.append(x)\n            return Add(*expr) + log(Mul(*nonpos))\n        elif arg.is_Pow:\n            if force or (arg.exp.is_real and arg.base.is_positive) or \\\n                    arg.base.is_polar:\n                b = arg.base\n                e = arg.exp\n                a = self.func(b)\n                if isinstance(a, log):\n                    return unpolarify(e) * a._eval_expand_log(**hints)\n                else:\n                    return unpolarify(e) * a\n        elif isinstance(arg, Product):\n            if arg.function.is_positive:\n                return Sum(log(arg.function), *arg.limits)\n\n        return self.func(arg)"
+        }
+      ]
+    },
+    {
+      "pr_number": 12882,
+      "pr_title": "Checker functions for orthogonality of coordinate system",
+      "pr_body": "This PR introduce additional condition for transformation equation which must be fulfill. \r\nIn `vector` module we are dealing with orthogonal curvilinear coordinate system only, so we need to check if transformation equations are correctly defined.\r\n\r\nCloses #12852",
+      "issue_id": 12852,
+      "issue_title": "Vector module: make sure that the base vectors remain orthogonal",
+      "issue_body": "Given a generic transformation equation, make sure that the base vectors remain orthogonal, if not, raise an exception.",
+      "issue_closed_at": "2017-07-05T15:10:49Z",
+      "base_commit": "c87c0fbf1223c28db8590f2591f64db75d5bdd66",
+      "changes": [
+        {
+          "file": "sympy/vector/coordsysrect.py",
+          "type": "line",
+          "name": "line 4",
+          "code": "from sympy.core.cache import cacheit\nfrom sympy.core import S\nfrom sympy.vector.scalar import BaseScalar\nfrom sympy import eye, trigsimp, ImmutableMatrix as Matrix, Symbol, sin, cos, sqrt, diff, Tuple\nimport sympy.vector\nfrom sympy import simplify\nfrom sympy.vector.orienters import (Orienter, AxisOrienter, BodyOrienter,"
+        },
+        {
+          "file": "sympy/vector/coordsysrect.py",
+          "type": "function",
+          "name": "_connect_to_standard_cartesian",
+          "class_name": "CoordSys3D",
+          "code": "def _connect_to_standard_cartesian(self, curv_coord_type):\n        \"\"\"\n        Change the type of orthogonal curvilinear system. It could be done\n        by tuple of transformation equations or by choosing one of pre-defined\n        coordinate system.\n\n        Parameters\n        ==========\n\n        :param curv_coord_type: str, tuple\n\n        \"\"\"\n        if isinstance(curv_coord_type, string_types):\n            self._set_transformation_equations_mapping(curv_coord_type)\n            self._set_lame_coefficient_mapping(curv_coord_type)\n\n        elif isinstance(curv_coord_type, (tuple, list, Tuple)) and len(curv_coord_type) == 3:\n            self._transformation_eqs = curv_coord_type\n            self._h1, self._h2, self._h3 = self._calculate_lame_coefficients(curv_coord_type)\n\n        elif isinstance(curv_coord_type, (tuple, list, Tuple)) and len(curv_coord_type) == 2:\n            self._transformation_eqs = \\\n            tuple([eq.subs({curv_coord_type[0][0]: self.x,\n                            curv_coord_type[0][1]: self.y,\n                            curv_coord_type[0][2]: self.z}) for eq in curv_coord_type[1]])\n            self._h1, self._h2, self._h3 = self._calculate_lame_coefficients(self._transformation_equations())\n\n        else:\n            raise ValueError(\"Wrong set of parameter.\")"
+        }
+      ]
+    }
+  ]
+}

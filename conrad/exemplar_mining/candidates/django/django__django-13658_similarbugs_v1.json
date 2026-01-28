@@ -1,0 +1,136 @@
+{
+  "instance_id": "django__django-13658",
+  "repo": "django/django",
+  "created_at": "2020-11-09T20:50:28Z",
+  "problem_statement": "ManagementUtility instantiates CommandParser without passing already-computed prog argument\nDescription\n\t\nManagementUtility ​goes to the trouble to parse the program name from the argv it's passed rather than from sys.argv: \n\tdef __init__(self, argv=None):\n\t\tself.argv = argv or sys.argv[:]\n\t\tself.prog_name = os.path.basename(self.argv[0])\n\t\tif self.prog_name == '__main__.py':\n\t\t\tself.prog_name = 'python -m django'\nBut then when it needs to parse --pythonpath and --settings, it ​uses the program name from sys.argv: \n\t\tparser = CommandParser(usage='%(prog)s subcommand [options] [args]', add_help=False, allow_abbrev=False)\nAbove \"%(prog)s\" ​refers to sys.argv[0]. Instead, it should refer to self.prog_name. This can fixed as follows:\n\t\tparser = CommandParser(\n\t\t\tprog=self.prog_name,\n\t\t\tusage='%(prog)s subcommand [options] [args]',\n\t\t\tadd_help=False,\n\t\t\tallow_abbrev=False)\nI'm aware that execute_from_command_line is a private API, but it'd be really convenient for me if it worked properly in my weird embedded environment where sys.argv[0] is ​incorrectly None. If passing my own argv to execute_from_command_line avoided all the ensuing exceptions, I wouldn't have to modify sys.argv[0] globally as I'm doing in the meantime.\n",
+  "patch": "diff --git a/django/core/management/__init__.py b/django/core/management/__init__.py\n--- a/django/core/management/__init__.py\n+++ b/django/core/management/__init__.py\n@@ -344,7 +344,12 @@ def execute(self):\n         # Preprocess options to extract --settings and --pythonpath.\n         # These options could affect the commands that are available, so they\n         # must be processed early.\n-        parser = CommandParser(usage='%(prog)s subcommand [options] [args]', add_help=False, allow_abbrev=False)\n+        parser = CommandParser(\n+            prog=self.prog_name,\n+            usage='%(prog)s subcommand [options] [args]',\n+            add_help=False,\n+            allow_abbrev=False,\n+        )\n         parser.add_argument('--settings')\n         parser.add_argument('--pythonpath')\n         parser.add_argument('args', nargs='*')  # catch-all\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 9894,
+      "pr_title": "Fixed #29295 -- Fixed management command crash when using subparsers.",
+      "pr_body": "I applied  @timgraham  [diff](https://code.djangoproject.com/attachment/ticket/29295/29295.diff), and added tests for it.",
+      "issue_id": 29295,
+      "issue_title": "BaseCommand.add_arguments crashes when using parser.add_subparsers().add_parser(\"subcommand\")",
+      "issue_body": "Background\nPython's\n​\nargparse\nallows to\n​\ndefine subparsers\n.\nThe following works (but does nothing observable) in plain Python:\nimport argparse\n\nparser = argparse.ArgumentParser()\nsubparsers = parser.add_subparsers()\na_parser = subparsers.add_parser(\"A\")\nSetup\nThe equivalent does\nnot\nwork in a\nmanage.py\ncustom command.\nWhen I put this in file\nmycommand.py\n:\nimport django.core.management.base as djcmb\n\nclass Command(djcmb.BaseCommand):\n    def add_arguments(self, parser):\n        subparsers = parser.add_subparsers()\n        a_parser = subparsers.add_parser(\"A\")\nSymptom\n...and then run\npython manage.py mycommand A\n,\nwhat I get is\nTypeError: __init__() missing 1 required positional argument: 'cmd'\nwith the following stacktrace:\nFile \"manage.py\", line 8, in <module>\n    execute_from_command_line(sys.argv)\n  File \"C:\\venv\\rqc36\\lib\\site-packages\\django\\core\\management\\__init__.py\", line 364, in execute_from_command_line\n    utility.execute()\n  File \"C:\\venv\\rqc36\\lib\\site-packages\\django\\core\\management\\__init__.py\", line 356, in execute\n    self.fetch_command(subcommand).run_from_argv(self.argv)\n  File \"C:\\venv\\rqc36\\lib\\site-packages\\django\\core\\management\\base.py\", line 275, in run_from_argv\n    parser = self.create_parser(argv[0], argv[1])\n  File \"C:\\venv\\rqc36\\lib\\site-packages\\django\\core\\management\\base.py\", line 249, in create_parser\n    self.add_arguments(parser)\n  File \"C:\\ws\\bb\\rqc\\rqc\\management\\commands\\mycommand.py\", line 7, in add_arguments\n    a_parser = subparsers.add_parser(\"A\")\n  File \"C:\\sw\\Python36-32\\lib\\argparse.py\", line 1097, in add_parser\n    parser = self._parser_class(**kwargs)\nDiagnosis\nThe reason is that Django does not use a plain\nArgumentParser\nbut rather its own\ndjango.core.management.base.CommandParser\n, the constructor of which requires a positional argument:\ndef __init__(self, cmd, **kwargs):  # ...\nwhere\ncmd\nis supposed to contain the\nmycommand.Command\nobject which is then stored as\nself.cmd\nin the parser.\nThe following\nkludge\nhelps the poor user trying to get subparsers to work:\nimport argparse\nimport django.core.management.base as djcmb\n\nclass Command(djcmb.BaseCommand):\n    def add_arguments(self, parser):\n        subparsers = parser.add_subparsers()\n        subparsers._parser_class = argparse.ArgumentParser  # circumvent Django 1.11 bug\n        a_parser = subparsers.add_parser(\"A\")\nRepair suggestions\nS1\n: The most straightforward repair I see would be to make the argument optional (\n*argv\n) and use a dummy object for\nself.cmd\nin case of subparsers.\nself.cmd\nis used only three times. Is this good enough?\nS2\n: Alternatively, one could simply document the problem and the kludge. (BTW: The custom commands how-to should become more explicit regarding the use of\nargparse\n; it is currently only hinted at, never mentioned.)",
+      "issue_closed_at": "2018-04-21T16:59:28",
+      "base_commit": "21420096c4db78ccb8f549a29d662cff870d363c",
+      "changes": [
+        {
+          "file": "django/core/management/__init__.py",
+          "type": "function",
+          "name": "execute",
+          "class_name": "ManagementUtility",
+          "code": "def execute(self):\n        \"\"\"\n        Given the command-line arguments, figure out which subcommand is being\n        run, create a parser appropriate to that command, and run it.\n        \"\"\"\n        try:\n            subcommand = self.argv[1]\n        except IndexError:\n            subcommand = 'help'  # Display help if no arguments were given.\n\n        # Preprocess options to extract --settings and --pythonpath.\n        # These options could affect the commands that are available, so they\n        # must be processed early.\n        parser = CommandParser(None, usage=\"%(prog)s subcommand [options] [args]\", add_help=False)\n        parser.add_argument('--settings')\n        parser.add_argument('--pythonpath')\n        parser.add_argument('args', nargs='*')  # catch-all\n        try:\n            options, args = parser.parse_known_args(self.argv[2:])\n            handle_default_options(options)\n        except CommandError:\n            pass  # Ignore any option errors at this point.\n\n        try:\n            settings.INSTALLED_APPS\n        except ImproperlyConfigured as exc:\n            self.settings_exception = exc\n        except ImportError as exc:\n            self.settings_exception = exc\n\n        if settings.configured:\n            # Start the auto-reloading dev server even if the code is broken.\n            # The hardcoded condition is a code smell but we can't rely on a\n            # flag on the command class because we haven't located it yet.\n            if subcommand == 'runserver' and '--noreload' not in self.argv:\n                try:\n                    autoreload.check_errors(django.setup)()\n                except Exception:\n                    # The exception will be raised later in the child process\n                    # started by the autoreloader. Pretend it didn't happen by\n                    # loading an empty list of applications.\n                    apps.all_models = defaultdict(OrderedDict)\n                    apps.app_configs = OrderedDict()\n                    apps.apps_ready = apps.models_ready = apps.ready = True\n\n                    # Remove options not compatible with the built-in runserver\n                    # (e.g. options for the contrib.staticfiles' runserver).\n                    # Changes here require manually testing as described in\n                    # #27522.\n                    _parser = self.fetch_command('runserver').create_parser('django', 'runserver')\n                    _options, _args = _parser.parse_known_args(self.argv[2:])\n                    for _arg in _args:\n                        self.argv.remove(_arg)\n\n            # In all other cases, django.setup() is required to succeed.\n            else:\n                django.setup()\n\n        self.autocomplete()\n\n        if subcommand == 'help':\n            if '--commands' in args:\n                sys.stdout.write(self.main_help_text(commands_only=True) + '\\n')\n            elif not options.args:\n                sys.stdout.write(self.main_help_text() + '\\n')\n            else:\n                self.fetch_command(options.args[0]).print_help(self.prog_name, options.args[0])\n        # Special-cases: We want 'django-admin --version' and\n        # 'django-admin --help' to work, for backwards compatibility.\n        elif subcommand == 'version' or self.argv[1:] == ['--version']:\n            sys.stdout.write(django.get_version() + '\\n')\n        elif self.argv[1:] in (['--help'], ['-h']):\n            sys.stdout.write(self.main_help_text() + '\\n')\n        else:\n            self.fetch_command(subcommand).run_from_argv(self.argv)"
+        },
+        {
+          "file": "django/core/management/base.py",
+          "type": "class",
+          "name": "CommandParser",
+          "code": "class CommandParser(ArgumentParser):\n    \"\"\"\n    Customized ArgumentParser class to improve some error messages and prevent\n    SystemExit in several occasions, as SystemExit is unacceptable when a\n    command is called programmatically.\n    \"\"\"\n    def __init__(self, cmd, **kwargs):\n        self.cmd = cmd\n        super().__init__(**kwargs)\n\n    def parse_args(self, args=None, namespace=None):\n        # Catch missing argument for a better error message\n        if (hasattr(self.cmd, 'missing_args_message') and\n                not (args or any(not arg.startswith('-') for arg in args))):\n            self.error(self.cmd.missing_args_message)\n        return super().parse_args(args, namespace)\n\n    def error(self, message):\n        if self.cmd._called_from_command_line:\n            super().error(message)\n        else:\n            raise CommandError(\"Error: %s\" % message)"
+        },
+        {
+          "file": "django/core/management/base.py",
+          "type": "function",
+          "name": "create_parser",
+          "class_name": "BaseCommand",
+          "code": "def create_parser(self, prog_name, subcommand):\n        \"\"\"\n        Create and return the ``ArgumentParser`` which will be used to\n        parse the arguments to this command.\n        \"\"\"\n        parser = CommandParser(\n            self, prog=\"%s %s\" % (os.path.basename(prog_name), subcommand),\n            description=self.help or None,\n        )\n        # Add command-specific arguments first so that they appear in the\n        # --help output before arguments common to all commands.\n        self.add_arguments(parser)\n        parser.add_argument('--version', action='version', version=self.get_version())\n        parser.add_argument(\n            '-v', '--verbosity', action='store', dest='verbosity', default=1,\n            type=int, choices=[0, 1, 2, 3],\n            help='Verbosity level; 0=minimal output, 1=normal output, 2=verbose output, 3=very verbose output',\n        )\n        parser.add_argument(\n            '--settings',\n            help=(\n                'The Python path to a settings module, e.g. '\n                '\"myproject.settings.main\". If this isn\\'t provided, the '\n                'DJANGO_SETTINGS_MODULE environment variable will be used.'\n            ),\n        )\n        parser.add_argument(\n            '--pythonpath',\n            help='A directory to add to the Python path, e.g. \"/home/djangoprojects/myproject\".',\n        )\n        parser.add_argument('--traceback', action='store_true', help='Raise on CommandError exceptions')\n        parser.add_argument(\n            '--no-color', action='store_true', dest='no_color',\n            help=\"Don't colorize the command output.\",\n        )\n        return parser"
+        }
+      ]
+    },
+    {
+      "pr_number": 8396,
+      "pr_title": "Fixed #28116 -- Used error code filtering in PostgreSQL test database creation.",
+      "pr_body": "Ticket [28116](https://code.djangoproject.com/ticket/28116).",
+      "issue_id": 28116,
+      "issue_title": "Filtering PostgreSQL exception based on message is too brittle",
+      "issue_body": "In commit\n64264c9a19b7dae6cd1d5e112177cdbcafafc93c\n, the behavior of\n_execute_create_test_db\ndepends on the databae error message\n''database %s already exists'\n.\nOn my system for example, the error message is localized so I'm finally getting a message\nGot an error creating the test database: la base de données « test_testgis1 » existe déjà\neven when I provide\n--keepdb\n.",
+      "issue_closed_at": "2017-04-24T23:01:44",
+      "base_commit": "8ef35468b660e1c25af67a8299202b8bc108679f",
+      "changes": [
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import sys\n\nfrom django.db.backends.base.creation import BaseDatabaseCreation\n\n"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "_execute_create_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _execute_create_test_db(self, cursor, parameters, keepdb=False):\n        try:\n            super()._execute_create_test_db(cursor, parameters, keepdb)\n        except Exception as e:\n            exc_msg = 'database %s already exists' % parameters['dbname']\n            if exc_msg not in str(e):\n                # All errors except \"database already exists\" cancel tests\n                sys.stderr.write('Got an error creating the test database: %s\\n' % e)\n                sys.exit(2)\n            elif not keepdb:\n                # If the database should be kept, ignore \"database already\n                # exists\".\n                raise e"
+        }
+      ]
+    },
+    {
+      "pr_number": 9112,
+      "pr_title": "Fixed #27846 -- clear all cached reverse relationships on refresh_from_db()",
+      "pr_body": "https://code.djangoproject.com/ticket/27846",
+      "issue_id": 27846,
+      "issue_title": "refresh_from_db() doesn't clear reverse OneToOneFields",
+      "issue_body": "Sorry for the poor summary, it is difficult to explain in words. I have a project to demo this bug attached to this ticket, but I will try to explain the bug anyway in steps and the setup.\nSetup:\n2 models (A and B)\nB has a OneToOne to A\nBoth A and B have a field (ie TextField)\nSetup either a signal or override save() for A to update B's TextField to equal that of A's on save() or post_save for signals\nSteps:\nCreate instance of A\nGet another copy of the instance of A via A.objects.get()\nCreate instance of B using the copy of the instance of A\nDo refresh_from_db() on original instance of A\nTry to access B from A\nThe project I have provided is a slim version of this problem that demonstrates it with signals, overriden save(), and basic set and save inside the test. The basic set and save works, but the other two fail when using the above steps. Run the test suite to see.",
+      "issue_closed_at": "2017-10-12T16:25:22",
+      "base_commit": "df0aebc893973c78d7d2cda712ba4133dbe29b6e",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "refresh_from_db",
+          "class_name": "Model",
+          "code": "def refresh_from_db(self, using=None, fields=None):\n        \"\"\"\n        Reload field values from the database.\n\n        By default, the reloading happens from the database this instance was\n        loaded from, or by the read router if this instance wasn't loaded from\n        any database. The using parameter will override the default.\n\n        Fields can be used to specify which fields to reload. The fields\n        should be an iterable of field attnames. If fields is None, then\n        all non-deferred fields are reloaded.\n\n        When accessing deferred fields of an instance, the deferred loading\n        of the field will call this method.\n        \"\"\"\n        if fields is not None:\n            if len(fields) == 0:\n                return\n            if any(LOOKUP_SEP in f for f in fields):\n                raise ValueError(\n                    'Found \"%s\" in fields argument. Relations and transforms '\n                    'are not allowed in fields.' % LOOKUP_SEP)\n\n        db = using if using is not None else self._state.db\n        db_instance_qs = self.__class__._default_manager.using(db).filter(pk=self.pk)\n\n        # Use provided fields, if not set then reload all non-deferred fields.\n        deferred_fields = self.get_deferred_fields()\n        if fields is not None:\n            fields = list(fields)\n            db_instance_qs = db_instance_qs.only(*fields)\n        elif deferred_fields:\n            fields = [f.attname for f in self._meta.concrete_fields\n                      if f.attname not in deferred_fields]\n            db_instance_qs = db_instance_qs.only(*fields)\n\n        db_instance = db_instance_qs.get()\n        non_loaded_fields = db_instance.get_deferred_fields()\n        for field in self._meta.concrete_fields:\n            if field.attname in non_loaded_fields:\n                # This field wasn't refreshed - skip ahead.\n                continue\n            setattr(self, field.attname, getattr(db_instance, field.attname))\n            # Throw away stale foreign key references.\n            if field.is_relation and field.is_cached(self):\n                rel_instance = field.get_cached_value(self)\n                local_val = getattr(db_instance, field.attname)\n                related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)\n                if local_val != related_val or (local_val is None and related_val is None):\n                    field.delete_cached_value(self)\n        self._state.db = db_instance._state.db"
+        }
+      ]
+    },
+    {
+      "pr_number": 10653,
+      "pr_title": "Fixed #29959 -- Cached GEOS version in WKBWriter class",
+      "pr_body": "https://code.djangoproject.com/ticket/29959",
+      "issue_id": 29959,
+      "issue_title": "Random LooseVersion errors while getting multiple wkb values",
+      "issue_body": "From\n[f185d929fa1c0caa]\n, each call to geometry\nwkb\nvalue (used in the json representation) will call\nGEOSversion()\nto test a corner case condition.\nUnfortunately and randomly, this causes\n'LooseVersion' object has no attribute 'version'\nerrors. It might be memory related because the same operation sometimes fails, sometimes succeeds in the exact same code conditions.\nIt's hard to know what part of the code to blame, but I would argue that calling a GEOS method for each wkb value retrieval is suboptimal, as the GEOS version should not change between server restart. We may find a way to cache the GEOS version between calls.",
+      "issue_closed_at": "2018-11-16T14:12:45",
+      "base_commit": "97cec6f75d9d9b86892829f784e5e9dabfd1242a",
+      "changes": [
+        {
+          "file": "django/contrib/gis/geos/prototypes/io.py",
+          "type": "class",
+          "name": "WKBWriter",
+          "code": "class WKBWriter(IOBase):\n    _constructor = wkb_writer_create\n    ptr_type = WKB_WRITE_PTR\n    destructor = wkb_writer_destroy\n\n    def __init__(self, dim=2):\n        super().__init__()\n        self.outdim = dim\n\n    def _handle_empty_point(self, geom):\n        from django.contrib.gis.geos import Point\n        if isinstance(geom, Point) and geom.empty:\n            if self.srid:\n                # PostGIS uses POINT(NaN NaN) for WKB representation of empty\n                # points. Use it for EWKB as it's a PostGIS specific format.\n                # https://trac.osgeo.org/postgis/ticket/3181\n                geom = Point(float('NaN'), float('NaN'), srid=geom.srid)\n            else:\n                raise ValueError('Empty point is not representable in WKB.')\n        return geom\n\n    def write(self, geom):\n        \"Return the WKB representation of the given geometry.\"\n        from django.contrib.gis.geos import Polygon\n        geom = self._handle_empty_point(geom)\n        wkb = wkb_writer_write(self.ptr, geom.ptr, byref(c_size_t()))\n        if geos_version_tuple() < (3, 6, 1) and isinstance(geom, Polygon) and geom.empty:\n            # Fix GEOS output for empty polygon.\n            # See https://trac.osgeo.org/geos/ticket/680.\n            wkb = wkb[:-8] + b'\\0' * 4\n        return memoryview(wkb)\n\n    def write_hex(self, geom):\n        \"Return the HEXEWKB representation of the given geometry.\"\n        from django.contrib.gis.geos.polygon import Polygon\n        geom = self._handle_empty_point(geom)\n        wkb = wkb_writer_write_hex(self.ptr, geom.ptr, byref(c_size_t()))\n        if geos_version_tuple() < (3, 6, 1) and isinstance(geom, Polygon) and geom.empty:\n            wkb = wkb[:-16] + b'0' * 8\n        return wkb\n\n    # ### WKBWriter Properties ###\n\n    # Property for getting/setting the byteorder.\n    def _get_byteorder(self):\n        return wkb_writer_get_byteorder(self.ptr)\n\n    def _set_byteorder(self, order):\n        if order not in (0, 1):\n            raise ValueError('Byte order parameter must be 0 (Big Endian) or 1 (Little Endian).')\n        wkb_writer_set_byteorder(self.ptr, order)\n\n    byteorder = property(_get_byteorder, _set_byteorder)\n\n    # Property for getting/setting the output dimension.\n    @property\n    def outdim(self):\n        return wkb_writer_get_outdim(self.ptr)\n\n    @outdim.setter\n    def outdim(self, new_dim):\n        if new_dim not in (2, 3):\n            raise ValueError('WKB output dimension must be 2 or 3')\n        wkb_writer_set_outdim(self.ptr, new_dim)\n\n    # Property for getting/setting the include srid flag.\n    @property\n    def srid(self):\n        return bool(wkb_writer_get_include_srid(self.ptr))\n\n    @srid.setter\n    def srid(self, include):\n        wkb_writer_set_include_srid(self.ptr, bool(include))"
+        },
+        {
+          "file": "django/contrib/gis/geos/prototypes/io.py",
+          "type": "function",
+          "name": "write",
+          "class_name": "WKBWriter",
+          "code": "def write(self, geom):\n        \"Return the WKB representation of the given geometry.\"\n        from django.contrib.gis.geos import Polygon\n        geom = self._handle_empty_point(geom)\n        wkb = wkb_writer_write(self.ptr, geom.ptr, byref(c_size_t()))\n        if geos_version_tuple() < (3, 6, 1) and isinstance(geom, Polygon) and geom.empty:\n            # Fix GEOS output for empty polygon.\n            # See https://trac.osgeo.org/geos/ticket/680.\n            wkb = wkb[:-8] + b'\\0' * 4\n        return memoryview(wkb)"
+        },
+        {
+          "file": "django/contrib/gis/geos/prototypes/io.py",
+          "type": "function",
+          "name": "write_hex",
+          "class_name": "WKBWriter",
+          "code": "def write_hex(self, geom):\n        \"Return the HEXEWKB representation of the given geometry.\"\n        from django.contrib.gis.geos.polygon import Polygon\n        geom = self._handle_empty_point(geom)\n        wkb = wkb_writer_write_hex(self.ptr, geom.ptr, byref(c_size_t()))\n        if geos_version_tuple() < (3, 6, 1) and isinstance(geom, Polygon) and geom.empty:\n            wkb = wkb[:-16] + b'0' * 8\n        return wkb"
+        }
+      ]
+    },
+    {
+      "pr_number": 12193,
+      "pr_title": "Fixed #31073 -- Prevented CheckboxInput.get_context() from mutating attrs.",
+      "pr_body": "[Ticket 31073](https://code.djangoproject.com/ticket/31073)\r\n\r\nI chose modifying the SplitArrayWidget over the CheckboxInput to keep the potential negative impact to a minimum, but would appreciate guidance if that was the correct choice. I'm unsure because no other widget modifies the passed-in attrs dictionary, so avoiding that in CheckboxInput may be preferable instead.",
+      "issue_id": 31073,
+      "issue_title": "SplitArrayField with BooleanField always has widgets checked after the first True value.",
+      "issue_body": "When providing a SplitArrayField BooleanField with preexisting data, the final_attrs dict is updated to include\n'checked': True\nafter the for loop has reached the first\nTrue\nvalue in the initial data array. Once this occurs every widget initialized after that defaults to checked even though the backing data may be False. This is caused by the CheckboxInput widget's\nget_context()\nmodifying the attrs dict passed into it. This is the only widget that modifies the attrs dict passed into its get_context().\nCheckboxInput setting\nattrs['checked']\nto True:\n​\nhttps://github.com/django/django/blob/master/django/forms/widgets.py#L527",
+      "issue_closed_at": "2019-12-10T05:51:11",
+      "base_commit": "3fb7c12158a2402f0f80824f6778112071235803",
+      "changes": [
+        {
+          "file": "django/forms/widgets.py",
+          "type": "function",
+          "name": "format_value",
+          "class_name": "SelectDateWidget",
+          "code": "def format_value(self, value):\n        \"\"\"\n        Return a dict containing the year, month, and day of the current value.\n        Use dict instead of a datetime to allow invalid dates such as February\n        31 to display correctly.\n        \"\"\"\n        year, month, day = None, None, None\n        if isinstance(value, (datetime.date, datetime.datetime)):\n            year, month, day = value.year, value.month, value.day\n        elif isinstance(value, str):\n            match = self.date_re.match(value)\n            if match:\n                # Convert any zeros in the date to empty strings to match the\n                # empty option value.\n                year, month, day = [int(val) or '' for val in match.groups()]\n            elif settings.USE_L10N:\n                input_format = get_format('DATE_INPUT_FORMATS')[0]\n                try:\n                    d = datetime.datetime.strptime(value, input_format)\n                except ValueError:\n                    pass\n                else:\n                    year, month, day = d.year, d.month, d.day\n        return {'year': year, 'month': month, 'day': day}"
+        }
+      ]
+    }
+  ]
+}

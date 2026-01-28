@@ -1,0 +1,118 @@
+{
+  "instance_id": "sympy__sympy-11400",
+  "repo": "sympy/sympy",
+  "created_at": "2016-07-15T21:40:49Z",
+  "problem_statement": "ccode(sinc(x)) doesn't work\n```\nIn [30]: ccode(sinc(x))\nOut[30]: '// Not supported in C:\\n// sinc\\nsinc(x)'\n```\n\nI don't think `math.h` has `sinc`, but it could print\n\n```\nIn [38]: ccode(Piecewise((sin(theta)/theta, Ne(theta, 0)), (1, True)))\nOut[38]: '((Ne(theta, 0)) ? (\\n   sin(theta)/theta\\n)\\n: (\\n   1\\n))'\n```\n\n",
+  "patch": "diff --git a/sympy/printing/ccode.py b/sympy/printing/ccode.py\n--- a/sympy/printing/ccode.py\n+++ b/sympy/printing/ccode.py\n@@ -231,6 +231,20 @@ def _print_Symbol(self, expr):\n         else:\n             return name\n \n+    def _print_Relational(self, expr):\n+        lhs_code = self._print(expr.lhs)\n+        rhs_code = self._print(expr.rhs)\n+        op = expr.rel_op\n+        return (\"{0} {1} {2}\").format(lhs_code, op, rhs_code)\n+\n+    def _print_sinc(self, expr):\n+        from sympy.functions.elementary.trigonometric import sin\n+        from sympy.core.relational import Ne\n+        from sympy.functions import Piecewise\n+        _piecewise = Piecewise(\n+            (sin(expr.args[0]) / expr.args[0], Ne(expr.args[0], 0)), (1, True))\n+        return self._print(_piecewise)\n+\n     def _print_AugmentedAssignment(self, expr):\n         lhs_code = self._print(expr.lhs)\n         op = expr.rel_op\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8627,
+      "pr_title": "Bug Fix #8626",
+      "pr_body": "Let me know if a test case is needed\n",
+      "issue_id": 8626,
+      "issue_title": "bug in physics/mechanics/lagrange.py",
+      "issue_body": "When providing a `forcelist` with more than one force, not all terms are computed,\nthis comes from the fact that the iterator `flist = zip(*_f_list_parser(self.forcelist, N))` is consumed in the first iteration of the loop.\n\nI propose a following PR that fixes the bug, let me know if I need to also provide a test case.\n\nBest,\nGuillaume\n",
+      "issue_closed_at": "2015-01-06T16:57:16Z",
+      "base_commit": "65f7c8c2c9c1927eaa8520c4ce06864f93a20ad1",
+      "changes": [
+        {
+          "file": "sympy/physics/mechanics/lagrange.py",
+          "type": "function",
+          "name": "form_lagranges_equations",
+          "class_name": "LagrangesMethod",
+          "code": "def form_lagranges_equations(self):\n        \"\"\"Method to form Lagrange's equations of motion.\n\n        Returns a vector of equations of motion using Lagrange's equations of\n        the second kind.\n        \"\"\"\n\n        qds = self._qdots\n        qdd_zero = dict((i, 0) for i in self._qdoubledots)\n        n = len(self.q)\n\n        # Internally we represent the EOM as four terms:\n        # EOM = term1 - term2 - term3 - term4 = 0\n\n        # First term\n        self._term1 = self._L.jacobian(qds)\n        self._term1 = self._term1.diff(dynamicsymbols._t).T\n\n        # Second term\n        self._term2 = self._L.jacobian(self.q).T\n\n        # Third term\n        if self.coneqs:\n            coneqs = self.coneqs\n            m = len(coneqs)\n            # Creating the multipliers\n            self.lam_vec = Matrix(dynamicsymbols('lam1:' + str(m + 1)))\n            self.lam_coeffs = -coneqs.jacobian(qds)\n            self._term3 = self.lam_coeffs.T * self.lam_vec\n            # Extracting the coeffecients of the qdds from the diff coneqs\n            diffconeqs = coneqs.diff(dynamicsymbols._t)\n            self._m_cd = diffconeqs.jacobian(self._qdoubledots)\n            # The remaining terms i.e. the 'forcing' terms in diff coneqs\n            self._f_cd = -diffconeqs.subs(qdd_zero)\n        else:\n            self._term3 = zeros(n, 1)\n\n        # Fourth term\n        if self.forcelist:\n            N = self.inertial\n            self._term4 = zeros(n, 1)\n            flist = zip(*_f_list_parser(self.forcelist, N))\n            for i, qd in enumerate(qds):\n                for obj, force in self.forcelist:\n                    self._term4[i] = sum(v.diff(qd, N) & f for (v, f) in flist)\n        else:\n            self._term4 = zeros(n, 1)\n\n        # Form the dynamic mass and forcing matrices\n        without_lam = self._term1 - self._term2 - self._term4\n        self._m_d = without_lam.jacobian(self._qdoubledots)\n        self._f_d = -without_lam.subs(qdd_zero)\n\n        # Form the EOM\n        self.eom = without_lam - self._term3\n        return self.eom"
+        }
+      ]
+    },
+    {
+      "pr_number": 7928,
+      "pr_title": "give MaxMinBase an evalf routine",
+      "pr_body": "Although Or, And, etc... will not have a number as an\nargument, Min and Max can. When the operations version\nof _eval_evalf is called a call to as_independent is\nmade. This creates an x (=1) that is assumed to be an\nargument of the object so Max(0,y).n() becomes Max(1, 0, y) -> Max(1, y).\nTo avoid this an evalf routine was added to handle MaxMinBase separately.\n\nfixes #7233\n",
+      "issue_id": 7233,
+      "issue_title": "N(Max(0.0, n + m)) returns Max(1.0, n + m)",
+      "issue_body": "```\nThe following code does not return what is expected,\n\nn = sympy.Symbol('n')\nm = sympy.Symbol('m')\na = sympy.Max(0.0, n + m)\nprint a\nprint sympy.N(a)\n\noutputs:\n>> Max(0.0, m + n)\n>> Max(1.0, m + n)\n```\n\nOriginal issue for #7233: http://code.google.com/p/sympy/issues/detail?id=4134\nOriginal author: https://code.google.com/u/100679098312105897492/\n",
+      "issue_closed_at": "2014-08-29T23:58:03Z",
+      "base_commit": "d365f932a26c28c4c57b2b9f6dddee2ca94a5c66",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/miscellaneous.py",
+          "type": "function",
+          "name": "_eval_derivative",
+          "class_name": "MinMaxBase",
+          "code": "def _eval_derivative(self, s):\n        # f(x).diff(s) -> x.diff(s) * f.fdiff(1)(s)\n        i = 0\n        l = []\n        for a in self.args:\n            i += 1\n            da = a.diff(s)\n            if da is S.Zero:\n                continue\n            try:\n                df = self.fdiff(i)\n            except ArgumentIndexError:\n                df = Function.fdiff(self, i)\n            l.append(df * da)\n        return Add(*l)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8548,
+      "pr_title": "Issue #6988: expand_log(exp(x), force=True) = x",
+      "pr_body": "This is a try to fix issue #6988. If I made some mistake just let me know, as I'm still new to sympy development.\n\n```\nIn [9]: expand_log(log(exp(x)), force=True)\nOut[9]: x\n\nIn [10]: expand_log(log(y**(x)), force=True)\nOut[10]: x\u22c5log(y)\n```\n",
+      "issue_id": 6988,
+      "issue_title": "expand_log(exp(x), force=True) should give x",
+      "issue_body": "```\nIn [5]: expand_log(log(exp(x)), force=True)\nOut[5]:\n   \u239b x\u239e\nlog\u239d\u212f \u23a0\n\nIn [6]: expand_log(log(y**(x)), force=True)\nOut[6]: x\u22c5log(y) Issue 1799 is probably to blame.\n```\n\nOriginal issue for #6988: http://code.google.com/p/sympy/issues/detail?id=3889\nOriginal author: https://code.google.com/u/asmeurer@gmail.com/\n",
+      "issue_closed_at": "2014-12-03T13:34:14Z",
+      "base_commit": "e6fc53f27ee872b27bc79b96529fc4bf34d4f023",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/exponential.py",
+          "type": "function",
+          "name": "_eval_expand_log",
+          "class_name": "log",
+          "code": "def _eval_expand_log(self, deep=True, **hints):\n        from sympy import unpolarify\n        from sympy.concrete import Sum, Product\n        force = hints.get('force', False)\n        arg = self.args[0]\n        if arg.is_Integer:\n            # remove perfect powers\n            p = perfect_power(int(arg))\n            if p is not False:\n                return p[1]*self.func(p[0])\n        elif arg.is_Mul:\n            expr = []\n            nonpos = []\n            for x in arg.args:\n                if force or x.is_positive or x.is_polar:\n                    a = self.func(x)\n                    if isinstance(a, log):\n                        expr.append(self.func(x)._eval_expand_log(**hints))\n                    else:\n                        expr.append(a)\n                elif x.is_negative:\n                    a = self.func(-x)\n                    expr.append(a)\n                    nonpos.append(S.NegativeOne)\n                else:\n                    nonpos.append(x)\n            return Add(*expr) + log(Mul(*nonpos))\n        elif arg.is_Pow:\n            if force or (arg.exp.is_real and arg.base.is_positive) or \\\n                    arg.base.is_polar:\n                b = arg.base\n                e = arg.exp\n                a = self.func(b)\n                if isinstance(a, log):\n                    return unpolarify(e) * a._eval_expand_log(**hints)\n                else:\n                    return unpolarify(e) * a\n        elif isinstance(arg, Product):\n            if arg.function.is_positive:\n                return Sum(log(arg.function), *arg.limits)\n\n        return self.func(arg)"
+        }
+      ]
+    },
+    {
+      "pr_number": 10889,
+      "pr_title": "Fixed bug in Latex printing",
+      "pr_body": "This should fix #10821; the Latex _print_Mul function was inserting a negative sign at the beginning of a negative expression without worrying about parenthesis.\n",
+      "issue_id": 10821,
+      "issue_title": "latex bug for commutator output",
+      "issue_body": "There is a latex bug in the output of the function sympy.physics.quantum.commutator.doit that gives incorrect result if there is overall negative sign involved. For example, the following code does not give the correct expression for the latex output.\n\n``` python\nfrom sympy.physics.quantum import Commutator, Operator\nimport sympy\nA = Operator('A')\nB = Operator('B')\ncomm = Commutator(B, A)\nprint comm.doit()\nsympy.latex(comm.doit())\n```\n",
+      "issue_closed_at": "2016-03-23T20:40:37Z",
+      "base_commit": "f7a8dbec25b04767a3a6996c11a03781184d45d7",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Float",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Float(self, expr):\n        # Based off of that in StrPrinter\n        dps = prec_to_dps(expr._prec)\n        str_real = mlib.to_str(expr._mpf_, dps, strip_zeros=True)\n\n        # Must always have a mul symbol (as 2.5 10^{20} just looks odd)\n        # thus we use the number separator\n        separator = self._settings['mul_symbol_latex_numbers']\n\n        if 'e' in str_real:\n            (mant, exp) = str_real.split('e')\n\n            if exp[0] == '+':\n                exp = exp[1:]\n\n            return r\"%s%s10^{%s}\" % (mant, separator, exp)\n        elif str_real == \"+inf\":\n            return r\"\\infty\"\n        elif str_real == \"-inf\":\n            return r\"- \\infty\"\n        else:\n            return str_real"
+        },
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "convert",
+          "class_name": "LatexPrinter",
+          "code": "def convert(expr):\n            if not expr.is_Mul:\n                return str(self._print(expr))\n            else:\n                _tex = last_term_tex = \"\"\n\n                if self.order not in ('old', 'none'):\n                    args = expr.as_ordered_factors()\n                else:\n                    args = expr.args\n\n                for i, term in enumerate(args):\n                    term_tex = self._print(term)\n\n                    if self._needs_mul_brackets(term, first=(i == 0),\n                                                last=(i == len(args) - 1)):\n                        term_tex = r\"\\left(%s\\right)\" % term_tex\n\n                    if re.search(\"[0-9][} ]*$\", last_term_tex) and \\\n                            re.match(\"[{ ]*[-+0-9]\", term_tex):\n                        # between two numbers\n                        _tex += numbersep\n                    elif _tex:\n                        _tex += separator\n\n                    _tex += term_tex\n                    last_term_tex = term_tex\n                return _tex"
+        }
+      ]
+    },
+    {
+      "pr_number": 11384,
+      "pr_title": "Update formal power series printing",
+      "pr_body": "fixes #11102 \nping @asmeurer \n",
+      "issue_id": 11102,
+      "issue_title": "fps should print as a formal power series",
+      "issue_body": "When I first used `fps`, I didn't realize it really was a formal power series as it claims to be, because it prints like a normal series (same as `series`)\n\n```\nIn [21]: fps(sin(x))\nOut[21]:\n     3     5\n    x     x     \u239b 6\u239e\nx - \u2500\u2500 + \u2500\u2500\u2500 + O\u239dx \u23a0\n    6    120\n```\n\nBut if you look at the string form, you see\n\n```\nIn [22]: print(fps(sin(x)))\nFormalPowerSeries(sin(x), x, 0, 1, (SeqFormula(Piecewise(((-1/4)**(_k/2 - 1/2)/(RisingFactorial(3/2, _k/2 - 1/2)*factorial(_k/2 - 1/2)), Eq(Mod(_k, 2), 1)), (0, True)), (_k, 2, oo)), SeqFormula(x**_k, (_k, 0, oo)), x))\n```\n\nThat is, it really does represent it as the formula `Sum((-1)**n/factorial(2*n + 1)*x**n, (n, 0, oo))` (albiet, not simplified). It out to print it like this, so you can see that that's what it's working with.\n\nSide question: if you enter something it can't compute, it just returns the function\n\n```\nIn [25]: fps(tan(x))\nOut[25]: tan(x)\n```\n\nIs that intentional? It seems like it ought to raise an exception in that case. \n\n@leosartaj \n",
+      "issue_closed_at": "2016-07-14T22:47:58Z",
+      "base_commit": "496e776108957d8c049cbef49522cef4c1955e2f",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_FourierSeries",
+          "class_name": "LatexPrinter",
+          "code": "def _print_FourierSeries(self, s):\n        return self._print_Add(s.truncate()) + self._print(' + \\ldots')"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_FourierSeries",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_FourierSeries(self, s):\n        if self._use_unicode:\n            dots = u(\"\\N{HORIZONTAL ELLIPSIS}\")\n        else:\n            dots = '...'\n        return self._print_Add(s.truncate()) + self._print(dots)"
+        }
+      ]
+    }
+  ]
+}

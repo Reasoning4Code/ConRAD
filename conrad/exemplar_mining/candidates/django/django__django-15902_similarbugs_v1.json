@@ -1,0 +1,138 @@
+{
+  "instance_id": "django__django-15902",
+  "repo": "django/django",
+  "created_at": "2022-08-02T07:35:10Z",
+  "problem_statement": "\"default.html\" deprecation warning raised for ManagementForm's\nDescription\n\t\nI have a project where I never render forms with the {{ form }} expression. However, I'm still getting the new template deprecation warning because of the formset management form production, during which the template used is insignificant (only hidden inputs are produced).\nIs it worth special-casing this and avoid producing the warning for the management forms?\n",
+  "patch": "diff --git a/django/forms/formsets.py b/django/forms/formsets.py\n--- a/django/forms/formsets.py\n+++ b/django/forms/formsets.py\n@@ -32,6 +32,8 @@ class ManagementForm(Form):\n     as well.\n     \"\"\"\n \n+    template_name = \"django/forms/div.html\"  # RemovedInDjango50Warning.\n+\n     TOTAL_FORMS = IntegerField(widget=HiddenInput)\n     INITIAL_FORMS = IntegerField(widget=HiddenInput)\n     # MIN_NUM_FORM_COUNT and MAX_NUM_FORM_COUNT are output with the rest of the\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10773,
+      "pr_title": "Fixed #30050 -- Fixed InlineModelAdmin.has_change_permission() being called with non-None obj during add.",
+      "pr_body": "https://code.djangoproject.com/ticket/30050",
+      "issue_id": 30050,
+      "issue_title": "InlineModelAdmin.has_change_permission() incorrectly called with non-None obj during add",
+      "issue_body": "Fine with Django 2.1.3, bug with Django 2.1.4.\nIf I have an admin Inline of a\nModel\n, with fk to a\nParentModel\n, when I try to add a new\nParentModel\nin the admin panel (\"/admin/foo/parentmodel/add/\"), the Inline\nhas_change_permission\nis called 3 times instead of 2, after this commit:\n​\nhttps://github.com/django/django/commit/27f5b0aff3442e5c25e84972dff4f5fe1edd4e68\nat line 1962\nhas_change_permission\nis passed an\nobj\nthat is not\nNone\n.\nBefore this commit,\nobj\nwas\nNone\nboth of the times, now it's\nNone\nthe first time, an empty instance of\nParentModel\nthe second time, and\nNone\nthe third time.\nLine 1962 should be something like:\npermission_obj = obj if change else None\nif not inline.has_change_permission(request, permission_obj):",
+      "issue_closed_at": "2019-01-01T09:05:00",
+      "base_commit": "0123b67f6b8304a5c32a0fe98f97ae506977454b",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "user_deleted_form",
+          "class_name": "ModelAdmin",
+          "code": "def user_deleted_form(request, obj, formset, index):\n                \"\"\"Return whether or not the user deleted the form.\"\"\"\n                return (\n                    inline.has_delete_permission(request, obj) and\n                    '{}-{}-DELETE'.format(formset.prefix, index) in request.POST\n                )"
+        }
+      ]
+    },
+    {
+      "pr_number": 6177,
+      "pr_title": "Fixed #26253 -- Fixed crashing deprecation shims in SimpleTemplateResponse.",
+      "pr_body": "https://code.djangoproject.com/ticket/26253\n",
+      "issue_id": 26253,
+      "issue_title": "Deprecation for TemplateResponse and SimpleTemplateResponse accepting django.template.Template is broken",
+      "issue_body": "When\nTemplateResponse\nor\nSimpleTemplateResponse\nare called, a TypeError is thrown.\nThis is because their\n__init__() creates a\nBackendTemplate` giving only one argument to the constructor.\nThe resulting error is obviously confusing and obfuscates the warning.\nThe attached patch addresses the issue, although I am unsure whether one should assume, by default, that a DjangoTemplate was given.",
+      "issue_closed_at": "2016-02-22T16:07:54",
+      "base_commit": "174811c5538c8c0b8f66089b31686e80d2bc7d3b",
+      "changes": [
+        {
+          "file": "django/template/response.py",
+          "type": "line",
+          "name": "line 4",
+          "code": "from django.utils import six\nfrom django.utils.deprecation import RemovedInDjango110Warning\n\nfrom .backends.django import Template as BackendTemplate\nfrom .base import Template\nfrom .context import Context, RequestContext, _current_app_undefined\nfrom .loader import get_template, select_template"
+        },
+        {
+          "file": "django/template/response.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "TemplateResponse",
+          "code": "def __init__(self, request, template, context=None, content_type=None,\n            status=None, current_app=_current_app_undefined, charset=None,\n            using=None):\n        # As a convenience we'll allow callers to provide current_app without\n        # having to avoid needing to create the RequestContext directly\n        if current_app is not _current_app_undefined:\n            warnings.warn(\n                \"The current_app argument of TemplateResponse is deprecated. \"\n                \"Set the current_app attribute of its request instead.\",\n                RemovedInDjango110Warning, stacklevel=2)\n            request.current_app = current_app\n        super(TemplateResponse, self).__init__(\n            template, context, content_type, status, charset, using)\n        self._request = request"
+        },
+        {
+          "file": "django/template/response.py",
+          "type": "function",
+          "name": "_resolve_template",
+          "class_name": "SimpleTemplateResponse",
+          "code": "def _resolve_template(self, template):\n        # This wrapper deprecates returning a django.template.Template in\n        # subclasses that override resolve_template. It can be removed in\n        # Django 1.10.\n        new_template = self.resolve_template(template)\n        if isinstance(new_template, Template):\n            warnings.warn(\n                \"{}.resolve_template() must return a backend-specific \"\n                \"template like those created by get_template(), not a \"\n                \"{}.\".format(\n                    self.__class__.__name__, new_template.__class__.__name__),\n                RemovedInDjango110Warning, stacklevel=2)\n            new_template = BackendTemplate(new_template)\n        return new_template"
+        }
+      ]
+    },
+    {
+      "pr_number": 4607,
+      "pr_title": "Fixed #24685 -- Fixed check for template name unicity.",
+      "pr_body": "Thanks Preston Timmons for the report.\n",
+      "issue_id": 24685,
+      "issue_title": "EngineHandler doesn't raise exception when duplicate aliases are registered",
+      "issue_body": "The\ndjango.template.utils.EngineHandler\nhas a check to raise\nImproperlyConfigured\nif multiple engines are specified with the same alias:\n​\nhttps://github.com/django/django/blob/master/django/template/utils.py#L72\nThis won't ever raise an error, though, because configuration is stored in an\nOrderedDict\n. Duplicate aliases simply overwrite previous ones.\nCurtis ran into this problem when using settings like this without the\nNAME\noption:\nTEMPLATES = [\n    {\n        'BACKEND': 'knights.django.KnightsTemplater',\n        ...\n    },\n    {\n        'BACKEND': 'django.template.backends.django.DjangoTemplates',\n        ...\n    },\n]",
+      "issue_closed_at": "2015-05-04T00:37:45",
+      "base_commit": "db0a0c4b8ae490d0596f2c210d3edba3d700374a",
+      "changes": [
+        {
+          "file": "django/template/utils.py",
+          "type": "function",
+          "name": "templates",
+          "class_name": "EngineHandler",
+          "code": "def templates(self):\n        if self._templates is None:\n            self._templates = settings.TEMPLATES\n\n        if not self._templates:\n            warnings.warn(\n                \"You haven't defined a TEMPLATES setting. You must do so \"\n                \"before upgrading to Django 2.0. Otherwise Django will be \"\n                \"unable to load templates.\", RemovedInDjango20Warning)\n            self._templates = [\n                {\n                    'BACKEND': 'django.template.backends.django.DjangoTemplates',\n                    'DIRS': settings.TEMPLATE_DIRS,\n                    'OPTIONS': {\n                        'allowed_include_roots': settings.ALLOWED_INCLUDE_ROOTS,\n                        'context_processors': settings.TEMPLATE_CONTEXT_PROCESSORS,\n                        'debug': settings.TEMPLATE_DEBUG,\n                        'loaders': settings.TEMPLATE_LOADERS,\n                        'string_if_invalid': settings.TEMPLATE_STRING_IF_INVALID,\n                    },\n                },\n            ]\n\n        templates = OrderedDict()\n        for tpl in self._templates:\n            tpl = tpl.copy()\n            try:\n                # This will raise an exception if 'BACKEND' doesn't exist or\n                # isn't a string containing at least one dot.\n                default_name = tpl['BACKEND'].rsplit('.', 2)[-2]\n            except Exception:\n                invalid_backend = tpl.get('BACKEND', '<not defined>')\n                raise ImproperlyConfigured(\n                    \"Invalid BACKEND for a template engine: {}. Check \"\n                    \"your TEMPLATES setting.\".format(invalid_backend))\n\n            tpl.setdefault('NAME', default_name)\n            tpl.setdefault('DIRS', [])\n            tpl.setdefault('APP_DIRS', False)\n            tpl.setdefault('OPTIONS', {})\n\n            templates[tpl['NAME']] = tpl\n\n        counts = Counter(list(templates))\n        duplicates = [alias for alias, count in counts.most_common() if count > 1]\n        if duplicates:\n            raise ImproperlyConfigured(\n                \"Template engine aliases aren't unique, duplicates: {}. \"\n                \"Set a unique NAME for each engine in settings.TEMPLATES.\"\n                .format(\", \".join(duplicates)))\n\n        return templates"
+        },
+        {
+          "file": "django/template/utils.py",
+          "type": "function",
+          "name": "templates",
+          "class_name": "EngineHandler",
+          "code": "def templates(self):\n        if self._templates is None:\n            self._templates = settings.TEMPLATES\n\n        if not self._templates:\n            warnings.warn(\n                \"You haven't defined a TEMPLATES setting. You must do so \"\n                \"before upgrading to Django 2.0. Otherwise Django will be \"\n                \"unable to load templates.\", RemovedInDjango20Warning)\n            self._templates = [\n                {\n                    'BACKEND': 'django.template.backends.django.DjangoTemplates',\n                    'DIRS': settings.TEMPLATE_DIRS,\n                    'OPTIONS': {\n                        'allowed_include_roots': settings.ALLOWED_INCLUDE_ROOTS,\n                        'context_processors': settings.TEMPLATE_CONTEXT_PROCESSORS,\n                        'debug': settings.TEMPLATE_DEBUG,\n                        'loaders': settings.TEMPLATE_LOADERS,\n                        'string_if_invalid': settings.TEMPLATE_STRING_IF_INVALID,\n                    },\n                },\n            ]\n\n        templates = OrderedDict()\n        for tpl in self._templates:\n            tpl = tpl.copy()\n            try:\n                # This will raise an exception if 'BACKEND' doesn't exist or\n                # isn't a string containing at least one dot.\n                default_name = tpl['BACKEND'].rsplit('.', 2)[-2]\n            except Exception:\n                invalid_backend = tpl.get('BACKEND', '<not defined>')\n                raise ImproperlyConfigured(\n                    \"Invalid BACKEND for a template engine: {}. Check \"\n                    \"your TEMPLATES setting.\".format(invalid_backend))\n\n            tpl.setdefault('NAME', default_name)\n            tpl.setdefault('DIRS', [])\n            tpl.setdefault('APP_DIRS', False)\n            tpl.setdefault('OPTIONS', {})\n\n            templates[tpl['NAME']] = tpl\n\n        counts = Counter(list(templates))\n        duplicates = [alias for alias, count in counts.most_common() if count > 1]\n        if duplicates:\n            raise ImproperlyConfigured(\n                \"Template engine aliases aren't unique, duplicates: {}. \"\n                \"Set a unique NAME for each engine in settings.TEMPLATES.\"\n                .format(\", \".join(duplicates)))\n\n        return templates"
+        }
+      ]
+    },
+    {
+      "pr_number": 14842,
+      "pr_title": "Fixed #33084 -- Removed incorrect system check for ManyToManyField with limit_choices_to.",
+      "pr_body": "https://code.djangoproject.com/ticket/33084",
+      "issue_id": 33084,
+      "issue_title": "Removed incorrect fields.W343 check and notes about limit_choices_to restrictions for ManyToManyField.",
+      "issue_body": "The model setup given below:\nclass\nNumber\n(\nmodels\n.\nModel\n):\nvalue\n=\nmodels\n.\nIntegerField\n()\ndef\n__str__\n(\nself\n)\n->\nstr\n:\nreturn\nf\n\"\n{\nself\n.\nvalue\n}\n\"\nclass\nNumbersToDiceThroughModel\n(\nmodels\n.\nModel\n):\nnumber\n=\nmodels\n.\nForeignKey\n(\n\"Number\"\n,\non_delete\n=\nmodels\n.\nPROTECT\n)\ndie\n=\nmodels\n.\nForeignKey\n(\n\"Die\"\n,\non_delete\n=\nmodels\n.\nCASCADE\n)\nclass\nDie\n(\nmodels\n.\nModel\n):\nnumbers\n=\nmodels\n.\nManyToManyField\n(\n\"Number\"\n,\nthrough\n=\n\"NumbersToDiceThroughModel\"\n,\nlimit_choices_to\n=\nmodels\n.\nQ\n(\nvalue__gte\n=\n1\n),\n)\nResults in a\ncorrect\nlimitation of possible choices. But at the same time the following warning is issued:\n... .Die.numbers: (fields.W343) limit_choices_to has no effect on ManyToManyField with a through model.",
+      "issue_closed_at": "2021-09-09T06:17:35",
+      "base_commit": "46c8df640cfed5dd525ac1bcf5ad7e57b7ff2571",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "_check_ignored_options",
+          "class_name": "ManyToManyField",
+          "code": "def _check_ignored_options(self, **kwargs):\n        warnings = []\n\n        if self.has_null_arg:\n            warnings.append(\n                checks.Warning(\n                    'null has no effect on ManyToManyField.',\n                    obj=self,\n                    id='fields.W340',\n                )\n            )\n\n        if self._validators:\n            warnings.append(\n                checks.Warning(\n                    'ManyToManyField does not support validators.',\n                    obj=self,\n                    id='fields.W341',\n                )\n            )\n        if (self.remote_field.limit_choices_to and self.remote_field.through and\n                not self.remote_field.through._meta.auto_created):\n            warnings.append(\n                checks.Warning(\n                    'limit_choices_to has no effect on ManyToManyField '\n                    'with a through model.',\n                    obj=self,\n                    id='fields.W343',\n                )\n            )\n\n        if self.remote_field.symmetrical and self._related_name:\n            warnings.append(\n                checks.Warning(\n                    'related_name has no effect on ManyToManyField '\n                    'with a symmetrical relationship, e.g. to \"self\".',\n                    obj=self,\n                    id='fields.W345',\n                )\n            )\n\n        return warnings"
+        }
+      ]
+    },
+    {
+      "pr_number": 1116,
+      "pr_title": "Ticket 20234 20236",
+      "pr_body": "Resolved: https://code.djangoproject.com/ticket/20234 and https://code.djangoproject.com/ticket/20236\n",
+      "issue_id": 20234,
+      "issue_title": "SingleObjectMixin does not add 'object' key to context",
+      "issue_body": "The documentation at\n​\nhttps://docs.djangoproject.com/en/dev/ref/class-based-views/mixins-single-object/#django.views.generic.detail.SingleObjectMixin\nsays that 'object' will be in the context, as well as potentially context_object_name if given. However, actually only context_object_name is set in the context by this mixin; only if object is passed to the mixin (which BaseDetailView does) will it be included.\nThe MultipleObjectMixin does include 'object_list' in its get_context_data (though assumes it must be passed in rather than on the object, I'll file that as another ticket), so I assume this is an issue with SingleObjectMixin, and that it should set 'object' on context whether it is passed in as a kwarg or not.\nI have a patch on a branch of my github fork:\n​\nhttps://github.com/dracos/django/compare/singleobjectfixin",
+      "issue_closed_at": "2013-05-19T03:32:50",
+      "base_commit": "0038296135502331c302935106d7aa568f715200",
+      "changes": [
+        {
+          "file": "django/views/generic/detail.py",
+          "type": "function",
+          "name": "get_context_data",
+          "class_name": "SingleObjectMixin",
+          "code": "def get_context_data(self, **kwargs):\n        \"\"\"\n        Insert the single object into the context dict.\n        \"\"\"\n        context = {}\n        context_object_name = self.get_context_object_name(self.object)\n        if context_object_name:\n            context[context_object_name] = self.object\n        context.update(kwargs)\n        return super(SingleObjectMixin, self).get_context_data(**context)"
+        },
+        {
+          "file": "django/views/generic/detail.py",
+          "type": "function",
+          "name": "get_template_names",
+          "class_name": "SingleObjectTemplateResponseMixin",
+          "code": "def get_template_names(self):\n        \"\"\"\n        Return a list of template names to be used for the request. May not be\n        called if render_to_response is overridden. Returns the following list:\n\n        * the value of ``template_name`` on the view (if provided)\n        * the contents of the ``template_name_field`` field on the\n          object instance that the view is operating upon (if available)\n        * ``<app_label>/<object_name><template_name_suffix>.html``        \n        \"\"\"\n        try:\n            names = super(SingleObjectTemplateResponseMixin, self).get_template_names()\n        except ImproperlyConfigured:\n            # If template_name isn't specified, it's not a problem --\n            # we just start with an empty list.\n            names = []\n\n        # If self.template_name_field is set, grab the value of the field\n        # of that name from the object; this is the most specific template\n        # name, if given.\n        if self.object and self.template_name_field:\n            name = getattr(self.object, self.template_name_field, None)\n            if name:\n                names.insert(0, name)\n\n        # The least-specific option is the default <app>/<model>_detail.html;\n        # only use this if the object in question is a model.\n        if isinstance(self.object, models.Model):\n            names.append(\"%s/%s%s.html\" % (\n                self.object._meta.app_label,\n                self.object._meta.model_name,\n                self.template_name_suffix\n            ))\n        elif hasattr(self, 'model') and self.model is not None and issubclass(self.model, models.Model):\n            names.append(\"%s/%s%s.html\" % (\n                self.model._meta.app_label,\n                self.model._meta.model_name,\n                self.template_name_suffix\n            ))\n        return names"
+        },
+        {
+          "file": "django/views/generic/edit.py",
+          "type": "function",
+          "name": "form_valid",
+          "class_name": "ModelFormMixin",
+          "code": "def form_valid(self, form):\n        \"\"\"\n        If the form is valid, save the associated model.\n        \"\"\"\n        self.object = form.save()\n        return super(ModelFormMixin, self).form_valid(form)"
+        }
+      ]
+    }
+  ]
+}

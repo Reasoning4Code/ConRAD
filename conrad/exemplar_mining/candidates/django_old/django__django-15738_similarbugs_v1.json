@@ -1,0 +1,200 @@
+{
+  "instance_id": "django__django-15738",
+  "repo": "django/django",
+  "created_at": "2022-05-27T13:20:14Z",
+  "problem_statement": "Models migration with change field foreign to many and deleting unique together.\nDescription\n\t \n\t\t(last modified by Simon Charette)\n\t \nI have models like\nclass Authors(models.Model):\n\tproject_data_set = models.ForeignKey(\n\t\tProjectDataSet,\n\t\ton_delete=models.PROTECT\n\t)\n\tstate = models.IntegerField()\n\tstart_date = models.DateField()\n\tclass Meta:\n\t\t unique_together = (('project_data_set', 'state', 'start_date'),)\nand\nclass DataSet(models.Model):\n\tname = models.TextField(max_length=50)\nclass Project(models.Model):\n\tdata_sets = models.ManyToManyField(\n\t\tDataSet,\n\t\tthrough='ProjectDataSet',\n\t)\n\tname = models.TextField(max_length=50)\nclass ProjectDataSet(models.Model):\n\t\"\"\"\n\tCross table of data set and project\n\t\"\"\"\n\tdata_set = models.ForeignKey(DataSet, on_delete=models.PROTECT)\n\tproject = models.ForeignKey(Project, on_delete=models.PROTECT)\n\tclass Meta:\n\t\tunique_together = (('data_set', 'project'),)\nwhen i want to change field project_data_set in Authors model from foreign key field to many to many field I must delete a unique_together, cause it can't be on many to many field.\nThen my model should be like:\nclass Authors(models.Model):\n\tproject_data_set = models.ManyToManyField(\n\t\tProjectDataSet,\n\t)\n\tstate = models.IntegerField()\n\tstart_date = models.DateField()\nBut when I want to do a migrations.\npython3 manage.py makemigrations\npython3 manage.py migrate\nI have error:\nValueError: Found wrong number (0) of constraints for app_authors(project_data_set, state, start_date)\nThe database is on production, so I can't delete previous initial migrations, and this error isn't depending on database, cause I delete it and error is still the same.\nMy solve is to first delete unique_together, then do a makemigrations and then migrate. After that change the field from foreign key to many to many field, then do a makemigrations and then migrate.\nBut in this way I have 2 migrations instead of one.\nI added attachment with this project, download it and then do makemigrations and then migrate to see this error.\n",
+  "patch": "diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py\n--- a/django/db/migrations/autodetector.py\n+++ b/django/db/migrations/autodetector.py\n@@ -1022,8 +1022,9 @@ def generate_added_fields(self):\n \n     def _generate_added_field(self, app_label, model_name, field_name):\n         field = self.to_state.models[app_label, model_name].get_field(field_name)\n-        # Fields that are foreignkeys/m2ms depend on stuff\n-        dependencies = []\n+        # Adding a field always depends at least on its removal.\n+        dependencies = [(app_label, model_name, field_name, False)]\n+        # Fields that are foreignkeys/m2ms depend on stuff.\n         if field.remote_field and field.remote_field.model:\n             dependencies.extend(\n                 self._get_dependencies_for_foreign_key(\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 3782,
+      "pr_title": "Fixed #24037 -- Prevented data loss possibility when changing Meta.managed.",
+      "pr_body": "The migrations autodetector now issues AlterModelOptions operations for\nMeta.managed changes instead of DeleteModel + CreateModel.\n\nhttps://code.djangoproject.com/ticket/24037\n",
+      "issue_id": 24037,
+      "issue_title": "Migrating a legacy table results in data loss",
+      "issue_body": "",
+      "issue_closed_at": "2014-12-23T13:25:44",
+      "base_commit": "69ee7c8d76da72d1392ed2a2597ed094da05d57e",
+      "changes": [
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_created_models",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_created_models(self):\n        \"\"\"\n        Find all new models (both managed and unmanaged) and make create\n        operations for them as well as separate operations to create any\n        foreign key or M2M relationships (we'll optimize these back in later\n        if we can).\n\n        We also defer any model options that refer to collections of fields\n        that might be deferred (e.g. unique_together, index_together).\n        \"\"\"\n        added_models = set(self.new_model_keys) - set(self.old_model_keys)\n        added_unmanaged_models = set(self.new_unmanaged_keys) - set(self.old_unmanaged_keys)\n        models = chain(\n            sorted(added_models, key=self.swappable_first_key, reverse=True),\n            sorted(added_unmanaged_models, key=self.swappable_first_key, reverse=True)\n        )\n        for app_label, model_name in models:\n            model_state = self.to_state.models[app_label, model_name]\n            model_opts = self.new_apps.get_model(app_label, model_name)._meta\n            # Gather related fields\n            related_fields = {}\n            primary_key_rel = None\n            for field in model_opts.local_fields:\n                if field.rel:\n                    if field.rel.to:\n                        if field.primary_key:\n                            primary_key_rel = field.rel.to\n                        elif not field.rel.parent_link:\n                            related_fields[field.name] = field\n                    # through will be none on M2Ms on swapped-out models;\n                    # we can treat lack of through as auto_created=True, though.\n                    if getattr(field.rel, \"through\", None) and not field.rel.through._meta.auto_created:\n                        related_fields[field.name] = field\n            for field in model_opts.local_many_to_many:\n                if field.rel.to:\n                    related_fields[field.name] = field\n                if getattr(field.rel, \"through\", None) and not field.rel.through._meta.auto_created:\n                    related_fields[field.name] = field\n            # Are there unique/index_together to defer?\n            unique_together = model_state.options.pop('unique_together', None)\n            index_together = model_state.options.pop('index_together', None)\n            order_with_respect_to = model_state.options.pop('order_with_respect_to', None)\n            # Depend on the deletion of any possible proxy version of us\n            dependencies = [\n                (app_label, model_name, None, False),\n            ]\n            # Depend on all bases\n            for base in model_state.bases:\n                if isinstance(base, six.string_types) and \".\" in base:\n                    base_app_label, base_name = base.split(\".\", 1)\n                    dependencies.append((base_app_label, base_name, None, True))\n            # Depend on the other end of the primary key if it's a relation\n            if primary_key_rel:\n                dependencies.append((\n                    primary_key_rel._meta.app_label,\n                    primary_key_rel._meta.object_name,\n                    None,\n                    True\n                ))\n            # Generate creation operation\n            self.add_operation(\n                app_label,\n                operations.CreateModel(\n                    name=model_state.name,\n                    fields=[d for d in model_state.fields if d[0] not in related_fields],\n                    options=model_state.options,\n                    bases=model_state.bases,\n                    managers=model_state.managers,\n                ),\n                dependencies=dependencies,\n                beginning=True,\n            )\n\n            # Don't add operations which modify the database for unmanaged models\n            if not model_opts.managed:\n                continue\n\n            # Generate operations for each related field\n            for name, field in sorted(related_fields.items()):\n                # Account for FKs to swappable models\n                swappable_setting = getattr(field, 'swappable_setting', None)\n                if swappable_setting is not None:\n                    dep_app_label = \"__setting__\"\n                    dep_object_name = swappable_setting\n                else:\n                    dep_app_label = field.rel.to._meta.app_label\n                    dep_object_name = field.rel.to._meta.object_name\n                dependencies = [(dep_app_label, dep_object_name, None, True)]\n                if getattr(field.rel, \"through\", None) and not field.rel.through._meta.auto_created:\n                    dependencies.append((\n                        field.rel.through._meta.app_label,\n                        field.rel.through._meta.object_name,\n                        None,\n                        True\n                    ))\n                # Depend on our own model being created\n                dependencies.append((app_label, model_name, None, True))\n                # Make operation\n                self.add_operation(\n                    app_label,\n                    operations.AddField(\n                        model_name=model_name,\n                        name=name,\n                        field=field,\n                    ),\n                    dependencies=list(set(dependencies)),\n                )\n            # Generate other opns\n            related_dependencies = [\n                (app_label, model_name, name, True)\n                for name, field in sorted(related_fields.items())\n            ]\n            related_dependencies.append((app_label, model_name, None, True))\n            if unique_together:\n                self.add_operation(\n                    app_label,\n                    operations.AlterUniqueTogether(\n                        name=model_name,\n                        unique_together=unique_together,\n                    ),\n                    dependencies=related_dependencies\n                )\n            if index_together:\n                self.add_operation(\n                    app_label,\n                    operations.AlterIndexTogether(\n                        name=model_name,\n                        index_together=index_together,\n                    ),\n                    dependencies=related_dependencies\n                )\n            if order_with_respect_to:\n                self.add_operation(\n                    app_label,\n                    operations.AlterOrderWithRespectTo(\n                        name=model_name,\n                        order_with_respect_to=order_with_respect_to,\n                    ),\n                    dependencies=[\n                        (app_label, model_name, order_with_respect_to, True),\n                        (app_label, model_name, None, True),\n                    ]\n                )"
+        },
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_deleted_models",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_deleted_models(self):\n        \"\"\"\n        Find all deleted models (managed and unmanaged) and make delete\n        operations for them as well as separate operations to delete any\n        foreign key or M2M relationships (we'll optimize these back in later\n        if we can).\n\n        We also bring forward removal of any model options that refer to\n        collections of fields - the inverse of generate_created_models().\n        \"\"\"\n        deleted_models = set(self.old_model_keys) - set(self.new_model_keys)\n        deleted_unmanaged_models = set(self.old_unmanaged_keys) - set(self.new_unmanaged_keys)\n        models = chain(sorted(deleted_models), sorted(deleted_unmanaged_models))\n        for app_label, model_name in models:\n            model_state = self.from_state.models[app_label, model_name]\n            model = self.old_apps.get_model(app_label, model_name)\n            if not model._meta.managed:\n                self.add_operation(\n                    app_label,\n                    operations.DeleteModel(\n                        name=model_state.name,\n                    ),\n                )\n                # Skip here, no need to handle fields for unmanaged models\n                continue\n\n            # Gather related fields\n            related_fields = {}\n            for field in model._meta.local_fields:\n                if field.rel:\n                    if field.rel.to:\n                        related_fields[field.name] = field\n                    # through will be none on M2Ms on swapped-out models;\n                    # we can treat lack of through as auto_created=True, though.\n                    if getattr(field.rel, \"through\", None) and not field.rel.through._meta.auto_created:\n                        related_fields[field.name] = field\n            for field in model._meta.local_many_to_many:\n                if field.rel.to:\n                    related_fields[field.name] = field\n                if getattr(field.rel, \"through\", None) and not field.rel.through._meta.auto_created:\n                    related_fields[field.name] = field\n            # Generate option removal first\n            unique_together = model_state.options.pop('unique_together', None)\n            index_together = model_state.options.pop('index_together', None)\n            if unique_together:\n                self.add_operation(\n                    app_label,\n                    operations.AlterUniqueTogether(\n                        name=model_name,\n                        unique_together=None,\n                    )\n                )\n            if index_together:\n                self.add_operation(\n                    app_label,\n                    operations.AlterIndexTogether(\n                        name=model_name,\n                        index_together=None,\n                    )\n                )\n            # Then remove each related field\n            for name, field in sorted(related_fields.items()):\n                self.add_operation(\n                    app_label,\n                    operations.RemoveField(\n                        model_name=model_name,\n                        name=name,\n                    )\n                )\n            # Finally, remove the model.\n            # This depends on both the removal/alteration of all incoming fields\n            # and the removal of all its own related fields, and if it's\n            # a through model the field that references it.\n            dependencies = []\n            for related_object in model._meta.get_all_related_objects():\n                dependencies.append((\n                    related_object.model._meta.app_label,\n                    related_object.model._meta.object_name,\n                    related_object.field.name,\n                    False,\n                ))\n                dependencies.append((\n                    related_object.model._meta.app_label,\n                    related_object.model._meta.object_name,\n                    related_object.field.name,\n                    \"alter\",\n                ))\n            for related_object in model._meta.get_all_related_many_to_many_objects():\n                dependencies.append((\n                    related_object.model._meta.app_label,\n                    related_object.model._meta.object_name,\n                    related_object.field.name,\n                    False,\n                ))\n            for name, field in sorted(related_fields.items()):\n                dependencies.append((app_label, model_name, name, False))\n            # We're referenced in another field's through=\n            through_user = self.through_users.get((app_label, model_state.name.lower()), None)\n            if through_user:\n                dependencies.append((through_user[0], through_user[1], through_user[2], False))\n            # Finally, make the operation, deduping any dependencies\n            self.add_operation(\n                app_label,\n                operations.DeleteModel(\n                    name=model_state.name,\n                ),\n                dependencies=list(set(dependencies)),\n            )"
+        },
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_altered_options",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_altered_options(self):\n        \"\"\"\n        Works out if any non-schema-affecting options have changed and\n        makes an operation to represent them in state changes (in case Python\n        code in migrations needs them)\n        \"\"\"\n        models_to_check = self.kept_model_keys.union(self.kept_proxy_keys).union(self.kept_unmanaged_keys)\n        for app_label, model_name in sorted(models_to_check):\n            old_model_name = self.renamed_models.get((app_label, model_name), model_name)\n            old_model_state = self.from_state.models[app_label, old_model_name]\n            new_model_state = self.to_state.models[app_label, model_name]\n            old_options = dict(\n                option for option in old_model_state.options.items()\n                if option[0] in AlterModelOptions.ALTER_OPTION_KEYS\n            )\n            new_options = dict(\n                option for option in new_model_state.options.items()\n                if option[0] in AlterModelOptions.ALTER_OPTION_KEYS\n            )\n            if old_options != new_options:\n                self.add_operation(\n                    app_label,\n                    operations.AlterModelOptions(\n                        name=model_name,\n                        options=new_options,\n                    )\n                )"
+        },
+        {
+          "file": "django/db/migrations/operations/models.py",
+          "type": "class",
+          "name": "AlterModelOptions",
+          "code": "class AlterModelOptions(Operation):\n    \"\"\"\n    Sets new model options that don't directly affect the database schema\n    (like verbose_name, permissions, ordering). Python code in migrations\n    may still need them.\n    \"\"\"\n\n    # Model options we want to compare and preserve in an AlterModelOptions op\n    ALTER_OPTION_KEYS = [\n        \"get_latest_by\",\n        \"ordering\",\n        \"permissions\",\n        \"default_permissions\",\n        \"select_on_save\",\n        \"verbose_name\",\n        \"verbose_name_plural\",\n    ]\n\n    def __init__(self, name, options):\n        self.name = name\n        self.options = options\n\n    def deconstruct(self):\n        kwargs = {\n            'name': self.name,\n            'options': self.options,\n        }\n        return (\n            self.__class__.__name__,\n            [],\n            kwargs\n        )\n\n    def state_forwards(self, app_label, state):\n        model_state = state.models[app_label, self.name.lower()]\n        model_state.options = dict(model_state.options)\n        model_state.options.update(self.options)\n        for key in self.ALTER_OPTION_KEYS:\n            if key not in self.options and key in model_state.options:\n                del model_state.options[key]\n\n    def database_forwards(self, app_label, schema_editor, from_state, to_state):\n        pass\n\n    def database_backwards(self, app_label, schema_editor, from_state, to_state):\n        pass\n\n    def references_model(self, name, app_label=None):\n        return name.lower() == self.name.lower()\n\n    def describe(self):\n        return \"Change Meta options on %s\" % (self.name, )"
+        }
+      ]
+    },
+    {
+      "pr_number": 7842,
+      "pr_title": "Fixed #27709 -- Fixed get_for_models() for proxies with an empty cache.",
+      "pr_body": "Thanks Peter Inglesby for the report and tests.",
+      "issue_id": 27709,
+      "issue_title": "ContentTypes.objects.get_for_models returns inconsistent results for proxy models",
+      "issue_body": "",
+      "issue_closed_at": "2017-01-13T09:02:56",
+      "base_commit": "ede59ef6f39ff8a6443c2b24df0208ef6ec41ee0",
+      "changes": [
+        {
+          "file": "django/contrib/contenttypes/models.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from __future__ import unicode_literals\n\nfrom django.apps import apps\nfrom django.db import models\nfrom django.utils.encoding import force_text, python_2_unicode_compatible"
+        },
+        {
+          "file": "django/contrib/contenttypes/models.py",
+          "type": "function",
+          "name": "get_for_models",
+          "class_name": "ContentTypeManager",
+          "code": "def get_for_models(self, *models, **kwargs):\n        \"\"\"\n        Given *models, returns a dictionary mapping {model: content_type}.\n        \"\"\"\n        for_concrete_models = kwargs.pop('for_concrete_models', True)\n        # Final results\n        results = {}\n        # models that aren't already in the cache\n        needed_app_labels = set()\n        needed_models = set()\n        needed_opts = set()\n        for model in models:\n            opts = self._get_opts(model, for_concrete_models)\n            try:\n                ct = self._get_from_cache(opts)\n            except KeyError:\n                needed_app_labels.add(opts.app_label)\n                needed_models.add(opts.model_name)\n                needed_opts.add(opts)\n            else:\n                results[model] = ct\n        if needed_opts:\n            cts = self.filter(\n                app_label__in=needed_app_labels,\n                model__in=needed_models\n            )\n            for ct in cts:\n                model = ct.model_class()\n                if model._meta in needed_opts:\n                    results[model] = ct\n                    needed_opts.remove(model._meta)\n                self._add_to_cache(self.db, ct)\n        for opts in needed_opts:\n            # These weren't in the cache, or the DB, create them.\n            ct = self.create(\n                app_label=opts.app_label,\n                model=opts.model_name,\n            )\n            self._add_to_cache(self.db, ct)\n            results[ct.model_class()] = ct\n        return results"
+        },
+        {
+          "file": "django/contrib/contenttypes/models.py",
+          "type": "function",
+          "name": "get_for_models",
+          "class_name": "ContentTypeManager",
+          "code": "def get_for_models(self, *models, **kwargs):\n        \"\"\"\n        Given *models, returns a dictionary mapping {model: content_type}.\n        \"\"\"\n        for_concrete_models = kwargs.pop('for_concrete_models', True)\n        # Final results\n        results = {}\n        # models that aren't already in the cache\n        needed_app_labels = set()\n        needed_models = set()\n        needed_opts = set()\n        for model in models:\n            opts = self._get_opts(model, for_concrete_models)\n            try:\n                ct = self._get_from_cache(opts)\n            except KeyError:\n                needed_app_labels.add(opts.app_label)\n                needed_models.add(opts.model_name)\n                needed_opts.add(opts)\n            else:\n                results[model] = ct\n        if needed_opts:\n            cts = self.filter(\n                app_label__in=needed_app_labels,\n                model__in=needed_models\n            )\n            for ct in cts:\n                model = ct.model_class()\n                if model._meta in needed_opts:\n                    results[model] = ct\n                    needed_opts.remove(model._meta)\n                self._add_to_cache(self.db, ct)\n        for opts in needed_opts:\n            # These weren't in the cache, or the DB, create them.\n            ct = self.create(\n                app_label=opts.app_label,\n                model=opts.model_name,\n            )\n            self._add_to_cache(self.db, ct)\n            results[ct.model_class()] = ct\n        return results"
+        }
+      ]
+    },
+    {
+      "pr_number": 7097,
+      "pr_title": "Fixed #27068 -- Unified form field initial data retrieval.",
+      "pr_body": "https://code.djangoproject.com/ticket/27068\n",
+      "issue_id": 27068,
+      "issue_title": "Acquire form's initial data more consistently",
+      "issue_body": "",
+      "issue_closed_at": "2016-08-18T19:51:32",
+      "base_commit": "13857b45ca54a519a58361238442af84262c0d23",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "value",
+          "class_name": "BoundField",
+          "code": "def value(self):\n        \"\"\"\n        Returns the value for this BoundField, using the initial value if\n        the form is not bound or the data otherwise.\n        \"\"\"\n        if not self.form.is_bound:\n            data = self.initial\n        else:\n            data = self.field.bound_data(\n                self.data, self.form.initial.get(self.name, self.field.initial)\n            )\n        return self.field.prepare_value(data)"
+        },
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "id_for_label",
+          "class_name": "BoundField",
+          "code": "def id_for_label(self):\n        \"\"\"\n        Wrapper around the field widget's `id_for_label` method.\n        Useful, for example, for focusing on this field regardless of whether\n        it has a single widget or a MultiWidget.\n        \"\"\"\n        widget = self.field.widget\n        id_ = widget.attrs.get('id') or self.auto_id\n        return widget.id_for_label(id_)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "_clean_fields",
+          "class_name": "BaseForm",
+          "code": "def _clean_fields(self):\n        for name, field in self.fields.items():\n            # value_from_datadict() gets the data from the data dictionaries.\n            # Each widget type knows how to retrieve its own data, because some\n            # widgets split data over several HTML fields.\n            if field.disabled:\n                value = self.initial.get(name, field.initial)\n            else:\n                value = field.widget.value_from_datadict(self.data, self.files, self.add_prefix(name))\n            try:\n                if isinstance(field, FileField):\n                    initial = self.initial.get(name, field.initial)\n                    value = field.clean(value, initial)\n                else:\n                    value = field.clean(value)\n                self.cleaned_data[name] = value\n                if hasattr(self, 'clean_%s' % name):\n                    value = getattr(self, 'clean_%s' % name)()\n                    self.cleaned_data[name] = value\n            except ValidationError as e:\n                self.add_error(name, e)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "changed_data",
+          "class_name": "BaseForm",
+          "code": "def changed_data(self):\n        data = []\n        for name, field in self.fields.items():\n            prefixed_name = self.add_prefix(name)\n            data_value = field.widget.value_from_datadict(self.data, self.files, prefixed_name)\n            if not field.show_hidden_initial:\n                initial_value = self.initial.get(name, field.initial)\n                if callable(initial_value):\n                    initial_value = initial_value()\n            else:\n                initial_prefixed_name = self.add_initial_prefix(name)\n                hidden_widget = field.hidden_widget()\n                try:\n                    initial_value = field.to_python(hidden_widget.value_from_datadict(\n                        self.data, self.files, initial_prefixed_name))\n                except ValidationError:\n                    # Always assume data has changed if validation fails.\n                    data.append(name)\n                    continue\n            if field.has_changed(initial_value, data_value):\n                data.append(name)\n        return data"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "visible_fields",
+          "class_name": "BaseForm",
+          "code": "def visible_fields(self):\n        \"\"\"\n        Returns a list of BoundField objects that aren't hidden fields.\n        The opposite of the hidden_fields() method.\n        \"\"\"\n        return [field for field in self if not field.is_hidden]"
+        }
+      ]
+    },
+    {
+      "pr_number": 15732,
+      "pr_title": "Fixed #23740 -- Fixed removing unique_together constraint if exists primary key/unique constraint on the same field.",
+      "pr_body": "Hi,\r\n\r\nTackling [ticket-23740](https://code.djangoproject.com/ticket/23740).\r\n\r\nIn short:\r\n\r\n1/ If the field is the primary key, fix it by filtering on `\"primary_key\": False` in `django.db.backends.base.schema.BaseDatabaseSchemaEditor.alter_unique_together`\r\n\r\n2/ If the field has a `unique=True` constraint, to fix we check that the constraint name is the default one we would give to a `unique_together` constraint, based on the observation that a `unique=True` and a `unique_together` constraints are named differently at the time of writing",
+      "issue_id": 23740,
+      "issue_title": "Cannot drop unique_together constraint on a single field with its own unique=True constraint",
+      "issue_body": "",
+      "issue_closed_at": "2022-05-26T02:06:57",
+      "base_commit": "ce69e34bd646558bb44ea92cecfd98b345a0b3e0",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "alter_unique_together",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def alter_unique_together(self, model, old_unique_together, new_unique_together):\n        \"\"\"\n        Deal with a model changing its unique_together. The input\n        unique_togethers must be doubly-nested, not the single-nested\n        [\"foo\", \"bar\"] format.\n        \"\"\"\n        olds = {tuple(fields) for fields in old_unique_together}\n        news = {tuple(fields) for fields in new_unique_together}\n        # Deleted uniques\n        for fields in olds.difference(news):\n            self._delete_composed_index(\n                model, fields, {\"unique\": True}, self.sql_delete_unique\n            )\n        # Created uniques\n        for field_names in news.difference(olds):\n            fields = [model._meta.get_field(field) for field in field_names]\n            self.execute(self._create_unique_sql(model, fields))"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_delete_composed_index",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _delete_composed_index(self, model, fields, constraint_kwargs, sql):\n        meta_constraint_names = {\n            constraint.name for constraint in model._meta.constraints\n        }\n        meta_index_names = {constraint.name for constraint in model._meta.indexes}\n        columns = [model._meta.get_field(field).column for field in fields]\n        constraint_names = self._constraint_names(\n            model,\n            columns,\n            exclude=meta_constraint_names | meta_index_names,\n            **constraint_kwargs,\n        )\n        if len(constraint_names) != 1:\n            raise ValueError(\n                \"Found wrong number (%s) of constraints for %s(%s)\"\n                % (\n                    len(constraint_names),\n                    model._meta.db_table,\n                    \", \".join(columns),\n                )\n            )\n        self.execute(self._delete_constraint_sql(sql, model, constraint_names[0]))"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_create_unique_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _create_unique_sql(\n        self,\n        model,\n        fields,\n        name=None,\n        condition=None,\n        deferrable=None,\n        include=None,\n        opclasses=None,\n        expressions=None,\n    ):\n        if (\n            (\n                deferrable\n                and not self.connection.features.supports_deferrable_unique_constraints\n            )\n            or (condition and not self.connection.features.supports_partial_indexes)\n            or (include and not self.connection.features.supports_covering_indexes)\n            or (\n                expressions and not self.connection.features.supports_expression_indexes\n            )\n        ):\n            return None\n\n        def create_unique_name(*args, **kwargs):\n            return self.quote_name(self._create_index_name(*args, **kwargs))\n\n        compiler = Query(model, alias_cols=False).get_compiler(\n            connection=self.connection\n        )\n        table = model._meta.db_table\n        columns = [field.column for field in fields]\n        if name is None:\n            name = IndexName(table, columns, \"_uniq\", create_unique_name)\n        else:\n            name = self.quote_name(name)\n        if condition or include or opclasses or expressions:\n            sql = self.sql_create_unique_index\n        else:\n            sql = self.sql_create_unique\n        if columns:\n            columns = self._index_columns(\n                table, columns, col_suffixes=(), opclasses=opclasses\n            )\n        else:\n            columns = Expressions(table, expressions, compiler, self.quote_value)\n        return Statement(\n            sql,\n            table=Table(table, self.quote_name),\n            name=name,\n            columns=columns,\n            condition=self._index_condition_sql(condition),\n            deferrable=self._deferrable_constraint_sql(deferrable),\n            include=self._index_include_sql(model, include),\n        )"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "create_unique_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def create_unique_name(*args, **kwargs):\n            return self.quote_name(self._create_index_name(*args, **kwargs))"
+        }
+      ]
+    },
+    {
+      "pr_number": 4655,
+      "pr_title": "Fixed #24757 -- Recreated MySQL index when needed during unique_together removal",
+      "pr_body": "",
+      "issue_id": 24757,
+      "issue_title": "Removing unique_together constraint make Django 1.8 migration fail with MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2015-05-15T10:06:22",
+      "base_commit": "0eaef8e527af556c0c517a64035929404cf94a39",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "alter_unique_together",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def alter_unique_together(self, model, old_unique_together, new_unique_together):\n        \"\"\"\n        Deals with a model changing its unique_together.\n        Note: The input unique_togethers must be doubly-nested, not the single-\n        nested [\"foo\", \"bar\"] format.\n        \"\"\"\n        olds = set(tuple(fields) for fields in old_unique_together)\n        news = set(tuple(fields) for fields in new_unique_together)\n        # Deleted uniques\n        for fields in olds.difference(news):\n            columns = [model._meta.get_field(field).column for field in fields]\n            constraint_names = self._constraint_names(model, columns, unique=True)\n            if len(constraint_names) != 1:\n                raise ValueError(\"Found wrong number (%s) of constraints for %s(%s)\" % (\n                    len(constraint_names),\n                    model._meta.db_table,\n                    \", \".join(columns),\n                ))\n            self.execute(self._delete_constraint_sql(self.sql_delete_unique, model, constraint_names[0]))\n        # Created uniques\n        for fields in news.difference(olds):\n            columns = [model._meta.get_field(field).column for field in fields]\n            self.execute(self._create_unique_sql(model, columns))"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "alter_index_together",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def alter_index_together(self, model, old_index_together, new_index_together):\n        \"\"\"\n        Deals with a model changing its index_together.\n        Note: The input index_togethers must be doubly-nested, not the single-\n        nested [\"foo\", \"bar\"] format.\n        \"\"\"\n        olds = set(tuple(fields) for fields in old_index_together)\n        news = set(tuple(fields) for fields in new_index_together)\n        # Deleted indexes\n        for fields in olds.difference(news):\n            columns = [model._meta.get_field(field).column for field in fields]\n            constraint_names = self._constraint_names(model, list(columns), index=True)\n            if len(constraint_names) != 1:\n                raise ValueError(\"Found wrong number (%s) of constraints for %s(%s)\" % (\n                    len(constraint_names),\n                    model._meta.db_table,\n                    \", \".join(columns),\n                ))\n            self.execute(self._delete_constraint_sql(self.sql_delete_index, model, constraint_names[0]))\n        # Created indexes\n        for field_names in news.difference(olds):\n            fields = [model._meta.get_field(field) for field in field_names]\n            self.execute(self._create_index_sql(model, fields, suffix=\"_idx\"))"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        storage = self.connection.introspection.get_storage_engine(\n            self.connection.cursor(), model._meta.db_table\n        )\n        if storage == \"InnoDB\":\n            for field in model._meta.local_fields:\n                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\":\n                    # Temporary setting db_index to False (in memory) to disable\n                    # index creation for FKs (index automatically created by MySQL)\n                    field.db_index = False\n        return super(DatabaseSchemaEditor, self)._model_indexes_sql(model)"
+        }
+      ]
+    }
+  ]
+}

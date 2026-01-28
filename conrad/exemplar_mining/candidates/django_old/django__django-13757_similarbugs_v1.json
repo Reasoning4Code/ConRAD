@@ -1,0 +1,158 @@
+{
+  "instance_id": "django__django-13757",
+  "repo": "django/django",
+  "created_at": "2020-12-09T14:48:53Z",
+  "problem_statement": "Using __isnull=True on a KeyTransform should not match JSON null on SQLite and Oracle\nDescription\n\t\nThe KeyTransformIsNull lookup borrows the logic from HasKey for isnull=False, which is correct. If isnull=True, the query should only match objects that do not have the key. The query is correct for MariaDB, MySQL, and PostgreSQL. However, on SQLite and Oracle, the query also matches objects that have the key with the value null, which is incorrect.\nTo confirm, edit tests.model_fields.test_jsonfield.TestQuerying.test_isnull_key. For the first assertion, change\n\t\tself.assertSequenceEqual(\n\t\t\tNullableJSONModel.objects.filter(value__a__isnull=True),\n\t\t\tself.objs[:3] + self.objs[5:],\n\t\t)\nto\n\t\tself.assertSequenceEqual(\n\t\t\tNullableJSONModel.objects.filter(value__j__isnull=True),\n\t\t\tself.objs[:4] + self.objs[5:],\n\t\t)\nThe test previously only checks with value__a which could not catch this behavior because the value is not JSON null.\n",
+  "patch": "diff --git a/django/db/models/fields/json.py b/django/db/models/fields/json.py\n--- a/django/db/models/fields/json.py\n+++ b/django/db/models/fields/json.py\n@@ -366,14 +366,25 @@ def process_rhs(self, compiler, connection):\n class KeyTransformIsNull(lookups.IsNull):\n     # key__isnull=False is the same as has_key='key'\n     def as_oracle(self, compiler, connection):\n+        sql, params = HasKey(\n+            self.lhs.lhs,\n+            self.lhs.key_name,\n+        ).as_oracle(compiler, connection)\n         if not self.rhs:\n-            return HasKey(self.lhs.lhs, self.lhs.key_name).as_oracle(compiler, connection)\n-        return super().as_sql(compiler, connection)\n+            return sql, params\n+        # Column doesn't have a key or IS NULL.\n+        lhs, lhs_params, _ = self.lhs.preprocess_lhs(compiler, connection)\n+        return '(NOT %s OR %s IS NULL)' % (sql, lhs), tuple(params) + tuple(lhs_params)\n \n     def as_sqlite(self, compiler, connection):\n+        template = 'JSON_TYPE(%s, %%s) IS NULL'\n         if not self.rhs:\n-            return HasKey(self.lhs.lhs, self.lhs.key_name).as_sqlite(compiler, connection)\n-        return super().as_sql(compiler, connection)\n+            template = 'JSON_TYPE(%s, %%s) IS NOT NULL'\n+        return HasKey(self.lhs.lhs, self.lhs.key_name).as_sql(\n+            compiler,\n+            connection,\n+            template=template,\n+        )\n \n \n class KeyTransformIn(lookups.In):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 12472,
+      "pr_title": "Fixed #31286 -- Made database specific fields checks databases aware.",
+      "pr_body": "Further tests required(or not?).\r\nCurrent test cases don't cover the case when the user provides multiple databases, e.g.:\r\n```python manage.py check --database dba --database dbb```\r\n",
+      "issue_id": 31286,
+      "issue_title": "Database specific fields checks should be databases aware.",
+      "issue_body": "",
+      "issue_closed_at": "2020-02-24T10:38:01",
+      "base_commit": "94d4bd3a091dd9ac265e14619576b1ee568653b1",
+      "changes": [
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_null_allowed_for_primary_keys",
+          "class_name": "Field",
+          "code": "def _check_null_allowed_for_primary_keys(self):\n        if (self.primary_key and self.null and\n                not connection.features.interprets_empty_strings_as_nulls):\n            # We cannot reliably check this for backends like Oracle which\n            # consider NULL and '' to be equal (and thus set up\n            # character-based fields a little differently).\n            return [\n                checks.Error(\n                    'Primary keys must not have null=True.',\n                    hint=('Set null=False on the field, or '\n                          'remove primary_key=True argument.'),\n                    obj=self,\n                    id='fields.E007',\n                )\n            ]\n        else:\n            return []"
+        }
+      ]
+    },
+    {
+      "pr_number": 8754,
+      "pr_title": "Fixed #28391 -- Fixed Cast() with CharField and max_length on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/28391",
+      "issue_id": 28391,
+      "issue_title": "Cast doesn't take into account CharField's max_length on MySQL.",
+      "issue_body": "",
+      "issue_closed_at": "2017-07-17T14:12:39",
+      "base_commit": "feeafdad02e2874e2e2f879a825d3527f6b193ad",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite cannot handle us only partially reading from a cursor's result set\n    # and then writing the same rows to the database in another cursor. This\n    # setting ensures we always read result sets fully into memory all in one\n    # go.\n    can_use_chunked_reads = False\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    has_bulk_insert = True\n    supports_column_check_constraints = False\n    autocommits_when_autocommit_is_off = True\n    can_introspect_decimal_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n\n    @cached_property\n    def uses_savepoints(self):\n        return Database.sqlite_version_info >= (3, 6, 8)\n\n    @cached_property\n    def supports_index_column_ordering(self):\n        return Database.sqlite_version_info >= (3, 3, 0)\n\n    @cached_property\n    def can_release_savepoints(self):\n        return self.uses_savepoints\n\n    @cached_property\n    def can_share_in_memory_db(self):\n        return (\n            Database.__name__ == 'sqlite3.dbapi2' and\n            Database.sqlite_version_info >= (3, 7, 13)\n        )\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "clean",
+          "class_name": "Field",
+          "code": "def clean(self, value, model_instance):\n        \"\"\"\n        Convert the value's type and run validation. Validation errors\n        from to_python() and validate() are propagated. Return the correct\n        value if no error is raised.\n        \"\"\"\n        value = self.to_python(value)\n        self.validate(value, model_instance)\n        self.run_validators(value)\n        return value"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "db_type",
+          "class_name": "Field",
+          "code": "def db_type(self, connection):\n        \"\"\"\n        Return the database column data type for this field, for the provided\n        connection.\n        \"\"\"\n        # The default implementation of this method looks at the\n        # backend-specific data_types dictionary, looking up the field by its\n        # \"internal type\".\n        #\n        # A Field class can implement the get_internal_type() method to specify\n        # which *preexisting* Django Field class it's most similar to -- i.e.,\n        # a custom field might be represented by a TEXT column type, which is\n        # the same as the TextField Django field type, which means the custom\n        # field's get_internal_type() returns 'TextField'.\n        #\n        # But the limitation of the get_internal_type() / data_types approach\n        # is that it cannot handle database column types that aren't already\n        # mapped to one of the built-in Django field types. In this case, you\n        # can implement db_type() instead of get_internal_type() to specify\n        # exactly which wacky database column type you want to use.\n        data = DictWrapper(self.__dict__, connection.ops.quote_name, \"qn_\")\n        try:\n            return connection.data_types[self.get_internal_type()] % data\n        except KeyError:\n            return None"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "class",
+          "name": "Cast",
+          "code": "class Cast(Func):\n    \"\"\"Coerce an expression to a new field type.\"\"\"\n    function = 'CAST'\n    template = '%(function)s(%(expressions)s AS %(db_type)s)'\n\n    mysql_types = {\n        fields.CharField: 'char',\n        fields.IntegerField: 'signed integer',\n        fields.BigIntegerField: 'signed integer',\n        fields.SmallIntegerField: 'signed integer',\n        fields.FloatField: 'signed',\n        fields.PositiveIntegerField: 'unsigned integer',\n        fields.PositiveSmallIntegerField: 'unsigned integer',\n    }\n\n    def __init__(self, expression, output_field):\n        super().__init__(expression, output_field=output_field)\n\n    def as_sql(self, compiler, connection, **extra_context):\n        if 'db_type' not in extra_context:\n            extra_context['db_type'] = self.output_field.db_type(connection)\n        return super().as_sql(compiler, connection, **extra_context)\n\n    def as_mysql(self, compiler, connection):\n        extra_context = {}\n        output_field_class = type(self.output_field)\n        if output_field_class in self.mysql_types:\n            extra_context['db_type'] = self.mysql_types[output_field_class]\n        return self.as_sql(compiler, connection, **extra_context)\n\n    def as_postgresql(self, compiler, connection):\n        # CAST would be valid too, but the :: shortcut syntax is more readable.\n        return self.as_sql(compiler, connection, template='%(expressions)s::%(db_type)s')"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "function",
+          "name": "as_mysql",
+          "class_name": "Length",
+          "code": "def as_mysql(self, compiler, connection):\n        return super().as_sql(compiler, connection, function='CHAR_LENGTH')"
+        }
+      ]
+    },
+    {
+      "pr_number": 8629,
+      "pr_title": "Fixed #28293 -- Fixed union(), intersection(), and difference() when combining with an EmptyQuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/28293",
+      "issue_id": 28293,
+      "issue_title": "QuerySet.union(QuerySet.none()) results in an empty queryset, should be the original queryset",
+      "issue_body": "",
+      "issue_closed_at": "2017-06-13T01:16:29",
+      "base_commit": "9dc83c356d363c090f3351c908cad6f823aeb7bf",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_combinator_query",
+          "class_name": "QuerySet",
+          "code": "def _combinator_query(self, combinator, *other_qs, all=False):\n        # Clone the query to inherit the select list and everything\n        clone = self._clone()\n        # Clear limits and ordering so they can be reapplied\n        clone.query.clear_ordering(True)\n        clone.query.clear_limits()\n        clone.query.combined_queries = (self.query,) + tuple(qs.query for qs in other_qs)\n        clone.query.combinator = combinator\n        clone.query.combinator_all = all\n        return clone"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = (compiler.as_sql() for compiler in compilers)\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 8116,
+      "pr_title": "Fixed #25406 -- Removed exception hiding in PostgreSQL test database \u2026",
+      "pr_body": "\u2026creation / cloning during `--keepdb`. Ticket [25406](https://code.djangoproject.com/ticket/25406).\r\n\r\nI'm going to prepare separate PR with similar modification in the MySQL backend.",
+      "issue_id": 25406,
+      "issue_title": "_create_test_db hides errors like 'source database \"template1\" is being accessed by other users' with --keepdb",
+      "issue_body": "",
+      "issue_closed_at": "2017-04-10T12:04:07",
+      "base_commit": "5d3b322dce452dd75e8602ced9f0d02f9d6a5837",
+      "changes": [
+        {
+          "file": "django/db/backends/base/creation.py",
+          "type": "function",
+          "name": "_get_test_db_name",
+          "class_name": "BaseDatabaseCreation",
+          "code": "def _get_test_db_name(self):\n        \"\"\"\n        Internal implementation - return the name of the test DB that will be\n        created. Only useful when called from create_test_db() and\n        _create_test_db() and when no external munging is done with the 'NAME'\n        settings.\n        \"\"\"\n        if self.connection.settings_dict['TEST']['NAME']:\n            return self.connection.settings_dict['TEST']['NAME']\n        return TEST_DATABASE_PREFIX + self.connection.settings_dict['NAME']"
+        },
+        {
+          "file": "django/db/backends/base/creation.py",
+          "type": "function",
+          "name": "_create_test_db",
+          "class_name": "BaseDatabaseCreation",
+          "code": "def _create_test_db(self, verbosity, autoclobber, keepdb=False):\n        \"\"\"\n        Internal implementation - create the test db tables.\n        \"\"\"\n        suffix = self.sql_table_creation_suffix()\n\n        test_database_name = self._get_test_db_name()\n\n        qn = self.connection.ops.quote_name\n\n        # Create the test database and connect to it.\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                cursor.execute(\n                    \"CREATE DATABASE %s %s\" % (qn(test_database_name), suffix))\n            except Exception as e:\n                # if we want to keep the db, then no need to do any of the below,\n                # just return and skip it all.\n                if keepdb:\n                    return test_database_name\n\n                sys.stderr.write(\n                    \"Got an error creating the test database: %s\\n\" % e)\n                if not autoclobber:\n                    confirm = input(\n                        \"Type 'yes' if you would like to try deleting the test \"\n                        \"database '%s', or 'no' to cancel: \" % test_database_name)\n                if autoclobber or confirm == 'yes':\n                    try:\n                        if verbosity >= 1:\n                            print(\"Destroying old test database for alias %s...\" % (\n                                self._get_database_display_str(verbosity, test_database_name),\n                            ))\n                        cursor.execute(\n                            \"DROP DATABASE %s\" % qn(test_database_name))\n                        cursor.execute(\n                            \"CREATE DATABASE %s %s\" % (qn(test_database_name),\n                                                       suffix))\n                    except Exception as e:\n                        sys.stderr.write(\n                            \"Got an error recreating the test database: %s\\n\" % e)\n                        sys.exit(2)\n                else:\n                    print(\"Tests cancelled.\")\n                    sys.exit(1)\n\n        return test_database_name"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "sql_table_creation_suffix",
+          "class_name": "DatabaseCreation",
+          "code": "def sql_table_creation_suffix(self):\n        test_settings = self.connection.settings_dict['TEST']\n        assert test_settings['COLLATION'] is None, (\n            \"PostgreSQL does not support collation setting at database creation time.\"\n        )\n        return self._get_database_create_suffix(\n            encoding=test_settings['CHARSET'],\n            template=test_settings.get('TEMPLATE'),\n        )"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "_clone_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _clone_test_db(self, number, verbosity, keepdb=False):\n        # CREATE DATABASE ... WITH TEMPLATE ... requires closing connections\n        # to the template database.\n        self.connection.close()\n\n        source_database_name = self.connection.settings_dict['NAME']\n        target_database_name = self.get_test_db_clone_settings(number)['NAME']\n        suffix = self._get_database_create_suffix(template=source_database_name)\n        creation_sql = \"CREATE DATABASE {} {}\".format(self._quote_name(target_database_name), suffix)\n\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                cursor.execute(creation_sql)\n            except Exception:\n                if keepdb:\n                    return\n                try:\n                    if verbosity >= 1:\n                        print(\"Destroying old test database for alias %s...\" % (\n                            self._get_database_display_str(verbosity, target_database_name),\n                        ))\n                    cursor.execute(\"DROP DATABASE %s\" % self._quote_name(target_database_name))\n                    cursor.execute(creation_sql)\n                except Exception as e:\n                    sys.stderr.write(\"Got an error cloning the test database: %s\\n\" % e)\n                    sys.exit(2)"
+        }
+      ]
+    },
+    {
+      "pr_number": 5139,
+      "pr_title": "Fixed #19263 -- Fixed crash when filtering using __in and an empty QuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/19263\n",
+      "issue_id": 19263,
+      "issue_title": "Filtering __in a sliced queryset with a 0 limit raises an error",
+      "issue_body": "",
+      "issue_closed_at": "2015-09-04T07:00:51",
+      "base_commit": "7c0850028f25eebaa9b521b5d02afac084ff2c6f",
+      "changes": [
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "as_nested_sql",
+          "class_name": "SQLCompiler",
+          "code": "def as_nested_sql(self):\n        \"\"\"\n        Perform the same functionality as the as_sql() method, returning an\n        SQL string and parameters. However, the alias prefixes are bumped\n        beforehand (in a copy -- the current query isn't changed), and any\n        ordering is removed if the query is unsliced.\n\n        Used when nesting this query inside another.\n        \"\"\"\n        obj = self.query.clone()\n        if obj.low_mark == 0 and obj.high_mark is None and not self.query.distinct_fields:\n            # If there is no slicing in use, then we can safely drop all ordering\n            obj.clear_ordering(True)\n        return obj.get_compiler(connection=self.connection).as_sql(subquery=True)"
+        }
+      ]
+    }
+  ]
+}

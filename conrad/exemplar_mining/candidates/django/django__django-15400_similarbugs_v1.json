@@ -1,0 +1,188 @@
+{
+  "instance_id": "django__django-15400",
+  "repo": "django/django",
+  "created_at": "2022-02-05T19:34:55Z",
+  "problem_statement": "SimpleLazyObject doesn't implement __radd__\nDescription\n\t\nTechnically, there's a whole bunch of magic methods it doesn't implement, compared to a complete proxy implementation, like that of wrapt.ObjectProxy, but __radd__ being missing is the one that's biting me at the moment.\nAs far as I can tell, the implementation can't just be\n__radd__ = new_method_proxy(operator.radd)\nbecause that doesn't exist, which is rubbish.\n__radd__ = new_method_proxy(operator.attrgetter(\"__radd__\"))\nalso won't work because types may not have that attr, and attrgetter doesn't supress the exception (correctly)\nThe minimal implementation I've found that works for me is:\n\tdef __radd__(self, other):\n\t\tif self._wrapped is empty:\n\t\t\tself._setup()\n\t\treturn other + self._wrapped\n",
+  "patch": "diff --git a/django/utils/functional.py b/django/utils/functional.py\n--- a/django/utils/functional.py\n+++ b/django/utils/functional.py\n@@ -432,6 +432,12 @@ def __deepcopy__(self, memo):\n             return result\n         return copy.deepcopy(self._wrapped, memo)\n \n+    __add__ = new_method_proxy(operator.add)\n+\n+    @new_method_proxy\n+    def __radd__(self, other):\n+        return other + self\n+\n \n def partition(predicate, values):\n     \"\"\"\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8213,
+      "pr_title": "Refs #27935 -- Fixed BrinIndex.max_name_length if a project's default database isn't PostgreSQL.",
+      "pr_body": "",
+      "issue_id": 27935,
+      "issue_title": "BrinIndex crashes if name  > 30 characters",
+      "issue_body": "BrinIndex.suffix ( django.contrib.postgres.indexes) longer 3 char, but Index.set_name_with_model method allowed 3 char in suffix\nAssertionError: Index too long for multiple database support. Is self.suffix longer than 3 characters?",
+      "issue_closed_at": "2017-03-20T10:30:05",
+      "base_commit": "6cb0a3ac2836c044987f7a0cca0d1e99d52e002e",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from django.db import connection\nfrom django.db.models import Index\nfrom django.utils.functional import cached_property\n\n__all__ = ['BrinIndex', 'GinIndex']\n\n\nclass BrinIndex(Index):\n    suffix = 'brin'\n\n    def __init__(self, fields=[], name=None, pages_per_range=None):\n        if pages_per_range is not None and pages_per_range <= 0:"
+        },
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "function",
+          "name": "get_sql_create_template_values",
+          "class_name": "BrinIndex",
+          "code": "def get_sql_create_template_values(self, model, schema_editor, using):\n        parameters = super().get_sql_create_template_values(model, schema_editor, using=' USING brin')\n        if self.pages_per_range is not None:\n            parameters['extra'] = ' WITH (pages_per_range={})'.format(\n                schema_editor.quote_value(self.pages_per_range)) + parameters['extra']\n        return parameters"
+        }
+      ]
+    },
+    {
+      "pr_number": 8396,
+      "pr_title": "Fixed #28116 -- Used error code filtering in PostgreSQL test database creation.",
+      "pr_body": "Ticket [28116](https://code.djangoproject.com/ticket/28116).",
+      "issue_id": 28116,
+      "issue_title": "Filtering PostgreSQL exception based on message is too brittle",
+      "issue_body": "In commit\n64264c9a19b7dae6cd1d5e112177cdbcafafc93c\n, the behavior of\n_execute_create_test_db\ndepends on the databae error message\n''database %s already exists'\n.\nOn my system for example, the error message is localized so I'm finally getting a message\nGot an error creating the test database: la base de données « test_testgis1 » existe déjà\neven when I provide\n--keepdb\n.",
+      "issue_closed_at": "2017-04-24T23:01:44",
+      "base_commit": "8ef35468b660e1c25af67a8299202b8bc108679f",
+      "changes": [
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import sys\n\nfrom django.db.backends.base.creation import BaseDatabaseCreation\n\n"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "_execute_create_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _execute_create_test_db(self, cursor, parameters, keepdb=False):\n        try:\n            super()._execute_create_test_db(cursor, parameters, keepdb)\n        except Exception as e:\n            exc_msg = 'database %s already exists' % parameters['dbname']\n            if exc_msg not in str(e):\n                # All errors except \"database already exists\" cancel tests\n                sys.stderr.write('Got an error creating the test database: %s\\n' % e)\n                sys.exit(2)\n            elif not keepdb:\n                # If the database should be kept, ignore \"database already\n                # exists\".\n                raise e"
+        }
+      ]
+    },
+    {
+      "pr_number": 9345,
+      "pr_title": "Fixed #28792 -- Fixed index name truncation of namespaced tables.",
+      "pr_body": "Refs #27458, #27843.",
+      "issue_id": 28792,
+      "issue_title": "Index names can be incorrectly truncated when using a namespaced table name",
+      "issue_body": "When using a namespaced\n_meta.db_table\n(e.g. Oracle's\n'schema\".\"table'\n) it's possible that\n_create_index_name\nreturns an index name truncating the namespace resulting in an invalid identifier or one that isn't namespaced anymore and thus created in the user's namespace.\nFor example, given the following model:\nclass\nFoo\n(\nmodels\n.\nModel\n):\nfield\n=\nmodels\n.\nIntegerField\n(\nindex\n=\nTrue\n)\nclass\nMeta\n:\ndb_table\n=\n'long_name\".\"table_name'\nThe resulting index name will be\n'long_name\"_field_d21c9e0a'\nwhich is invalid SQL even when quoted to\n'\"long_name\"_field_d21c9e0a\"'\n.\nMarking as a release blocker because this is a regression which I believe was introduced by\n#27458\nand wasn't addressed by\n#27843\n. I confirm that this uses to work on Django 1.10 but was broken on 1.11 as I stumbled upon the issue when upgrading a Django 1.8 LTS codebase to 1.11 LTS on the 1.10 -> 1.11 step.\nThe tests added by\n#27458\njust happened to work because the index name truncation cut the string the in a way that both double quotes are stripped. It should be possible to tweak the table names to trigger the errors but I felt like directly testing\n_create_index_name\nwas more appropriate.",
+      "issue_closed_at": "2017-11-14T20:53:46",
+      "base_commit": "532a4f22ad94db320cb0fd66f4c7ee57d17ac65a",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "line",
+          "name": "line 5",
+          "code": "from django.db.backends.ddl_references import (\n    Columns, ForeignKeyName, IndexName, Statement, Table,\n)\nfrom django.db.backends.utils import strip_quotes\nfrom django.db.models import Index\nfrom django.db.transaction import TransactionManagementError, atomic\nfrom django.utils import timezone"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_create_index_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _create_index_name(self, table_name, column_names, suffix=\"\"):\n        \"\"\"\n        Generate a unique name for an index/unique constraint.\n\n        The name is divided into 3 parts: the table name, the column names,\n        and a unique digest and suffix.\n        \"\"\"\n        table_name = strip_quotes(table_name)\n        hash_data = [table_name] + list(column_names)\n        hash_suffix_part = '%s%s' % (self._digest(*hash_data), suffix)\n        max_length = self.connection.ops.max_name_length() or 200\n        # If everything fits into max_length, use that name.\n        index_name = '%s_%s_%s' % (table_name, '_'.join(column_names), hash_suffix_part)\n        if len(index_name) <= max_length:\n            return index_name\n        # Shorten a long suffix.\n        if len(hash_suffix_part) > max_length / 3:\n            hash_suffix_part = hash_suffix_part[:max_length // 3]\n        other_length = (max_length - len(hash_suffix_part)) // 2 - 1\n        index_name = '%s_%s_%s' % (\n            table_name[:other_length],\n            '_'.join(column_names)[:other_length],\n            hash_suffix_part,\n        )\n        # Prepend D if needed to prevent the name from starting with an\n        # underscore or a number (not permitted on Oracle).\n        if index_name[0] == \"_\" or index_name[0].isdigit():\n            index_name = \"D%s\" % index_name[:-1]\n        return index_name"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "import functools\nimport hashlib\nimport logging\nimport re\nfrom time import time\n\nfrom django.conf import settings"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "function",
+          "name": "rev_typecast_decimal",
+          "class_name": null,
+          "code": "def rev_typecast_decimal(d):\n    if d is None:\n        return None\n    return str(d)"
+        }
+      ]
+    },
+    {
+      "pr_number": 3265,
+      "pr_title": "Fixed #23538 -- Added SchemaEditor for MySQL GIS.",
+      "pr_body": "",
+      "issue_id": 23538,
+      "issue_title": "MySQL GIS backend missing SchemaEditor",
+      "issue_body": "I think this results in a missing index for GIS fields on apps that have migrations.",
+      "issue_closed_at": "2014-09-25T12:53:52",
+      "base_commit": "215aa4f53b6bbd07d5c1eecfa94e7fcd00da813e",
+      "changes": [
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "line",
+          "name": "line 6",
+          "code": "from django.contrib.gis.db.backends.mysql.creation import MySQLCreation\nfrom django.contrib.gis.db.backends.mysql.introspection import MySQLIntrospection\nfrom django.contrib.gis.db.backends.mysql.operations import MySQLOperations\n\n\nclass DatabaseFeatures(BaseSpatialFeatures, MySQLDatabaseFeatures):"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "DatabaseWrapper",
+          "code": "def __init__(self, *args, **kwargs):\n        super(DatabaseWrapper, self).__init__(*args, **kwargs)\n        self.features = DatabaseFeatures(self)\n        self.creation = MySQLCreation(self)\n        self.ops = MySQLOperations(self)\n        self.introspection = MySQLIntrospection(self)"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "MySQLIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # In order to get the specific geometry type of the field,\n            # we introspect on the table definition using `DESCRIBE`.\n            cursor.execute('DESCRIBE %s' %\n                           self.connection.ops.quote_name(table_name))\n            # Increment over description info until we get to the geometry\n            # column.\n            for column, typ, null, key, default, extra in cursor.fetchall():\n                if column == geo_col:\n                    # Using OGRGeomType to convert from OGC name to Django field.\n                    # MySQL does not support 3D or SRIDs, so the field params\n                    # are empty.\n                    field_type = OGRGeomType(typ).django\n                    field_params = {}\n                    break\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/spatialite/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "SpatiaLiteIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # Querying the `geometry_columns` table to get additional metadata.\n            type_col = 'type' if self.connection.ops.spatial_version < (4, 0, 0) else 'geometry_type'\n            cursor.execute('SELECT coord_dimension, srid, %s '\n                           'FROM geometry_columns '\n                           'WHERE f_table_name=%%s AND f_geometry_column=%%s' % type_col,\n                           (table_name, geo_col))\n            row = cursor.fetchone()\n            if not row:\n                raise Exception('Could not find a geometry column for \"%s\".\"%s\"' %\n                                (table_name, geo_col))\n\n            # OGRGeomType does not require GDAL and makes it easy to convert\n            # from OGC geom type name to Django field.\n            field_type = OGRGeomType(row[2]).django\n\n            # Getting any GeometryField keyword arguments that are not the default.\n            dim = row[0]\n            srid = row[1]\n            field_params = {}\n            if srid != 4326:\n                field_params['srid'] = srid\n            if isinstance(dim, six.string_types) and 'Z' in dim:\n                field_params['dim'] = 3\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_indexes",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_indexes(self, cursor, table_name):\n        cursor.execute(\"SHOW INDEX FROM %s\" % self.connection.ops.quote_name(table_name))\n        # Do a two-pass search for indexes: on first pass check which indexes\n        # are multicolumn, on second pass check which single-column indexes\n        # are present.\n        rows = list(cursor.fetchall())\n        multicol_indexes = set()\n        for row in rows:\n            if row[3] > 1:\n                multicol_indexes.add(row[2])\n        indexes = {}\n        for row in rows:\n            if row[2] in multicol_indexes:\n                continue\n            if row[4] not in indexes:\n                indexes[row[4]] = {'primary_key': False, 'unique': False}\n            # It's possible to have the unique and PK constraints in separate indexes.\n            if row[2] == 'PRIMARY':\n                indexes[row[4]]['primary_key'] = True\n            if not row[1]:\n                indexes[row[4]]['unique'] = True\n        return indexes"
+        }
+      ]
+    },
+    {
+      "pr_number": 8754,
+      "pr_title": "Fixed #28391 -- Fixed Cast() with CharField and max_length on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/28391",
+      "issue_id": 28391,
+      "issue_title": "Cast doesn't take into account CharField's max_length on MySQL.",
+      "issue_body": "Correct behavior, e.g. (based on\ndb_functions/test_cast.py\n):\n>>> Author.objects.create(name='Bob', age=1111)\n>>> numbers = Author.objects.annotate(cast_string=Cast('age', models.CharField(max_length=3)))\n>>> numbers.get().cast_string\n111\non MySQL it returns\n1111\n(related with\n#28371\n).",
+      "issue_closed_at": "2017-07-17T14:12:39",
+      "base_commit": "feeafdad02e2874e2e2f879a825d3527f6b193ad",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite cannot handle us only partially reading from a cursor's result set\n    # and then writing the same rows to the database in another cursor. This\n    # setting ensures we always read result sets fully into memory all in one\n    # go.\n    can_use_chunked_reads = False\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    has_bulk_insert = True\n    supports_column_check_constraints = False\n    autocommits_when_autocommit_is_off = True\n    can_introspect_decimal_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n\n    @cached_property\n    def uses_savepoints(self):\n        return Database.sqlite_version_info >= (3, 6, 8)\n\n    @cached_property\n    def supports_index_column_ordering(self):\n        return Database.sqlite_version_info >= (3, 3, 0)\n\n    @cached_property\n    def can_release_savepoints(self):\n        return self.uses_savepoints\n\n    @cached_property\n    def can_share_in_memory_db(self):\n        return (\n            Database.__name__ == 'sqlite3.dbapi2' and\n            Database.sqlite_version_info >= (3, 7, 13)\n        )\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "clean",
+          "class_name": "Field",
+          "code": "def clean(self, value, model_instance):\n        \"\"\"\n        Convert the value's type and run validation. Validation errors\n        from to_python() and validate() are propagated. Return the correct\n        value if no error is raised.\n        \"\"\"\n        value = self.to_python(value)\n        self.validate(value, model_instance)\n        self.run_validators(value)\n        return value"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "db_type",
+          "class_name": "Field",
+          "code": "def db_type(self, connection):\n        \"\"\"\n        Return the database column data type for this field, for the provided\n        connection.\n        \"\"\"\n        # The default implementation of this method looks at the\n        # backend-specific data_types dictionary, looking up the field by its\n        # \"internal type\".\n        #\n        # A Field class can implement the get_internal_type() method to specify\n        # which *preexisting* Django Field class it's most similar to -- i.e.,\n        # a custom field might be represented by a TEXT column type, which is\n        # the same as the TextField Django field type, which means the custom\n        # field's get_internal_type() returns 'TextField'.\n        #\n        # But the limitation of the get_internal_type() / data_types approach\n        # is that it cannot handle database column types that aren't already\n        # mapped to one of the built-in Django field types. In this case, you\n        # can implement db_type() instead of get_internal_type() to specify\n        # exactly which wacky database column type you want to use.\n        data = DictWrapper(self.__dict__, connection.ops.quote_name, \"qn_\")\n        try:\n            return connection.data_types[self.get_internal_type()] % data\n        except KeyError:\n            return None"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "class",
+          "name": "Cast",
+          "code": "class Cast(Func):\n    \"\"\"Coerce an expression to a new field type.\"\"\"\n    function = 'CAST'\n    template = '%(function)s(%(expressions)s AS %(db_type)s)'\n\n    mysql_types = {\n        fields.CharField: 'char',\n        fields.IntegerField: 'signed integer',\n        fields.BigIntegerField: 'signed integer',\n        fields.SmallIntegerField: 'signed integer',\n        fields.FloatField: 'signed',\n        fields.PositiveIntegerField: 'unsigned integer',\n        fields.PositiveSmallIntegerField: 'unsigned integer',\n    }\n\n    def __init__(self, expression, output_field):\n        super().__init__(expression, output_field=output_field)\n\n    def as_sql(self, compiler, connection, **extra_context):\n        if 'db_type' not in extra_context:\n            extra_context['db_type'] = self.output_field.db_type(connection)\n        return super().as_sql(compiler, connection, **extra_context)\n\n    def as_mysql(self, compiler, connection):\n        extra_context = {}\n        output_field_class = type(self.output_field)\n        if output_field_class in self.mysql_types:\n            extra_context['db_type'] = self.mysql_types[output_field_class]\n        return self.as_sql(compiler, connection, **extra_context)\n\n    def as_postgresql(self, compiler, connection):\n        # CAST would be valid too, but the :: shortcut syntax is more readable.\n        return self.as_sql(compiler, connection, template='%(expressions)s::%(db_type)s')"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "function",
+          "name": "as_mysql",
+          "class_name": "Length",
+          "code": "def as_mysql(self, compiler, connection):\n        return super().as_sql(compiler, connection, function='CHAR_LENGTH')"
+        }
+      ]
+    }
+  ]
+}

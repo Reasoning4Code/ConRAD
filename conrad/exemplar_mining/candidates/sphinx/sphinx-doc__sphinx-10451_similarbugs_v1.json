@@ -1,0 +1,150 @@
+{
+  "instance_id": "sphinx-doc__sphinx-10451",
+  "repo": "sphinx-doc/sphinx",
+  "created_at": "2022-05-15T11:49:39Z",
+  "problem_statement": "Fix duplicated *args and **kwargs with autodoc_typehints\nFix duplicated *args and **kwargs with autodoc_typehints\r\n\r\n### Bugfix\r\n- Bugfix\r\n\r\n### Detail\r\nConsider this\r\n```python\r\nclass _ClassWithDocumentedInitAndStarArgs:\r\n    \"\"\"Class docstring.\"\"\"\r\n\r\n    def __init__(self, x: int, *args: int, **kwargs: int) -> None:\r\n        \"\"\"Init docstring.\r\n\r\n        :param x: Some integer\r\n        :param *args: Some integer\r\n        :param **kwargs: Some integer\r\n        \"\"\"\r\n```\r\nwhen using the autodoc extension and the setting `autodoc_typehints = \"description\"`.\r\n\r\nWIth sphinx 4.2.0, the current output is\r\n```\r\nClass docstring.\r\n\r\n   Parameters:\r\n      * **x** (*int*) --\r\n\r\n      * **args** (*int*) --\r\n\r\n      * **kwargs** (*int*) --\r\n\r\n   Return type:\r\n      None\r\n\r\n   __init__(x, *args, **kwargs)\r\n\r\n      Init docstring.\r\n\r\n      Parameters:\r\n         * **x** (*int*) -- Some integer\r\n\r\n         * ***args** --\r\n\r\n           Some integer\r\n\r\n         * ****kwargs** --\r\n\r\n           Some integer\r\n\r\n         * **args** (*int*) --\r\n\r\n         * **kwargs** (*int*) --\r\n\r\n      Return type:\r\n         None\r\n```\r\nwhere the *args and **kwargs are duplicated and incomplete.\r\n\r\nThe expected output is\r\n```\r\n  Class docstring.\r\n\r\n   Parameters:\r\n      * **x** (*int*) --\r\n\r\n      * ***args** (*int*) --\r\n\r\n      * ****kwargs** (*int*) --\r\n\r\n   Return type:\r\n      None\r\n\r\n   __init__(x, *args, **kwargs)\r\n\r\n      Init docstring.\r\n\r\n      Parameters:\r\n         * **x** (*int*) -- Some integer\r\n\r\n         * ***args** (*int*) --\r\n\r\n           Some integer\r\n\r\n         * ****kwargs** (*int*) --\r\n\r\n           Some integer\r\n\r\n      Return type:\r\n         None\r\n\r\n```\n",
+  "patch": "diff --git a/sphinx/ext/autodoc/typehints.py b/sphinx/ext/autodoc/typehints.py\n--- a/sphinx/ext/autodoc/typehints.py\n+++ b/sphinx/ext/autodoc/typehints.py\n@@ -115,7 +115,15 @@ def modify_field_list(node: nodes.field_list, annotations: Dict[str, str],\n         if name == 'return':\n             continue\n \n-        arg = arguments.get(name, {})\n+        if '*' + name in arguments:\n+            name = '*' + name\n+            arguments.get(name)\n+        elif '**' + name in arguments:\n+            name = '**' + name\n+            arguments.get(name)\n+        else:\n+            arg = arguments.get(name, {})\n+\n         if not arg.get('type'):\n             field = nodes.field()\n             field += nodes.field_name('', 'type ' + name)\n@@ -167,13 +175,19 @@ def augment_descriptions_with_types(\n             has_type.add('return')\n \n     # Add 'type' for parameters with a description but no declared type.\n-    for name in annotations:\n+    for name, annotation in annotations.items():\n         if name in ('return', 'returns'):\n             continue\n+\n+        if '*' + name in has_description:\n+            name = '*' + name\n+        elif '**' + name in has_description:\n+            name = '**' + name\n+\n         if name in has_description and name not in has_type:\n             field = nodes.field()\n             field += nodes.field_name('', 'type ' + name)\n-            field += nodes.field_body('', nodes.paragraph('', annotations[name]))\n+            field += nodes.field_body('', nodes.paragraph('', annotation))\n             node += field\n \n     # Add 'rtype' if 'return' is present and 'rtype' isn't.\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 6592,
+      "pr_title": "Fix #6589: autodoc: Formatting issues with autodoc_typehints='none'",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #6589 ",
+      "issue_id": 6589,
+      "issue_title": "Formatting issues with autodoc_typehints='none'",
+      "issue_body": "**Describe the bug**\r\n\r\nWhen using `autodoc_typehints='none'`, I see two issues currently:\r\n\r\n1. When an annotated parameter has a default value, spaces are inserted around `=` where they are not for unannotated parameters. Consider:\r\n\r\n   ```python\r\n   def foo(x=True, y: bool = True, z = True):\r\n       return x and y and z\r\n   ```\r\n\r\n   The result looks like:\r\n\r\n   **foo**(*x=True, y = True, z=True*)\r\n\r\n2. Return types are not removed. Consider:\r\n\r\n   ```python\r\n   def bar(x: int) -> int:\r\n       return x * 2\r\n   ```\r\n\r\n   The result looks like:\r\n\r\n   **bar**(*x*) -> int\r\n\r\n**To Reproduce**\r\nSteps to reproduce the behavior:\r\n\r\nUse the above examples with the `autodoc_typehints='none'` option, or with the attached project (see below).\r\n\r\n**Expected behavior**\r\n\r\nI expect the annotated and unannotated parameters to be rendered similarly and for return type annotations to be removed as well, as if they were not there originally.\r\n\r\n**Your project**\r\n\r\nSee attached [foobar.zip](https://github.com/sphinx-doc/sphinx/files/3406054/foobar.zip)\r\n\r\n**Environment info**\r\n- OS: [Pop!_OS 18.10]\r\n- Python version: 3.6.8\r\n- Sphinx version: 2.1.2\r\n- Sphinx extensions:  [sphinx.ext.autodoc]\r\n\r\n**Additional context**\r\n\r\n- #6361 \r\n- #5868 \r\n- https://github.com/agronholm/sphinx-autodoc-typehints/pull/78\r\n\r\n",
+      "issue_closed_at": "2019-08-02T13:37:16Z",
+      "base_commit": "4732ec5edf9e53e2fa78cd5e1ff6bee92f1b27b7",
+      "changes": [
+        {
+          "file": "sphinx/util/inspect.py",
+          "type": "function",
+          "name": "format_args",
+          "class_name": "Signature",
+          "code": "def format_args(self, show_annotation: bool = True) -> str:\n        args = []\n        last_kind = None\n        for i, param in enumerate(self.parameters.values()):\n            # skip first argument if subject is bound method\n            if self.skip_first_argument and i == 0:\n                continue\n\n            arg = StringIO()\n\n            # insert '*' between POSITIONAL args and KEYWORD_ONLY args::\n            #     func(a, b, *, c, d):\n            if param.kind == param.KEYWORD_ONLY and last_kind in (param.POSITIONAL_OR_KEYWORD,\n                                                                  param.POSITIONAL_ONLY,\n                                                                  None):\n                args.append('*')\n\n            if param.kind in (param.POSITIONAL_ONLY,\n                              param.POSITIONAL_OR_KEYWORD,\n                              param.KEYWORD_ONLY):\n                arg.write(param.name)\n                if show_annotation and param.annotation is not param.empty:\n                    if isinstance(param.annotation, str) and param.name in self.annotations:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(self.annotations[param.name]))\n                    else:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(param.annotation))\n                if param.default is not param.empty:\n                    if param.annotation is param.empty:\n                        arg.write('=')\n                        arg.write(object_description(param.default))\n                    else:\n                        arg.write(' = ')\n                        arg.write(object_description(param.default))\n            elif param.kind == param.VAR_POSITIONAL:\n                arg.write('*')\n                arg.write(param.name)\n            elif param.kind == param.VAR_KEYWORD:\n                arg.write('**')\n                arg.write(param.name)\n\n            args.append(arg.getvalue())\n            last_kind = param.kind\n\n        if self.return_annotation is inspect.Parameter.empty:\n            return '(%s)' % ', '.join(args)\n        else:\n            if 'return' in self.annotations:\n                annotation = self.format_annotation(self.annotations['return'])\n            else:\n                annotation = self.format_annotation(self.return_annotation)\n\n            return '(%s) -> %s' % (', '.join(args), annotation)"
+        },
+        {
+          "file": "sphinx/util/inspect.py",
+          "type": "function",
+          "name": "format_args",
+          "class_name": "Signature",
+          "code": "def format_args(self, show_annotation: bool = True) -> str:\n        args = []\n        last_kind = None\n        for i, param in enumerate(self.parameters.values()):\n            # skip first argument if subject is bound method\n            if self.skip_first_argument and i == 0:\n                continue\n\n            arg = StringIO()\n\n            # insert '*' between POSITIONAL args and KEYWORD_ONLY args::\n            #     func(a, b, *, c, d):\n            if param.kind == param.KEYWORD_ONLY and last_kind in (param.POSITIONAL_OR_KEYWORD,\n                                                                  param.POSITIONAL_ONLY,\n                                                                  None):\n                args.append('*')\n\n            if param.kind in (param.POSITIONAL_ONLY,\n                              param.POSITIONAL_OR_KEYWORD,\n                              param.KEYWORD_ONLY):\n                arg.write(param.name)\n                if show_annotation and param.annotation is not param.empty:\n                    if isinstance(param.annotation, str) and param.name in self.annotations:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(self.annotations[param.name]))\n                    else:\n                        arg.write(': ')\n                        arg.write(self.format_annotation(param.annotation))\n                if param.default is not param.empty:\n                    if param.annotation is param.empty:\n                        arg.write('=')\n                        arg.write(object_description(param.default))\n                    else:\n                        arg.write(' = ')\n                        arg.write(object_description(param.default))\n            elif param.kind == param.VAR_POSITIONAL:\n                arg.write('*')\n                arg.write(param.name)\n            elif param.kind == param.VAR_KEYWORD:\n                arg.write('**')\n                arg.write(param.name)\n\n            args.append(arg.getvalue())\n            last_kind = param.kind\n\n        if self.return_annotation is inspect.Parameter.empty:\n            return '(%s)' % ', '.join(args)\n        else:\n            if 'return' in self.annotations:\n                annotation = self.format_annotation(self.annotations['return'])\n            else:\n                annotation = self.format_annotation(self.return_annotation)\n\n            return '(%s) -> %s' % (', '.join(args), annotation)"
+        }
+      ]
+    },
+    {
+      "pr_number": 10101,
+      "pr_title": "Fix empty returns section",
+      "pr_body": "### Feature or Bugfix\r\n\r\nBugfix\r\n\r\nCloses #9932\r\n\r\n",
+      "issue_id": 9932,
+      "issue_title": "Napoleon emits empty \"returns\" sections",
+      "issue_body": "### Describe the bug\n\n![image](https://user-images.githubusercontent.com/401438/144486463-e96a1bbb-46c5-42bf-8544-d6864ecea8ac.png)\r\n\r\n```python\r\ndef get_task(task_id):\r\n    \"\"\"\r\n    Get a task object\r\n\r\n    Args:\r\n        task_id: numeric ID of task\r\n\r\n    Returns:\r\n        Task:\r\n    \"\"\"\r\n```\n\n### How to Reproduce\n\nSee above\n\n### Expected behavior\n\nDon't emit the empty section\n\n### Your project\n\n(private)\n\n### Screenshots\n\n_No response_\n\n### OS\n\nMac, Linux/Container\n\n### Python version\n\n3.10\n\n### Sphinx version\n\nlatest\n\n### Sphinx extensions\n\nautodoc, intersphinx, todo, viewcode, napoleon, sphinx_inline_tabs, prettyspecialmethods\n\n### Extra tools\n\n_No response_\n\n### Additional context\n\n_No response_",
+      "issue_closed_at": "2022-01-15T17:40:58Z",
+      "base_commit": "0938c193ea6f56dbb930bfb323602bc4e2b7b9c6",
+      "changes": [
+        {
+          "file": "sphinx/ext/napoleon/docstring.py",
+          "type": "function",
+          "name": "_parse_references_section",
+          "class_name": "GoogleDocstring",
+          "code": "def _parse_references_section(self, section: str) -> List[str]:\n        use_admonition = self._config.napoleon_use_admonition_for_references\n        return self._parse_generic_section(_('References'), use_admonition)"
+        },
+        {
+          "file": "sphinx/ext/napoleon/docstring.py",
+          "type": "function",
+          "name": "_parse_returns_section",
+          "class_name": "GoogleDocstring",
+          "code": "def _parse_returns_section(self, section: str) -> List[str]:\n        fields = self._consume_returns_section()\n        multi = len(fields) > 1\n        if multi:\n            use_rtype = False\n        else:\n            use_rtype = self._config.napoleon_use_rtype\n\n        lines: List[str] = []\n        for _name, _type, _desc in fields:\n            if use_rtype:\n                field = self._format_field(_name, '', _desc)\n            else:\n                field = self._format_field(_name, _type, _desc)\n\n            if multi:\n                if lines:\n                    lines.extend(self._format_block('          * ', field))\n                else:\n                    lines.extend(self._format_block(':returns: * ', field))\n            else:\n                lines.extend(self._format_block(':returns: ', field))\n                if _type and use_rtype:\n                    lines.extend([':rtype: %s' % _type, ''])\n        if lines and lines[-1]:\n            lines.append('')\n        return lines"
+        }
+      ]
+    },
+    {
+      "pr_number": 4396,
+      "pr_title": "Fix #1922: Upper characters problem in French HTML Search",
+      "pr_body": "refs: #1922 ",
+      "issue_id": 1922,
+      "issue_title": "Upper characters problem in French stemmer",
+      "issue_body": "I've found a bug in the HTML / Javascript search engine with the French language. The bug is actually related to the indexing of the doctree. The HTML / Javascript search engine expects only lower characters in the index. When indexing, the English stemmer removes upper characters and replace them with lower ones (with .lower()). However, the French stemmer (in sphinx/search/fr.py) keeps the upper characters. Consequently, any word with an upper character in wrongly indexed in French.\nThis can easily be fixed by adding \".lower()\" in SearchFrench.stem().\n",
+      "issue_closed_at": "2018-01-15T01:15:45Z",
+      "base_commit": "79501767d8a3e7433847af924fa4b9ff5d872612",
+      "changes": [
+        {
+          "file": "sphinx/search/fr.py",
+          "type": "function",
+          "name": "init",
+          "class_name": "SearchFrench",
+          "code": "def init(self, options):\n        self.stemmer = snowballstemmer.stemmer('french')"
+        }
+      ]
+    },
+    {
+      "pr_number": 8951,
+      "pr_title": "C++, support spaceship operator",
+      "pr_body": "### Feature or Bugfix\r\n- Feature\r\n\r\n### Purpose\r\nSupport the ``<=>`` operator added in C++20.\r\n\r\n### Details\r\nNote that when written in roles the ``<`` may need to escaped to disambiguate with xrefs with explicit titles. E.g., ``:cpp:func:`operator<=>` `` is an (attempted) reference to ``=`` with title ``operator``, but ``:cpp:func:`operator\\<=>` `` is a reference to ``operator<=>`` with implicit title.\r\n\r\n### Relates\r\nFixes #8942.\r\n\r\n",
+      "issue_id": 8942,
+      "issue_title": "Support C++20's spaceship operator",
+      "issue_body": "C++20 has the new spaceship operator `<=>` for three way comparisons which can also be [defaulted](https://en.cppreference.com/w/cpp/language/default_comparisons) (not sure if the latter matters to Sphinx).\r\n\r\nI hope this is a problem with Sphinx at all and not with the Breathe extension I'm also using.\r\n\r\nFor example, this reST code in Sphinx\r\n```\r\n.. cpp:function:: std::strong_ordering operator<=>(Foo, Foo)\r\n```\r\ncurrently leads to the following warning/error\r\n```\r\nWARNING: Error when parsing function declaration.\r\nIf the function has no return type:\r\n  Error in declarator or parameters-and-qualifiers\r\n  Invalid C++ declaration: Expecting \"(\" in parameters-and-qualifiers. [error at 21]\r\n    std::strong_ordering operator<=>(Foo, Foo)\r\n    ---------------------^\r\nIf the function has a return type:\r\n  Error in declarator or parameters-and-qualifiers\r\n  If pointer to member declarator:\r\n    Invalid C++ declaration: Expected '::' in pointer to member (function). [error at 31]\r\n      std::strong_ordering operator<=>(Foo, Foo)\r\n      -------------------------------^\r\n  If declarator-id:\r\n    Invalid C++ declaration: Expecting \"(\" in parameters-and-qualifiers. [error at 31]\r\n      std::strong_ordering operator<=>(Foo, Foo)\r\n      -------------------------------^\r\n```",
+      "issue_closed_at": "2021-03-02T19:48:17Z",
+      "base_commit": "b923165d5ef289ba39bb964201d4a036eb5a5ff6",
+      "changes": [
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "line",
+          "name": "line 306",
+          "code": "    |   \\+\\+ | --\n    |   ->\\*? | \\,\n    |   (<<|>>)=? | && | \\|\\|\n    |   [!<>=/*%+|&^~-]=?\n    |   (\\b(and|and_eq|bitand|bitor|compl|not|not_eq|or|or_eq|xor|xor_eq)\\b)\n''')"
+        },
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "line",
+          "name": "line 494",
+          "code": "    '>': 'gt',\n    '<=': 'le',\n    '>=': 'ge',\n    '!': 'nt', 'not': 'nt',\n    '&&': 'aa', 'and': 'aa',\n    '||': 'oo', 'or': 'oo',"
+        },
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "line",
+          "name": "line 528",
+          "code": "    ['^', 'xor'],\n    ['&', 'bitand'],\n    ['==', '!=', 'not_eq'],\n    ['<=', '>=', '<', '>'],\n    ['<<', '>>'],\n    ['+', '-'],\n    ['*', '/', '%'],"
+        },
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "function",
+          "name": "_parse_logical_or_expression",
+          "class_name": "DefinitionParser",
+          "code": "def _parse_logical_or_expression(self, inTemplate: bool) -> ASTExpression:\n        # logical-or     = logical-and      ||\n        # logical-and    = inclusive-or     &&\n        # inclusive-or   = exclusive-or     |\n        # exclusive-or   = and              ^\n        # and            = equality         &\n        # equality       = relational       ==, !=\n        # relational     = shift            <, >, <=, >=\n        # shift          = additive         <<, >>\n        # additive       = multiplicative   +, -\n        # multiplicative = pm               *, /, %\n        # pm             = cast             .*, ->*\n        def _parse_bin_op_expr(self: DefinitionParser,\n                               opId: int, inTemplate: bool) -> ASTExpression:\n            if opId + 1 == len(_expression_bin_ops):\n                def parser(inTemplate: bool) -> ASTExpression:\n                    return self._parse_cast_expression()\n            else:\n                def parser(inTemplate: bool) -> ASTExpression:\n                    return _parse_bin_op_expr(self, opId + 1, inTemplate=inTemplate)\n            exprs = []\n            ops = []\n            exprs.append(parser(inTemplate=inTemplate))\n            while True:\n                self.skip_ws()\n                if inTemplate and self.current_char == '>':\n                    break\n                pos = self.pos\n                oneMore = False\n                for op in _expression_bin_ops[opId]:\n                    if op[0] in 'abcnox':\n                        if not self.skip_word(op):\n                            continue\n                    else:\n                        if not self.skip_string(op):\n                            continue\n                    if op == '&' and self.current_char == '&':\n                        # don't split the && 'token'\n                        self.pos -= 1\n                        # and btw. && has lower precedence, so we are done\n                        break\n                    try:\n                        expr = parser(inTemplate=inTemplate)\n                        exprs.append(expr)\n                        ops.append(op)\n                        oneMore = True\n                        break\n                    except DefinitionError:\n                        self.pos = pos\n                if not oneMore:\n                    break\n            return ASTBinOpExpr(exprs, ops)\n        return _parse_bin_op_expr(self, 0, inTemplate=inTemplate)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8387,
+      "pr_title": "Fix #8372: autodoc: autoclass directive became slower than Sphinx-3.2",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n* The result of ModuleAnalyzer.parse() is not cached\r\n* autodoc tries to search overloaded constructor methods to the root\r\n  class even if a definition found",
+      "issue_id": 8372,
+      "issue_title": "Sphinx 3.3 is roughly 3.2x slower than sphinx 3.2.1",
+      "issue_body": "**Describe the bug**\r\n\r\nWe recently noticed the doc builds for the \ud83e\udd17 Transformers library were a lot slower with the recent release. We pinned the version to 3.2.1 for now and it solved the issue, but we wanted to let you know about the slowdown.\r\n\r\n**To Reproduce**\r\nSteps to reproduce the behavior:\r\n```\r\n$ git clone https://github.com/huggingface/transformers/\r\n$ cd transformers\r\n$ pip install --upgrade pip\r\n$ pip install .[tf,torch,sentencepiece,docs]\r\n$ cd docs\r\n$ make html SPHINXOPTS=\"-W\"\r\n```\r\nWith sphinx 3.3.0, the build takes 5min21s on a CircleCI Docker Medium (the size doesn't really impact execution time), whereas sphinx 3.2.1 completes the build in 1min40s (on the same machine). Most of the slowdown is coming in the \"[reading sources]\" part of the build.\r\n\r\n**Expected behavior**\r\nI'd expect the change of version to not impact the time of the build in such a way.\r\n\r\n**Your project**\r\nLink to your sphinx project, or attach zipped small project sample.\r\n\r\n**Environment info**\r\n- OS: Linux\r\n- Python version: 3.7.9\r\n- Sphinx version: 3.2.1/3.3.0\r\n- Sphinx extensions:\r\n    - 'sphinx.ext.autodoc',\r\n    - 'sphinx.ext.coverage',\r\n    - 'sphinx.ext.napoleon',\r\n    - 'recommonmark',\r\n    - 'sphinx.ext.viewcode',\r\n    - 'sphinx_markdown_tables',\r\n    - 'sphinx_copybutton'\r\n\r\n\r\n",
+      "issue_closed_at": "2020-11-09T15:31:09Z",
+      "base_commit": "1193d83166b7d889343d5aa0268d6c2e9349e692",
+      "changes": [
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "get_overloaded_signatures",
+          "class_name": "ClassDocumenter",
+          "code": "def get_overloaded_signatures(self) -> List[Signature]:\n        if self._signature_class and self._signature_method_name:\n            for cls in self._signature_class.__mro__:\n                try:\n                    analyzer = ModuleAnalyzer.for_module(cls.__module__)\n                    analyzer.parse()\n                    qualname = '.'.join([cls.__qualname__, self._signature_method_name])\n                    if qualname in analyzer.overloads:\n                        return analyzer.overloads.get(qualname)\n                except PycodeError:\n                    pass\n\n        return []"
+        },
+        {
+          "file": "sphinx/pycode/__init__.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "ModuleAnalyzer",
+          "code": "def __init__(self, source: IO, modname: str, srcname: str, decoded: bool = False) -> None:\n        self.modname = modname  # name of the module\n        self.srcname = srcname  # name of the source file\n\n        # cache the source code as well\n        pos = source.tell()\n        if not decoded:\n            warnings.warn('decode option for ModuleAnalyzer is deprecated.',\n                          RemovedInSphinx40Warning, stacklevel=2)\n            self._encoding, _ = tokenize.detect_encoding(source.readline)\n            source.seek(pos)\n            self.code = source.read().decode(self._encoding)\n        else:\n            self._encoding = None\n            self.code = source.read()\n\n        # will be filled by parse()\n        self.annotations = None  # type: Dict[Tuple[str, str], str]\n        self.attr_docs = None    # type: Dict[Tuple[str, str], List[str]]\n        self.finals = None       # type: List[str]\n        self.overloads = None    # type: Dict[str, List[Signature]]\n        self.tagorder = None     # type: Dict[str, int]\n        self.tags = None"
+        },
+        {
+          "file": "sphinx/pycode/__init__.py",
+          "type": "function",
+          "name": "parse",
+          "class_name": "ModuleAnalyzer",
+          "code": "def parse(self) -> None:\n        \"\"\"Parse the source code.\"\"\"\n        try:\n            parser = Parser(self.code, self._encoding)\n            parser.parse()\n\n            self.attr_docs = OrderedDict()\n            for (scope, comment) in parser.comments.items():\n                if comment:\n                    self.attr_docs[scope] = comment.splitlines() + ['']\n                else:\n                    self.attr_docs[scope] = ['']\n\n            self.annotations = parser.annotations\n            self.finals = parser.finals\n            self.overloads = parser.overloads\n            self.tags = parser.definitions\n            self.tagorder = parser.deforders\n        except Exception as exc:\n            raise PycodeError('parsing %r failed: %r' % (self.srcname, exc)) from exc"
+        }
+      ]
+    }
+  ]
+}

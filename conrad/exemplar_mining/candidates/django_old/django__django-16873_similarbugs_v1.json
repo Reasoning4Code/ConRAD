@@ -1,0 +1,204 @@
+{
+  "instance_id": "django__django-16873",
+  "repo": "django/django",
+  "created_at": "2023-05-19T09:38:35Z",
+  "problem_statement": "Template filter `join` should not escape the joining string if `autoescape` is `off`\nDescription\n\t\nConsider the following template code snippet:\n{% autoescape off %}\n{{ some_list|join:some_var }}\n{% endautoescape %}\nin this case, the items inside some_list will not be escaped (matching the expected behavior) but some_var will forcibly be escaped. From the docs for autoescape or join I don't think this is expected behavior.\nThe following testcase illustrates what I think is a bug in the join filter (run inside the template_tests/filter_tests folder):\nfrom django.template.defaultfilters import escape\nfrom django.test import SimpleTestCase\nfrom ..utils import setup\nclass RegressionTests(SimpleTestCase):\n\t@setup({\"join01\": '{{ some_list|join:some_var }}'})\n\tdef test_join01(self):\n\t\tsome_list = [\"<p>Hello World!</p>\", \"beta & me\", \"<script>Hi!</script>\"]\n\t\tsome_var = \"<br/>\"\n\t\toutput = self.engine.render_to_string(\"join01\", {\"some_list\": some_list, \"some_var\": some_var})\n\t\tself.assertEqual(output, escape(some_var.join(some_list)))\n\t@setup({\"join02\": '{% autoescape off %}{{ some_list|join:some_var }}{% endautoescape %}'})\n\tdef test_join02(self):\n\t\tsome_list = [\"<p>Hello World!</p>\", \"beta & me\", \"<script>Hi!</script>\"]\n\t\tsome_var = \"<br/>\"\n\t\toutput = self.engine.render_to_string(\"join02\", {\"some_list\": some_list, \"some_var\": some_var})\n\t\tself.assertEqual(output, some_var.join(some_list))\nResult of this run in current main is:\n.F\n======================================================================\nFAIL: test_join02 (template_tests.filter_tests.test_regression.RegressionTests.test_join02)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n File \"/home/nessita/fellowship/django/django/test/utils.py\", line 443, in inner\n\treturn func(*args, **kwargs)\n\t\t ^^^^^^^^^^^^^^^^^^^^^\n File \"/home/nessita/fellowship/django/tests/template_tests/utils.py\", line 58, in inner\n\tfunc(self)\n File \"/home/nessita/fellowship/django/tests/template_tests/filter_tests/test_regression.py\", line 21, in test_join02\n\tself.assertEqual(output, some_var.join(some_list))\nAssertionError: '<p>Hello World!</p>&lt;br/&gt;beta & me&lt;br/&gt;<script>Hi!</script>' != '<p>Hello World!</p><br/>beta & me<br/><script>Hi!</script>'\n----------------------------------------------------------------------\nRan 2 tests in 0.007s\n",
+  "patch": "diff --git a/django/template/defaultfilters.py b/django/template/defaultfilters.py\n--- a/django/template/defaultfilters.py\n+++ b/django/template/defaultfilters.py\n@@ -586,8 +586,9 @@ def join(value, arg, autoescape=True):\n     \"\"\"Join a list with a string, like Python's ``str.join(list)``.\"\"\"\n     try:\n         if autoescape:\n-            value = [conditional_escape(v) for v in value]\n-        data = conditional_escape(arg).join(value)\n+            data = conditional_escape(arg).join([conditional_escape(v) for v in value])\n+        else:\n+            data = arg.join(value)\n     except TypeError:  # Fail silently if arg isn't iterable.\n         return value\n     return mark_safe(data)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 16250,
+      "pr_title": "Fixed #33701 -- Added fine-grained error locations to the technical 500 debug page.",
+      "pr_body": "Solves Ticket [33701](https://code.djangoproject.com/ticket/33701)\r\n\r\nWith Python 3.11 the technical_500.html debug page now shows, where in the line the error occurred.\r\n\r\n![traceback](https://user-images.githubusercontent.com/39874595/199703281-3f755068-fd41-45bc-961c-957a78d51df5.PNG)\r\n",
+      "issue_id": 33701,
+      "issue_title": "Highlight error location in the technical 500 debug page on Python 3.11+.",
+      "issue_body": "",
+      "issue_closed_at": "2022-11-29T02:25:55",
+      "base_commit": "9d726c7902979d4ad53945ed8f1037266a88010d",
+      "changes": [
+        {
+          "file": "django/views/debug.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import functools\nimport re\nimport sys\nimport types"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "line",
+          "name": "line 15",
+          "code": "from django.utils.encoding import force_str\nfrom django.utils.module_loading import import_string\nfrom django.utils.regex_helper import _lazy_re_compile\nfrom django.utils.version import get_docs_version\n\n# Minimal Django templates engine to render the error templates\n# regardless of the project's TEMPLATES setting. Templates are"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_exception_traceback_frames",
+          "class_name": "ExceptionReporter",
+          "code": "def get_exception_traceback_frames(self, exc_value, tb):\n        exc_cause = self._get_explicit_or_implicit_cause(exc_value)\n        exc_cause_explicit = getattr(exc_value, \"__cause__\", True)\n        if tb is None:\n            yield {\n                \"exc_cause\": exc_cause,\n                \"exc_cause_explicit\": exc_cause_explicit,\n                \"tb\": None,\n                \"type\": \"user\",\n            }\n        while tb is not None:\n            # Support for __traceback_hide__ which is used by a few libraries\n            # to hide internal frames.\n            if tb.tb_frame.f_locals.get(\"__traceback_hide__\"):\n                tb = tb.tb_next\n                continue\n            filename = tb.tb_frame.f_code.co_filename\n            function = tb.tb_frame.f_code.co_name\n            lineno = tb.tb_lineno - 1\n            loader = tb.tb_frame.f_globals.get(\"__loader__\")\n            module_name = tb.tb_frame.f_globals.get(\"__name__\") or \"\"\n            (\n                pre_context_lineno,\n                pre_context,\n                context_line,\n                post_context,\n            ) = self._get_lines_from_file(\n                filename,\n                lineno,\n                7,\n                loader,\n                module_name,\n            )\n            if pre_context_lineno is None:\n                pre_context_lineno = lineno\n                pre_context = []\n                context_line = \"<source code not available>\"\n                post_context = []\n            yield {\n                \"exc_cause\": exc_cause,\n                \"exc_cause_explicit\": exc_cause_explicit,\n                \"tb\": tb,\n                \"type\": \"django\" if module_name.startswith(\"django.\") else \"user\",\n                \"filename\": filename,\n                \"function\": function,\n                \"lineno\": lineno + 1,\n                \"vars\": self.filter.get_traceback_frame_variables(\n                    self.request, tb.tb_frame\n                ),\n                \"id\": id(tb),\n                \"pre_context\": pre_context,\n                \"context_line\": context_line,\n                \"post_context\": post_context,\n                \"pre_context_lineno\": pre_context_lineno + 1,\n            }\n            tb = tb.tb_next"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_exception_traceback_frames",
+          "class_name": "ExceptionReporter",
+          "code": "def get_exception_traceback_frames(self, exc_value, tb):\n        exc_cause = self._get_explicit_or_implicit_cause(exc_value)\n        exc_cause_explicit = getattr(exc_value, \"__cause__\", True)\n        if tb is None:\n            yield {\n                \"exc_cause\": exc_cause,\n                \"exc_cause_explicit\": exc_cause_explicit,\n                \"tb\": None,\n                \"type\": \"user\",\n            }\n        while tb is not None:\n            # Support for __traceback_hide__ which is used by a few libraries\n            # to hide internal frames.\n            if tb.tb_frame.f_locals.get(\"__traceback_hide__\"):\n                tb = tb.tb_next\n                continue\n            filename = tb.tb_frame.f_code.co_filename\n            function = tb.tb_frame.f_code.co_name\n            lineno = tb.tb_lineno - 1\n            loader = tb.tb_frame.f_globals.get(\"__loader__\")\n            module_name = tb.tb_frame.f_globals.get(\"__name__\") or \"\"\n            (\n                pre_context_lineno,\n                pre_context,\n                context_line,\n                post_context,\n            ) = self._get_lines_from_file(\n                filename,\n                lineno,\n                7,\n                loader,\n                module_name,\n            )\n            if pre_context_lineno is None:\n                pre_context_lineno = lineno\n                pre_context = []\n                context_line = \"<source code not available>\"\n                post_context = []\n            yield {\n                \"exc_cause\": exc_cause,\n                \"exc_cause_explicit\": exc_cause_explicit,\n                \"tb\": tb,\n                \"type\": \"django\" if module_name.startswith(\"django.\") else \"user\",\n                \"filename\": filename,\n                \"function\": function,\n                \"lineno\": lineno + 1,\n                \"vars\": self.filter.get_traceback_frame_variables(\n                    self.request, tb.tb_frame\n                ),\n                \"id\": id(tb),\n                \"pre_context\": pre_context,\n                \"context_line\": context_line,\n                \"post_context\": post_context,\n                \"pre_context_lineno\": pre_context_lineno + 1,\n            }\n            tb = tb.tb_next"
+        }
+      ]
+    },
+    {
+      "pr_number": 17046,
+      "pr_title": "Fixed #34639 -- Made admin changelist use distinct() instead of Exists() to prevent duplicates.",
+      "pr_body": "As discussed [on Trac](https://code.djangoproject.com/ticket/34639#comment:11)",
+      "issue_id": 32682,
+      "issue_title": "Deleting objects after searching related many to many field crashes the admin page",
+      "issue_body": "",
+      "issue_closed_at": "2021-04-27T03:35:20",
+      "base_commit": "95cdf9dc6627135f3893095892816eb3f2785e2e",
+      "changes": [
+        {
+          "file": "django/contrib/admin/views/main.py",
+          "type": "line",
+          "name": "line 29",
+          "code": "    SuspiciousOperation,\n)\nfrom django.core.paginator import InvalidPage\nfrom django.db.models import Exists, F, Field, ManyToOneRel, OrderBy, OuterRef\nfrom django.db.models.expressions import Combinable\nfrom django.urls import reverse\nfrom django.utils.deprecation import RemovedInDjango60Warning"
+        },
+        {
+          "file": "django/contrib/admin/views/main.py",
+          "type": "function",
+          "name": "get_queryset",
+          "class_name": "ChangeList",
+          "code": "def get_queryset(self, request, exclude_parameters=None):\n        # First, we collect all the declared list filters.\n        (\n            self.filter_specs,\n            self.has_filters,\n            remaining_lookup_params,\n            filters_may_have_duplicates,\n            self.has_active_filters,\n        ) = self.get_filters(request)\n        # Then, we let every list filter modify the queryset to its liking.\n        qs = self.root_queryset\n        for filter_spec in self.filter_specs:\n            if (\n                exclude_parameters is None\n                or filter_spec.expected_parameters() != exclude_parameters\n            ):\n                new_qs = filter_spec.queryset(request, qs)\n                if new_qs is not None:\n                    qs = new_qs\n\n        try:\n            # Finally, we apply the remaining lookup parameters from the query\n            # string (i.e. those that haven't already been processed by the\n            # filters).\n            q_object = build_q_object_from_lookup_parameters(remaining_lookup_params)\n            qs = qs.filter(q_object)\n        except (SuspiciousOperation, ImproperlyConfigured):\n            # Allow certain types of errors to be re-raised as-is so that the\n            # caller can treat them in a special way.\n            raise\n        except Exception as e:\n            # Every other error is caught with a naked except, because we don't\n            # have any other way of validating lookup parameters. They might be\n            # invalid if the keyword arguments are incorrect, or if the values\n            # are not in the correct type, so we might get FieldError,\n            # ValueError, ValidationError, or ?.\n            raise IncorrectLookupParameters(e)\n\n        # Apply search results\n        qs, search_may_have_duplicates = self.model_admin.get_search_results(\n            request,\n            qs,\n            self.query,\n        )\n\n        # Set query string for clearing all filters.\n        self.clear_all_filters_qs = self.get_query_string(\n            new_params=remaining_lookup_params,\n            remove=self.get_filters_params(),\n        )\n        # Remove duplicates from results, if necessary\n        if filters_may_have_duplicates | search_may_have_duplicates:\n            qs = qs.filter(pk=OuterRef(\"pk\"))\n            qs = self.root_queryset.filter(Exists(qs))\n\n        # Set ordering.\n        ordering = self.get_ordering(request, qs)\n        qs = qs.order_by(*ordering)\n\n        if not qs.query.select_related:\n            qs = self.apply_select_related(qs)\n\n        return qs"
+        },
+        {
+          "file": "django/contrib/admin/views/main.py",
+          "type": "function",
+          "name": "get_queryset",
+          "class_name": "ChangeList",
+          "code": "def get_queryset(self, request, exclude_parameters=None):\n        # First, we collect all the declared list filters.\n        (\n            self.filter_specs,\n            self.has_filters,\n            remaining_lookup_params,\n            filters_may_have_duplicates,\n            self.has_active_filters,\n        ) = self.get_filters(request)\n        # Then, we let every list filter modify the queryset to its liking.\n        qs = self.root_queryset\n        for filter_spec in self.filter_specs:\n            if (\n                exclude_parameters is None\n                or filter_spec.expected_parameters() != exclude_parameters\n            ):\n                new_qs = filter_spec.queryset(request, qs)\n                if new_qs is not None:\n                    qs = new_qs\n\n        try:\n            # Finally, we apply the remaining lookup parameters from the query\n            # string (i.e. those that haven't already been processed by the\n            # filters).\n            q_object = build_q_object_from_lookup_parameters(remaining_lookup_params)\n            qs = qs.filter(q_object)\n        except (SuspiciousOperation, ImproperlyConfigured):\n            # Allow certain types of errors to be re-raised as-is so that the\n            # caller can treat them in a special way.\n            raise\n        except Exception as e:\n            # Every other error is caught with a naked except, because we don't\n            # have any other way of validating lookup parameters. They might be\n            # invalid if the keyword arguments are incorrect, or if the values\n            # are not in the correct type, so we might get FieldError,\n            # ValueError, ValidationError, or ?.\n            raise IncorrectLookupParameters(e)\n\n        # Apply search results\n        qs, search_may_have_duplicates = self.model_admin.get_search_results(\n            request,\n            qs,\n            self.query,\n        )\n\n        # Set query string for clearing all filters.\n        self.clear_all_filters_qs = self.get_query_string(\n            new_params=remaining_lookup_params,\n            remove=self.get_filters_params(),\n        )\n        # Remove duplicates from results, if necessary\n        if filters_may_have_duplicates | search_may_have_duplicates:\n            qs = qs.filter(pk=OuterRef(\"pk\"))\n            qs = self.root_queryset.filter(Exists(qs))\n\n        # Set ordering.\n        ordering = self.get_ordering(request, qs)\n        qs = qs.order_by(*ordering)\n\n        if not qs.query.select_related:\n            qs = self.apply_select_related(qs)\n\n        return qs"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "delete",
+          "class_name": "QuerySet",
+          "code": "def delete(self):\n        \"\"\"Delete the records in the current QuerySet.\"\"\"\n        self._not_support_combined_queries(\"delete\")\n        if self.query.is_sliced:\n            raise TypeError(\"Cannot use 'limit' or 'offset' with delete().\")\n        if self.query.distinct or self.query.distinct_fields:\n            raise TypeError(\"Cannot call delete() after .distinct().\")\n        if self._fields is not None:\n            raise TypeError(\"Cannot call delete() after .values() or .values_list()\")\n\n        del_query = self._chain()\n\n        # The delete is actually 2 queries - one to find related objects,\n        # and one to delete. Make sure that the discovery of related\n        # objects is performed on the same database as the deletion.\n        del_query._for_write = True\n\n        # Disable non-supported fields.\n        del_query.query.select_for_update = False\n        del_query.query.select_related = False\n        del_query.query.clear_ordering(force=True)\n\n        collector = Collector(using=del_query.db, origin=self)\n        collector.collect(del_query)\n        deleted, _rows_count = collector.delete()\n\n        # Clear the result cache, in case this QuerySet gets reused.\n        self._result_cache = None\n        return deleted, _rows_count"
+        }
+      ]
+    },
+    {
+      "pr_number": 11886,
+      "pr_title": "Fixed #30405 -- Fixed source code mismatch crash in ExceptionReporter. ",
+      "pr_body": "[ticket 30405](https://code.djangoproject.com/ticket/30405)",
+      "issue_id": 30405,
+      "issue_title": "IndexError in _get_lines_from_file when module does not match file contents (via loader)",
+      "issue_body": "",
+      "issue_closed_at": "2019-11-12T04:53:04",
+      "base_commit": "6e2f05b2e33a6c80c7a411ce76af7b5a08acb835",
+      "changes": [
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_traceback_text",
+          "class_name": "ExceptionReporter",
+          "code": "def get_traceback_text(self):\n        \"\"\"Return plain text version of debug 500 HTTP error page.\"\"\"\n        with Path(CURRENT_DIR, 'templates', 'technical_500.txt').open(encoding='utf-8') as fh:\n            t = DEBUG_ENGINE.from_string(fh.read())\n        c = Context(self.get_traceback_data(), autoescape=False, use_l10n=False)\n        return t.render(c)"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "_get_lines_from_file",
+          "class_name": "ExceptionReporter",
+          "code": "def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):\n        \"\"\"\n        Return context_lines before and after lineno from file.\n        Return (pre_context_lineno, pre_context, context_line, post_context).\n        \"\"\"\n        source = None\n        if hasattr(loader, 'get_source'):\n            try:\n                source = loader.get_source(module_name)\n            except ImportError:\n                pass\n            if source is not None:\n                source = source.splitlines()\n        if source is None:\n            try:\n                with open(filename, 'rb') as fp:\n                    source = fp.read().splitlines()\n            except OSError:\n                pass\n        if source is None:\n            return None, [], None, []\n\n        # If we just read the source from a file, or if the loader did not\n        # apply tokenize.detect_encoding to decode the source into a\n        # string, then we should do that ourselves.\n        if isinstance(source[0], bytes):\n            encoding = 'ascii'\n            for line in source[:2]:\n                # File coding may be specified. Match pattern from PEP-263\n                # (https://www.python.org/dev/peps/pep-0263/)\n                match = re.search(br'coding[:=]\\s*([-\\w.]+)', line)\n                if match:\n                    encoding = match.group(1).decode('ascii')\n                    break\n            source = [str(sline, encoding, 'replace') for sline in source]\n\n        lower_bound = max(0, lineno - context_lines)\n        upper_bound = lineno + context_lines\n\n        pre_context = source[lower_bound:lineno]\n        context_line = source[lineno]\n        post_context = source[lineno + 1:upper_bound]\n\n        return lower_bound, pre_context, context_line, post_context"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "_get_lines_from_file",
+          "class_name": "ExceptionReporter",
+          "code": "def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):\n        \"\"\"\n        Return context_lines before and after lineno from file.\n        Return (pre_context_lineno, pre_context, context_line, post_context).\n        \"\"\"\n        source = None\n        if hasattr(loader, 'get_source'):\n            try:\n                source = loader.get_source(module_name)\n            except ImportError:\n                pass\n            if source is not None:\n                source = source.splitlines()\n        if source is None:\n            try:\n                with open(filename, 'rb') as fp:\n                    source = fp.read().splitlines()\n            except OSError:\n                pass\n        if source is None:\n            return None, [], None, []\n\n        # If we just read the source from a file, or if the loader did not\n        # apply tokenize.detect_encoding to decode the source into a\n        # string, then we should do that ourselves.\n        if isinstance(source[0], bytes):\n            encoding = 'ascii'\n            for line in source[:2]:\n                # File coding may be specified. Match pattern from PEP-263\n                # (https://www.python.org/dev/peps/pep-0263/)\n                match = re.search(br'coding[:=]\\s*([-\\w.]+)', line)\n                if match:\n                    encoding = match.group(1).decode('ascii')\n                    break\n            source = [str(sline, encoding, 'replace') for sline in source]\n\n        lower_bound = max(0, lineno - context_lines)\n        upper_bound = lineno + context_lines\n\n        pre_context = source[lower_bound:lineno]\n        context_line = source[lineno]\n        post_context = source[lineno + 1:upper_bound]\n\n        return lower_bound, pre_context, context_line, post_context"
+        }
+      ]
+    },
+    {
+      "pr_number": 8754,
+      "pr_title": "Fixed #28391 -- Fixed Cast() with CharField and max_length on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/28391",
+      "issue_id": 28391,
+      "issue_title": "Cast doesn't take into account CharField's max_length on MySQL.",
+      "issue_body": "",
+      "issue_closed_at": "2017-07-17T14:12:39",
+      "base_commit": "feeafdad02e2874e2e2f879a825d3527f6b193ad",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite cannot handle us only partially reading from a cursor's result set\n    # and then writing the same rows to the database in another cursor. This\n    # setting ensures we always read result sets fully into memory all in one\n    # go.\n    can_use_chunked_reads = False\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    has_bulk_insert = True\n    supports_column_check_constraints = False\n    autocommits_when_autocommit_is_off = True\n    can_introspect_decimal_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n\n    @cached_property\n    def uses_savepoints(self):\n        return Database.sqlite_version_info >= (3, 6, 8)\n\n    @cached_property\n    def supports_index_column_ordering(self):\n        return Database.sqlite_version_info >= (3, 3, 0)\n\n    @cached_property\n    def can_release_savepoints(self):\n        return self.uses_savepoints\n\n    @cached_property\n    def can_share_in_memory_db(self):\n        return (\n            Database.__name__ == 'sqlite3.dbapi2' and\n            Database.sqlite_version_info >= (3, 7, 13)\n        )\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "clean",
+          "class_name": "Field",
+          "code": "def clean(self, value, model_instance):\n        \"\"\"\n        Convert the value's type and run validation. Validation errors\n        from to_python() and validate() are propagated. Return the correct\n        value if no error is raised.\n        \"\"\"\n        value = self.to_python(value)\n        self.validate(value, model_instance)\n        self.run_validators(value)\n        return value"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "db_type",
+          "class_name": "Field",
+          "code": "def db_type(self, connection):\n        \"\"\"\n        Return the database column data type for this field, for the provided\n        connection.\n        \"\"\"\n        # The default implementation of this method looks at the\n        # backend-specific data_types dictionary, looking up the field by its\n        # \"internal type\".\n        #\n        # A Field class can implement the get_internal_type() method to specify\n        # which *preexisting* Django Field class it's most similar to -- i.e.,\n        # a custom field might be represented by a TEXT column type, which is\n        # the same as the TextField Django field type, which means the custom\n        # field's get_internal_type() returns 'TextField'.\n        #\n        # But the limitation of the get_internal_type() / data_types approach\n        # is that it cannot handle database column types that aren't already\n        # mapped to one of the built-in Django field types. In this case, you\n        # can implement db_type() instead of get_internal_type() to specify\n        # exactly which wacky database column type you want to use.\n        data = DictWrapper(self.__dict__, connection.ops.quote_name, \"qn_\")\n        try:\n            return connection.data_types[self.get_internal_type()] % data\n        except KeyError:\n            return None"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "class",
+          "name": "Cast",
+          "code": "class Cast(Func):\n    \"\"\"Coerce an expression to a new field type.\"\"\"\n    function = 'CAST'\n    template = '%(function)s(%(expressions)s AS %(db_type)s)'\n\n    mysql_types = {\n        fields.CharField: 'char',\n        fields.IntegerField: 'signed integer',\n        fields.BigIntegerField: 'signed integer',\n        fields.SmallIntegerField: 'signed integer',\n        fields.FloatField: 'signed',\n        fields.PositiveIntegerField: 'unsigned integer',\n        fields.PositiveSmallIntegerField: 'unsigned integer',\n    }\n\n    def __init__(self, expression, output_field):\n        super().__init__(expression, output_field=output_field)\n\n    def as_sql(self, compiler, connection, **extra_context):\n        if 'db_type' not in extra_context:\n            extra_context['db_type'] = self.output_field.db_type(connection)\n        return super().as_sql(compiler, connection, **extra_context)\n\n    def as_mysql(self, compiler, connection):\n        extra_context = {}\n        output_field_class = type(self.output_field)\n        if output_field_class in self.mysql_types:\n            extra_context['db_type'] = self.mysql_types[output_field_class]\n        return self.as_sql(compiler, connection, **extra_context)\n\n    def as_postgresql(self, compiler, connection):\n        # CAST would be valid too, but the :: shortcut syntax is more readable.\n        return self.as_sql(compiler, connection, template='%(expressions)s::%(db_type)s')"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "function",
+          "name": "as_mysql",
+          "class_name": "Length",
+          "code": "def as_mysql(self, compiler, connection):\n        return super().as_sql(compiler, connection, function='CHAR_LENGTH')"
+        }
+      ]
+    },
+    {
+      "pr_number": 9383,
+      "pr_title": " Fixed #25817 -- Made RenameField repoint to_field/to_fields references. ",
+      "pr_body": "https://code.djangoproject.com/ticket/25817\r\n\r\nThis is still missing tests for `ForeignObject` multiple `to_fields` and still causes SQLite to crash (probably because of the table rebuild).",
+      "issue_id": 25817,
+      "issue_title": "Unable to rename a field reference in foreign key 'to_field'",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-30T14:17:55",
+      "base_commit": "2faeb21d2f618d5bfe9f8f6c574730d3f9407b2a",
+      "changes": [
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_altered_fields",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_altered_fields(self):\n        \"\"\"\n        Make AlterField operations, or possibly RemovedField/AddField if alter\n        isn's possible.\n        \"\"\"\n        for app_label, model_name, field_name in sorted(self.old_field_keys & self.new_field_keys):\n            # Did the field change?\n            old_model_name = self.renamed_models.get((app_label, model_name), model_name)\n            old_field_name = self.renamed_fields.get((app_label, model_name, field_name), field_name)\n            old_field = self.old_apps.get_model(app_label, old_model_name)._meta.get_field(old_field_name)\n            new_field = self.new_apps.get_model(app_label, model_name)._meta.get_field(field_name)\n            # Implement any model renames on relations; these are handled by RenameModel\n            # so we need to exclude them from the comparison\n            if hasattr(new_field, \"remote_field\") and getattr(new_field.remote_field, \"model\", None):\n                rename_key = (\n                    new_field.remote_field.model._meta.app_label,\n                    new_field.remote_field.model._meta.model_name,\n                )\n                if rename_key in self.renamed_models:\n                    new_field.remote_field.model = old_field.remote_field.model\n            if hasattr(new_field, \"remote_field\") and getattr(new_field.remote_field, \"through\", None):\n                rename_key = (\n                    new_field.remote_field.through._meta.app_label,\n                    new_field.remote_field.through._meta.model_name,\n                )\n                if rename_key in self.renamed_models:\n                    new_field.remote_field.through = old_field.remote_field.through\n            old_field_dec = self.deep_deconstruct(old_field)\n            new_field_dec = self.deep_deconstruct(new_field)\n            if old_field_dec != new_field_dec:\n                both_m2m = old_field.many_to_many and new_field.many_to_many\n                neither_m2m = not old_field.many_to_many and not new_field.many_to_many\n                if both_m2m or neither_m2m:\n                    # Either both fields are m2m or neither is\n                    preserve_default = True\n                    if (old_field.null and not new_field.null and not new_field.has_default() and\n                            not new_field.many_to_many):\n                        field = new_field.clone()\n                        new_default = self.questioner.ask_not_null_alteration(field_name, model_name)\n                        if new_default is not models.NOT_PROVIDED:\n                            field.default = new_default\n                            preserve_default = False\n                    else:\n                        field = new_field\n                    self.add_operation(\n                        app_label,\n                        operations.AlterField(\n                            model_name=model_name,\n                            name=field_name,\n                            field=field,\n                            preserve_default=preserve_default,\n                        )\n                    )\n                else:\n                    # We cannot alter between m2m and concrete fields\n                    self._generate_removed_field(app_label, model_name, field_name)\n                    self._generate_added_field(app_label, model_name, field_name)"
+        },
+        {
+          "file": "django/db/migrations/operations/fields.py",
+          "type": "function",
+          "name": "state_forwards",
+          "class_name": "RenameField",
+          "code": "def state_forwards(self, app_label, state):\n        model_state = state.models[app_label, self.model_name_lower]\n        # Rename the field\n        fields = model_state.fields\n        for index, (name, field) in enumerate(fields):\n            if name == self.old_name:\n                fields[index] = (self.new_name, field)\n                # Delay rendering of relationships if it's not a relational\n                # field and not referenced by a foreign key.\n                delay = (\n                    not field.is_relation and\n                    not is_referenced_by_foreign_key(state, self.model_name_lower, field, self.name)\n                )\n                break\n        else:\n            raise FieldDoesNotExist(\n                \"%s.%s has no field named '%s'\" % (app_label, self.model_name, self.old_name)\n            )\n        # Fix index/unique_together to refer to the new field\n        options = model_state.options\n        for option in ('index_together', 'unique_together'):\n            if option in options:\n                options[option] = [\n                    [self.new_name if n == self.old_name else n for n in together]\n                    for together in options[option]\n                ]\n        state.reload_model(app_label, self.model_name_lower, delay=delay)"
+        },
+        {
+          "file": "django/db/migrations/operations/fields.py",
+          "type": "function",
+          "name": "state_forwards",
+          "class_name": "RenameField",
+          "code": "def state_forwards(self, app_label, state):\n        model_state = state.models[app_label, self.model_name_lower]\n        # Rename the field\n        fields = model_state.fields\n        for index, (name, field) in enumerate(fields):\n            if name == self.old_name:\n                fields[index] = (self.new_name, field)\n                # Delay rendering of relationships if it's not a relational\n                # field and not referenced by a foreign key.\n                delay = (\n                    not field.is_relation and\n                    not is_referenced_by_foreign_key(state, self.model_name_lower, field, self.name)\n                )\n                break\n        else:\n            raise FieldDoesNotExist(\n                \"%s.%s has no field named '%s'\" % (app_label, self.model_name, self.old_name)\n            )\n        # Fix index/unique_together to refer to the new field\n        options = model_state.options\n        for option in ('index_together', 'unique_together'):\n            if option in options:\n                options[option] = [\n                    [self.new_name if n == self.old_name else n for n in together]\n                    for together in options[option]\n                ]\n        state.reload_model(app_label, self.model_name_lower, delay=delay)"
+        },
+        {
+          "file": "django/db/migrations/operations/fields.py",
+          "type": "function",
+          "name": "state_forwards",
+          "class_name": "RenameField",
+          "code": "def state_forwards(self, app_label, state):\n        model_state = state.models[app_label, self.model_name_lower]\n        # Rename the field\n        fields = model_state.fields\n        for index, (name, field) in enumerate(fields):\n            if name == self.old_name:\n                fields[index] = (self.new_name, field)\n                # Delay rendering of relationships if it's not a relational\n                # field and not referenced by a foreign key.\n                delay = (\n                    not field.is_relation and\n                    not is_referenced_by_foreign_key(state, self.model_name_lower, field, self.name)\n                )\n                break\n        else:\n            raise FieldDoesNotExist(\n                \"%s.%s has no field named '%s'\" % (app_label, self.model_name, self.old_name)\n            )\n        # Fix index/unique_together to refer to the new field\n        options = model_state.options\n        for option in ('index_together', 'unique_together'):\n            if option in options:\n                options[option] = [\n                    [self.new_name if n == self.old_name else n for n in together]\n                    for together in options[option]\n                ]\n        state.reload_model(app_label, self.model_name_lower, delay=delay)"
+        }
+      ]
+    }
+  ]
+}

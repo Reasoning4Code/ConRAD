@@ -1,0 +1,144 @@
+{
+  "instance_id": "django__django-15498",
+  "repo": "django/django",
+  "created_at": "2022-03-10T19:47:15Z",
+  "problem_statement": "Fix handling empty string for If-Modified-Since header\nDescription\n\t\nEmpty string used to be ignored for If-Modified-Since header, but now raises exception since d6aff369ad3.\nFix handling empty string for If-Modified-Since header\nDescription\n\t\nEmpty string used to be ignored for If-Modified-Since header, but now raises exception since d6aff369ad3.\n",
+  "patch": "diff --git a/django/views/static.py b/django/views/static.py\n--- a/django/views/static.py\n+++ b/django/views/static.py\n@@ -129,12 +129,14 @@ def was_modified_since(header=None, mtime=0, size=0):\n         if header is None:\n             raise ValueError\n         matches = re.match(r\"^([^;]+)(; length=([0-9]+))?$\", header, re.IGNORECASE)\n+        if matches is None:\n+            raise ValueError\n         header_mtime = parse_http_date(matches[1])\n         header_len = matches[3]\n         if header_len and int(header_len) != size:\n             raise ValueError\n         if int(mtime) > header_mtime:\n             raise ValueError\n-    except (AttributeError, ValueError, OverflowError):\n+    except (ValueError, OverflowError):\n         return True\n     return False\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 14717,
+      "pr_title": "Fixed #32966 -- Fixed TimeField.check() crash for timezone-aware times in default when USE_TZ = True.",
+      "pr_body": "https://code.djangoproject.com/ticket/32966",
+      "issue_id": 32966,
+      "issue_title": "Time-related _check_fix_default_value() methods can be optimized / simplified and have a bug",
+      "issue_body": "I noticed that three of the\n_check_fix_default_value()\nmethod definitions in\ndjango/db/models/fields/__init__.py\ncan be simplified. Here is one of them:\n​\nhttps://github.com/django/django/blob/fe074c96a343530beea50fbdd0803d3e7b739e8e/django/db/models/fields/__init__.py#L1156-L1167\nFor example, in each of them,\ntimezone.now()\nis called even when the return value isn't needed / won't be used.",
+      "issue_closed_at": "2021-07-30T03:52:24",
+      "base_commit": "40d3cec22dff8d242384fab02e446932c92ae220",
+      "changes": [
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "class",
+          "name": "CommaSeparatedIntegerField",
+          "code": "class CommaSeparatedIntegerField(CharField):\n    default_validators = [validators.validate_comma_separated_integer_list]\n    description = _(\"Comma-separated integers\")\n    system_check_removed_details = {\n        'msg': (\n            'CommaSeparatedIntegerField is removed except for support in '\n            'historical migrations.'\n        ),\n        'hint': (\n            'Use CharField(validators=[validate_comma_separated_integer_list]) '\n            'instead.'\n        ),\n        'id': 'fields.E901',\n    }"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_mutually_exclusive_options",
+          "class_name": "DateTimeCheckMixin",
+          "code": "def _check_mutually_exclusive_options(self):\n        # auto_now, auto_now_add, and default are mutually exclusive\n        # options. The use of more than one of these options together\n        # will trigger an Error\n        mutually_exclusive_options = [self.auto_now_add, self.auto_now, self.has_default()]\n        enabled_options = [option not in (None, False) for option in mutually_exclusive_options].count(True)\n        if enabled_options > 1:\n            return [\n                checks.Error(\n                    \"The options auto_now, auto_now_add, and default \"\n                    \"are mutually exclusive. Only one of these options \"\n                    \"may be present.\",\n                    obj=self,\n                    id='fields.E160',\n                )\n            ]\n        else:\n            return []"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_fix_default_value",
+          "class_name": "TimeField",
+          "code": "def _check_fix_default_value(self):\n        \"\"\"\n        Warn that using an actual date or datetime value is probably wrong;\n        it's only evaluated on server startup.\n        \"\"\"\n        if not self.has_default():\n            return []\n\n        now = timezone.now()\n        if not timezone.is_naive(now):\n            now = timezone.make_naive(now, timezone.utc)\n        value = self.default\n        if isinstance(value, datetime.datetime):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc)\n        elif isinstance(value, datetime.time):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            value = datetime.datetime.combine(now.date(), value)\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc).time()\n        else:\n            # No explicit time / datetime value -- no checks necessary\n            return []\n        if lower <= value <= upper:\n            return [\n                checks.Warning(\n                    'Fixed default value provided.',\n                    hint='It seems you set a fixed date / time / datetime '\n                         'value as default for this field. This may not be '\n                         'what you want. If you want to have the current date '\n                         'as default, use `django.utils.timezone.now`',\n                    obj=self,\n                    id='fields.W161',\n                )\n            ]\n\n        return []"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_fix_default_value",
+          "class_name": "TimeField",
+          "code": "def _check_fix_default_value(self):\n        \"\"\"\n        Warn that using an actual date or datetime value is probably wrong;\n        it's only evaluated on server startup.\n        \"\"\"\n        if not self.has_default():\n            return []\n\n        now = timezone.now()\n        if not timezone.is_naive(now):\n            now = timezone.make_naive(now, timezone.utc)\n        value = self.default\n        if isinstance(value, datetime.datetime):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc)\n        elif isinstance(value, datetime.time):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            value = datetime.datetime.combine(now.date(), value)\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc).time()\n        else:\n            # No explicit time / datetime value -- no checks necessary\n            return []\n        if lower <= value <= upper:\n            return [\n                checks.Warning(\n                    'Fixed default value provided.',\n                    hint='It seems you set a fixed date / time / datetime '\n                         'value as default for this field. This may not be '\n                         'what you want. If you want to have the current date '\n                         'as default, use `django.utils.timezone.now`',\n                    obj=self,\n                    id='fields.W161',\n                )\n            ]\n\n        return []"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_fix_default_value",
+          "class_name": "TimeField",
+          "code": "def _check_fix_default_value(self):\n        \"\"\"\n        Warn that using an actual date or datetime value is probably wrong;\n        it's only evaluated on server startup.\n        \"\"\"\n        if not self.has_default():\n            return []\n\n        now = timezone.now()\n        if not timezone.is_naive(now):\n            now = timezone.make_naive(now, timezone.utc)\n        value = self.default\n        if isinstance(value, datetime.datetime):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc)\n        elif isinstance(value, datetime.time):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            value = datetime.datetime.combine(now.date(), value)\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc).time()\n        else:\n            # No explicit time / datetime value -- no checks necessary\n            return []\n        if lower <= value <= upper:\n            return [\n                checks.Warning(\n                    'Fixed default value provided.',\n                    hint='It seems you set a fixed date / time / datetime '\n                         'value as default for this field. This may not be '\n                         'what you want. If you want to have the current date '\n                         'as default, use `django.utils.timezone.now`',\n                    obj=self,\n                    id='fields.W161',\n                )\n            ]\n\n        return []"
+        }
+      ]
+    },
+    {
+      "pr_number": 3075,
+      "pr_title": "Fixed #23298 -- Made makemessages actually ignore specified dirs on Wind...",
+      "pr_body": "...ows.\n\nThis was detected by two failures in the i18n.test_extraction of our\ntest suite.\n\nRefs #20422, refs #22336\n",
+      "issue_id": 23298,
+      "issue_title": "Makemessages --ignore option doesn't work for directories under Windows",
+      "issue_body": "When running the\ni18n.test_extraction\ntests under Windows, the following failures happen:\n======================================================================\nFAIL: test_ignore_subdirectory (i18n.test_extraction.IgnoredExtractorTests)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"D:\\ramiro\\django\\upstream\\tests\\i18n\\test_extraction.py\", line 387, in test_ignore_subdirectory\n    self.assertTrue(\"ignoring directory subdir\" in out)\nAssertionError: False is not true\n\n======================================================================\nFAIL: test_media_static_dirs_ignored (i18n.test_extraction.IgnoredExtractorTests)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"d:\\ramiro\\django\\upstream\\django\\test\\utils.py\", line 281, in inner\n    return test_func(*args, **kwargs)\n  File \"D:\\ramiro\\django\\upstream\\tests\\i18n\\test_extraction.py\", line 402, in test_media_static_dirs_ignored\n    self.assertIn(\"ignoring directory static_root\", out)\nAssertionError: u'ignoring directory static_root' not found in 'examining files with the extensions: .html and .txt\\nprocessing file __init__.py in .\\nprocessing file code.sample in .\\nprocessing file ignored.html in .\\\\ignore_dir\\nprocessing file ja\nvascript.js in .\\nprocessing file media_ignored.html in .\\\\media_root\\nprocessing file not_utf8.sample in .\\nprocessing file static_ignored.html in .\\\\static_root\\nprocessing file comments.thtml in .\\\\templates\\nprocessing file empty.html in .\\\\templ\nates\\nprocessing file plural.djtpl in .\\\\templates\\nprocessing file ignored.html in .\\\\templates\\\\subdir\\nprocessing file template_with_error.tpl in .\\\\templates\\nprocessing file test.html in .\\\\templates\\nprocessing file xxx_ignored.html in .\\\\templ\nates\\nprocessing locale de\\ncopying plural forms: \"Plural-Forms: nplurals=2; plural=(n != 1);\\\\n\"\\n'\n\n----------------------------------------------------------------------\nRan 34 tests in 5.670s\n\nFAILED (failures=2)\nThis is caused because code is trying to perform matching of dirs specs with a trailing\n'/*'\nbut the path representation it uses at that point is in native format (using\n'\\'\npath separators).\nRefs\n#20422\nRefs\n#22336",
+      "issue_closed_at": "2014-08-18T11:33:31",
+      "base_commit": "90b64db39c4fd1243182068c3a54c3e08cd0f4b9",
+      "changes": [
+        {
+          "file": "django/core/management/commands/makemessages.py",
+          "type": "function",
+          "name": "is_ignored",
+          "class_name": "Command",
+          "code": "def is_ignored(path, ignore_patterns):\n            \"\"\"\n            Check if the given path should be ignored or not.\n            \"\"\"\n            filename = os.path.basename(path)\n            ignore = lambda pattern: (fnmatch.fnmatchcase(filename, pattern) or\n                fnmatch.fnmatchcase(path, pattern))\n            return any(ignore(pattern) for pattern in ignore_patterns)"
+        }
+      ]
+    },
+    {
+      "pr_number": 11263,
+      "pr_title": "Fixed #30361 -- Increased the default timeout of watchman client to 5 seconds and made it customizable.",
+      "pr_body": "",
+      "issue_id": 30361,
+      "issue_title": "Watchman timing out when loading server",
+      "issue_body": "When starting the server on my project using\n./manage.py runserver\n, I get the error message:\nError connecting to Watchman: timed out waiting for response, while executing ('watch-project', 'my_app')\nI am using Watchman v4.9 on an Ubuntu 16.04 Docker image hosted on Mac OS X 10.14.4.\nMy research shows that there is a default 1 second timeout in\npywatchman\nthat Django is using. In my tests, for our particular project it takes between 1 and 2 seconds to start the initial root watchman query, and thus will always time out when started with Django.\nMy suggestion is that we increase the pywatchman client timeout higher than 1 second",
+      "issue_closed_at": "2019-04-26T06:35:55",
+      "base_commit": "efeceba589974b95b35b2e25df86498c96315518",
+      "changes": [
+        {
+          "file": "django/utils/autoreload.py",
+          "type": "class",
+          "name": "WatchmanReloader",
+          "code": "class WatchmanReloader(BaseReloader):\n    def __init__(self):\n        self.roots = defaultdict(set)\n        self.processed_request = threading.Event()\n        super().__init__()\n\n    @cached_property\n    def client(self):\n        return pywatchman.client()\n\n    def _watch_root(self, root):\n        # In practice this shouldn't occur, however, it's possible that a\n        # directory that doesn't exist yet is being watched. If it's outside of\n        # sys.path then this will end up a new root. How to handle this isn't\n        # clear: Not adding the root will likely break when subscribing to the\n        # changes, however, as this is currently an internal API,  no files\n        # will be being watched outside of sys.path. Fixing this by checking\n        # inside watch_glob() and watch_dir() is expensive, instead this could\n        # could fall back to the StatReloader if this case is detected? For\n        # now, watching its parent, if possible, is sufficient.\n        if not root.exists():\n            if not root.parent.exists():\n                logger.warning('Unable to watch root dir %s as neither it or its parent exist.', root)\n                return\n            root = root.parent\n        result = self.client.query('watch-project', str(root.absolute()))\n        if 'warning' in result:\n            logger.warning('Watchman warning: %s', result['warning'])\n        logger.debug('Watchman watch-project result: %s', result)\n        return result['watch'], result.get('relative_path')\n\n    @functools.lru_cache()\n    def _get_clock(self, root):\n        return self.client.query('clock', root)['clock']\n\n    def _subscribe(self, directory, name, expression):\n        root, rel_path = self._watch_root(directory)\n        query = {\n            'expression': expression,\n            'fields': ['name'],\n            'since': self._get_clock(root),\n            'dedup_results': True,\n        }\n        if rel_path:\n            query['relative_root'] = rel_path\n        logger.debug('Issuing watchman subscription %s, for root %s. Query: %s', name, root, query)\n        self.client.query('subscribe', root, name, query)\n\n    def _subscribe_dir(self, directory, filenames):\n        if not directory.exists():\n            if not directory.parent.exists():\n                logger.warning('Unable to watch directory %s as neither it or its parent exist.', directory)\n                return\n            prefix = 'files-parent-%s' % directory.name\n            filenames = ['%s/%s' % (directory.name, filename) for filename in filenames]\n            directory = directory.parent\n            expression = ['name', filenames, 'wholename']\n        else:\n            prefix = 'files'\n            expression = ['name', filenames]\n        self._subscribe(directory, '%s:%s' % (prefix, directory), expression)\n\n    def _watch_glob(self, directory, patterns):\n        \"\"\"\n        Watch a directory with a specific glob. If the directory doesn't yet\n        exist, attempt to watch the parent directory and amend the patterns to\n        include this. It's important this method isn't called more than one per\n        directory when updating all subscriptions. Subsequent calls will\n        overwrite the named subscription, so it must include all possible glob\n        expressions.\n        \"\"\"\n        prefix = 'glob'\n        if not directory.exists():\n            if not directory.parent.exists():\n                logger.warning('Unable to watch directory %s as neither it or its parent exist.', directory)\n                return\n            prefix = 'glob-parent-%s' % directory.name\n            patterns = ['%s/%s' % (directory.name, pattern) for pattern in patterns]\n            directory = directory.parent\n\n        expression = ['anyof']\n        for pattern in patterns:\n            expression.append(['match', pattern, 'wholename'])\n        self._subscribe(directory, '%s:%s' % (prefix, directory), expression)\n\n    def watched_roots(self, watched_files):\n        extra_directories = self.directory_globs.keys()\n        watched_file_dirs = [f.parent for f in watched_files]\n        sys_paths = list(sys_path_directories())\n        return frozenset((*extra_directories, *watched_file_dirs, *sys_paths))\n\n    def _update_watches(self):\n        watched_files = list(self.watched_files(include_globs=False))\n        found_roots = common_roots(self.watched_roots(watched_files))\n        logger.debug('Watching %s files', len(watched_files))\n        logger.debug('Found common roots: %s', found_roots)\n        # Setup initial roots for performance, shortest roots first.\n        for root in sorted(found_roots):\n            self._watch_root(root)\n        for directory, patterns in self.directory_globs.items():\n            self._watch_glob(directory, patterns)\n        # Group sorted watched_files by their parent directory.\n        sorted_files = sorted(watched_files, key=lambda p: p.parent)\n        for directory, group in itertools.groupby(sorted_files, key=lambda p: p.parent):\n            # These paths need to be relative to the parent directory.\n            self._subscribe_dir(directory, [str(p.relative_to(directory)) for p in group])\n\n    def update_watches(self):\n        try:\n            self._update_watches()\n        except Exception as ex:\n            # If the service is still available, raise the original exception.\n            if self.check_server_status(ex):\n                raise\n\n    def _check_subscription(self, sub):\n        subscription = self.client.getSubscription(sub)\n        if not subscription:\n            return\n        logger.debug('Watchman subscription %s has results.', sub)\n        for result in subscription:\n            # When using watch-project, it's not simple to get the relative\n            # directory without storing some specific state. Store the full\n            # path to the directory in the subscription name, prefixed by its\n            # type (glob, files).\n            root_directory = Path(result['subscription'].split(':', 1)[1])\n            logger.debug('Found root directory %s', root_directory)\n            for file in result.get('files', []):\n                self.notify_file_changed(root_directory / file)\n\n    def request_processed(self, **kwargs):\n        logger.debug('Request processed. Setting update_watches event.')\n        self.processed_request.set()\n\n    def tick(self):\n        request_finished.connect(self.request_processed)\n        self.update_watches()\n        while True:\n            if self.processed_request.is_set():\n                self.update_watches()\n                self.processed_request.clear()\n            try:\n                self.client.receive()\n            except pywatchman.WatchmanError as ex:\n                self.check_server_status(ex)\n            else:\n                for sub in list(self.client.subs.keys()):\n                    self._check_subscription(sub)\n            yield\n\n    def stop(self):\n        self.client.close()\n        super().stop()\n\n    def check_server_status(self, inner_ex=None):\n        \"\"\"Return True if the server is available.\"\"\"\n        try:\n            self.client.query('version')\n        except Exception:\n            raise WatchmanUnavailable(str(inner_ex)) from inner_ex\n        return True\n\n    @classmethod\n    def check_availability(cls):\n        if not pywatchman:\n            raise WatchmanUnavailable('pywatchman not installed.')\n        client = pywatchman.client(timeout=0.01)\n        try:\n            result = client.capabilityCheck()\n        except Exception:\n            # The service is down?\n            raise WatchmanUnavailable('Cannot connect to the watchman service.')\n        version = get_version_tuple(result['version'])\n        # Watchman 4.9 includes multiple improvements to watching project\n        # directories as well as case insensitive filesystems.\n        logger.debug('Watchman version %s', version)\n        if version < (4, 9):\n            raise WatchmanUnavailable('Watchman 4.9 or later is required.')"
+        },
+        {
+          "file": "django/utils/autoreload.py",
+          "type": "function",
+          "name": "check_server_status",
+          "class_name": "WatchmanReloader",
+          "code": "def check_server_status(self, inner_ex=None):\n        \"\"\"Return True if the server is available.\"\"\"\n        try:\n            self.client.query('version')\n        except Exception:\n            raise WatchmanUnavailable(str(inner_ex)) from inner_ex\n        return True"
+        }
+      ]
+    },
+    {
+      "pr_number": 14071,
+      "pr_title": "Fixed #32494 -- Adjusted system check for raw_id_fields to warn about Field.attname.",
+      "pr_body": "https://code.djangoproject.com/ticket/32494",
+      "issue_id": 32494,
+      "issue_title": "Admin's raw_id_field check admin.E002 doesn't catch .attname mis-references",
+      "issue_body": "Since\nadmin.E002\nrelies on\nmodels.Options.get_field\nwhich allows retrieval of fields by both\nname\nand\nattname\nreferring to fields by\nattname\nwhile only\nname\n​\nis taken into consideration\nallows the check to pass while\nraw_id_fields\nis not honoured.\ne.g.\nclass\nBookAdmin\n(\nModelAdmin\n):\nraw_id_fields\n=\n[\n'author_id'\n]\npasses\nadmin.E002\nbut the\nauthor\nfield won't use the\nraw_id\nfeature.\nThe\n_check_raw_id_fields_item\nmethod should also make sure to check\nfield.name == field_name\non field retrieval success and\nreturn refer_to_missing_field(field=field_name, option=label, obj=obj, id='admin.E002')\nwhen it's not the case.",
+      "issue_closed_at": "2021-03-04T02:21:27",
+      "base_commit": "a9cf954e6174450057ea1065aa2ccbbd12f59b65",
+      "changes": [
+        {
+          "file": "django/contrib/admin/checks.py",
+          "type": "function",
+          "name": "_check_raw_id_fields_item",
+          "class_name": "BaseModelAdminChecks",
+          "code": "def _check_raw_id_fields_item(self, obj, field_name, label):\n        \"\"\" Check an item of `raw_id_fields`, i.e. check that field named\n        `field_name` exists in model `model` and is a ForeignKey or a\n        ManyToManyField. \"\"\"\n\n        try:\n            field = obj.model._meta.get_field(field_name)\n        except FieldDoesNotExist:\n            return refer_to_missing_field(field=field_name, option=label, obj=obj, id='admin.E002')\n        else:\n            if not field.many_to_many and not isinstance(field, models.ForeignKey):\n                return must_be('a foreign key or a many-to-many field', option=label, obj=obj, id='admin.E003')\n            else:\n                return []"
+        },
+        {
+          "file": "django/contrib/admin/checks.py",
+          "type": "function",
+          "name": "must_inherit_from",
+          "class_name": null,
+          "code": "def must_inherit_from(parent, option, obj, id):\n    return [\n        checks.Error(\n            \"The value of '%s' must inherit from '%s'.\" % (option, parent),\n            obj=obj.__class__,\n            id=id,\n        ),\n    ]"
+        }
+      ]
+    },
+    {
+      "pr_number": 8439,
+      "pr_title": "Fixed #28105 -- Prevent illegal dict construction in BaseGeometryWidget.",
+      "pr_body": "",
+      "issue_id": 28105,
+      "issue_title": "BaseGeometryWidget.get_context() crashes if attrs contains the name of an existing key",
+      "issue_body": "In\ncontrib.gis.forms.widgets\nthere is this part (line 67 in current master):\ncontext = self.build_attrs(self.attrs, dict(\n    name=name,\n    module='geodjango_%s' % name.replace('-', '_'),  # JS-safe\n    serialized=self.serialize(value),\n    geom_type=gdal.OGRGeomType(self.attrs['geom_type']),\n    STATIC_URL=settings.STATIC_URL,\n    LANGUAGE_BIDI=translation.get_language_bidi(),\n    **attrs\n))\nIf\nattrs\nalso contains a key 'geom_type' this leads to an inevitable crash.\nThis should probaly be something like:\ncontext_kwargs = attrs.copy()\ncontext_kwargs.update(dict(\n    name=name,\n    module='geodjango_%s' % name.replace('-', '_'),  # JS-safe\n    serialized=self.serialize(value),\n    geom_type=gdal.OGRGeomType(self.attrs['geom_type']),\n    STATIC_URL=settings.STATIC_URL,\n    LANGUAGE_BIDI=translation.get_language_bidi(),\n))\nCurrently this causes django-bootstrap3 to fail for Django 1.11.",
+      "issue_closed_at": "2017-04-30T20:13:52",
+      "base_commit": "1ebd295082bb0e6b230cf3bc39fd04bee71c2bd7",
+      "changes": [
+        {
+          "file": "django/contrib/gis/forms/widgets.py",
+          "type": "function",
+          "name": "get_context",
+          "class_name": "BaseGeometryWidget",
+          "code": "def get_context(self, name, value, attrs):\n        context = super().get_context(name, value, attrs)\n        # If a string reaches here (via a validation error on another\n        # field) then just reconstruct the Geometry.\n        if value and isinstance(value, str):\n            value = self.deserialize(value)\n\n        if value:\n            # Check that srid of value and map match\n            if value.srid and value.srid != self.map_srid:\n                try:\n                    ogr = value.ogr\n                    ogr.transform(self.map_srid)\n                    value = ogr\n                except gdal.GDALException as err:\n                    logger.error(\n                        \"Error transforming geometry from srid '%s' to srid '%s' (%s)\",\n                        value.srid, self.map_srid, err\n                    )\n\n        if attrs is None:\n            attrs = {}\n\n        context.update(self.build_attrs(self.attrs, dict(\n            name=name,\n            module='geodjango_%s' % name.replace('-', '_'),  # JS-safe\n            serialized=self.serialize(value),\n            geom_type=gdal.OGRGeomType(self.attrs['geom_type']),\n            STATIC_URL=settings.STATIC_URL,\n            LANGUAGE_BIDI=translation.get_language_bidi(),\n            **attrs\n        )))\n        return context"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,125 @@
+{
+  "instance_id": "django__django-15061",
+  "repo": "django/django",
+  "created_at": "2021-11-04T17:15:53Z",
+  "problem_statement": "Remove \"for = ...\" from MultiWidget's <label>.\nDescription\n\t\nThe instance from Raw MultiWidget class generate id_for_label like f'{id_}0'\nIt has not sense.\nFor example ChoiceWidget has self.add_id_index and I can decide it myself, how I will see label_id - with or without index.\nI think, it is better to remove completely id_for_label method from MultiWidget Class.\n",
+  "patch": "diff --git a/django/forms/widgets.py b/django/forms/widgets.py\n--- a/django/forms/widgets.py\n+++ b/django/forms/widgets.py\n@@ -849,9 +849,7 @@ def get_context(self, name, value, attrs):\n         return context\n \n     def id_for_label(self, id_):\n-        if id_:\n-            id_ += '_0'\n-        return id_\n+        return ''\n \n     def value_from_datadict(self, data, files, name):\n         return [\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 9259,
+      "pr_title": "Fixed #28723 -- RelatedManager.get_prefetch_queryset returns \"wrong\" cache_name",
+      "pr_body": "https://code.djangoproject.com/ticket/28723",
+      "issue_id": 28723,
+      "issue_title": "RelatedManager.get_prefetch_queryset returns \"wrong\" cache_name",
+      "issue_body": "",
+      "issue_closed_at": "2018-02-07T14:29:42",
+      "base_commit": "ef718a72b3db81d35a6c1273b1565b48dd867e90",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related_descriptors.py",
+          "type": "function",
+          "name": "_remove_prefetched_objects",
+          "class_name": "ManyRelatedManager",
+          "code": "def _remove_prefetched_objects(self):\n            try:\n                self.instance._prefetched_objects_cache.pop(self.prefetch_cache_name)\n            except (AttributeError, KeyError):\n                pass"
+        },
+        {
+          "file": "django/db/models/fields/related_descriptors.py",
+          "type": "function",
+          "name": "get_prefetch_queryset",
+          "class_name": "ManyRelatedManager",
+          "code": "def get_prefetch_queryset(self, instances, queryset=None):\n            if queryset is None:\n                queryset = super().get_queryset()\n\n            queryset._add_hints(instance=instances[0])\n            queryset = queryset.using(queryset._db or self._db)\n\n            query = {'%s__in' % self.query_field_name: instances}\n            queryset = queryset._next_is_sticky().filter(**query)\n\n            # M2M: need to annotate the query in order to get the primary model\n            # that the secondary model was actually related to. We know that\n            # there will already be a join on the join table, so we can just add\n            # the select.\n\n            # For non-autocreated 'through' models, can't assume we are\n            # dealing with PK values.\n            fk = self.through._meta.get_field(self.source_field_name)\n            join_table = fk.model._meta.db_table\n            connection = connections[queryset.db]\n            qn = connection.ops.quote_name\n            queryset = queryset.extra(select={\n                '_prefetch_related_val_%s' % f.attname:\n                '%s.%s' % (qn(join_table), qn(f.column)) for f in fk.local_related_fields})\n            return (\n                queryset,\n                lambda result: tuple(\n                    getattr(result, '_prefetch_related_val_%s' % f.attname)\n                    for f in fk.local_related_fields\n                ),\n                lambda inst: tuple(\n                    f.get_db_prep_value(getattr(inst, f.attname), connection)\n                    for f in fk.foreign_related_fields\n                ),\n                False,\n                self.prefetch_cache_name,\n                False,\n            )"
+        }
+      ]
+    },
+    {
+      "pr_number": 11034,
+      "pr_title": "Fixed #30221 -- Made label suffix of admin's read-only fields translatable.",
+      "pr_body": "https://code.djangoproject.com/ticket/30221",
+      "issue_id": 30221,
+      "issue_title": "Disabled field in admin use hard coded label_suffix",
+      "issue_body": "",
+      "issue_closed_at": "2019-02-28T11:36:52",
+      "base_commit": "25e724a5d6e331d2d73050d6dcdf2e8593c3aebf",
+      "changes": [
+        {
+          "file": "django/contrib/admin/helpers.py",
+          "type": "function",
+          "name": "label_tag",
+          "class_name": "AdminReadonlyField",
+          "code": "def label_tag(self):\n        attrs = {}\n        if not self.is_first:\n            attrs[\"class\"] = \"inline\"\n        label = self.field['label']\n        return format_html('<label{}>{}:</label>', flatatt(attrs), capfirst(label))"
+        }
+      ]
+    },
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 9112,
+      "pr_title": "Fixed #27846 -- clear all cached reverse relationships on refresh_from_db()",
+      "pr_body": "https://code.djangoproject.com/ticket/27846",
+      "issue_id": 27846,
+      "issue_title": "refresh_from_db() doesn't clear reverse OneToOneFields",
+      "issue_body": "",
+      "issue_closed_at": "2017-10-12T16:25:22",
+      "base_commit": "df0aebc893973c78d7d2cda712ba4133dbe29b6e",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "refresh_from_db",
+          "class_name": "Model",
+          "code": "def refresh_from_db(self, using=None, fields=None):\n        \"\"\"\n        Reload field values from the database.\n\n        By default, the reloading happens from the database this instance was\n        loaded from, or by the read router if this instance wasn't loaded from\n        any database. The using parameter will override the default.\n\n        Fields can be used to specify which fields to reload. The fields\n        should be an iterable of field attnames. If fields is None, then\n        all non-deferred fields are reloaded.\n\n        When accessing deferred fields of an instance, the deferred loading\n        of the field will call this method.\n        \"\"\"\n        if fields is not None:\n            if len(fields) == 0:\n                return\n            if any(LOOKUP_SEP in f for f in fields):\n                raise ValueError(\n                    'Found \"%s\" in fields argument. Relations and transforms '\n                    'are not allowed in fields.' % LOOKUP_SEP)\n\n        db = using if using is not None else self._state.db\n        db_instance_qs = self.__class__._default_manager.using(db).filter(pk=self.pk)\n\n        # Use provided fields, if not set then reload all non-deferred fields.\n        deferred_fields = self.get_deferred_fields()\n        if fields is not None:\n            fields = list(fields)\n            db_instance_qs = db_instance_qs.only(*fields)\n        elif deferred_fields:\n            fields = [f.attname for f in self._meta.concrete_fields\n                      if f.attname not in deferred_fields]\n            db_instance_qs = db_instance_qs.only(*fields)\n\n        db_instance = db_instance_qs.get()\n        non_loaded_fields = db_instance.get_deferred_fields()\n        for field in self._meta.concrete_fields:\n            if field.attname in non_loaded_fields:\n                # This field wasn't refreshed - skip ahead.\n                continue\n            setattr(self, field.attname, getattr(db_instance, field.attname))\n            # Throw away stale foreign key references.\n            if field.is_relation and field.is_cached(self):\n                rel_instance = field.get_cached_value(self)\n                local_val = getattr(db_instance, field.attname)\n                related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)\n                if local_val != related_val or (local_val is None and related_val is None):\n                    field.delete_cached_value(self)\n        self._state.db = db_instance._state.db"
+        }
+      ]
+    },
+    {
+      "pr_number": 2315,
+      "pr_title": "Fixed #22073 - Ensure CreateTable operation handles backwards migration correctly when M2M fields are present",
+      "pr_body": "Ticket info: https://code.djangoproject.com/ticket/22073\n",
+      "issue_id": 22073,
+      "issue_title": "Backwards migration on ManyToMany field does not remove intermediary table",
+      "issue_body": "",
+      "issue_closed_at": "2014-03-08T17:44:58",
+      "base_commit": "faf6a911ad7357c8dd1defa3be0317a8418febf7",
+      "changes": [
+        {
+          "file": "django/db/backends/schema.py",
+          "type": "function",
+          "name": "delete_model",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def delete_model(self, model):\n        \"\"\"\n        Deletes a model from the database.\n        \"\"\"\n        # Delete the table\n        self.execute(self.sql_delete_table % {\n            \"table\": self.quote_name(model._meta.db_table),\n        })"
+        }
+      ]
+    }
+  ]
+}

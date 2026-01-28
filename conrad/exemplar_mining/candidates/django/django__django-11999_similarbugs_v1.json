@@ -1,0 +1,144 @@
+{
+  "instance_id": "django__django-11999",
+  "repo": "django/django",
+  "created_at": "2019-10-31T10:39:18Z",
+  "problem_statement": "Cannot override get_FOO_display() in Django 2.2+.\nDescription\n\t\nI cannot override the get_FIELD_display function on models since version 2.2. It works in version 2.1.\nExample:\nclass FooBar(models.Model):\n\tfoo_bar = models.CharField(_(\"foo\"), choices=[(1, 'foo'), (2, 'bar')])\n\tdef __str__(self):\n\t\treturn self.get_foo_bar_display() # This returns 'foo' or 'bar' in 2.2, but 'something' in 2.1\n\tdef get_foo_bar_display(self):\n\t\treturn \"something\"\nWhat I expect is that I should be able to override this function.\n",
+  "patch": "diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py\n--- a/django/db/models/fields/__init__.py\n+++ b/django/db/models/fields/__init__.py\n@@ -763,8 +763,12 @@ def contribute_to_class(self, cls, name, private_only=False):\n             if not getattr(cls, self.attname, None):\n                 setattr(cls, self.attname, self.descriptor_class(self))\n         if self.choices is not None:\n-            setattr(cls, 'get_%s_display' % self.name,\n-                    partialmethod(cls._get_FIELD_display, field=self))\n+            if not hasattr(cls, 'get_%s_display' % self.name):\n+                setattr(\n+                    cls,\n+                    'get_%s_display' % self.name,\n+                    partialmethod(cls._get_FIELD_display, field=self),\n+                )\n \n     def get_filter_kwargs_for_object(self, obj):\n         \"\"\"\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "I have a model that does not want to use a constraint on a foreign key, but still use a database index:\nclass Category(models.Model):\n    text = models.CharField(max_length=3)\n\nclass Message(models.Model):\n    cat = models.ForeignKey(Category, db_constraint=False)\n\nclass IndexMessage(models.Model):\n    cat = models.ForeignKey(Category, db_constraint=False, db_index=True)\n\nclass StrongMessage(models.Model):\n    cat = models.ForeignKey(Category)\nThe SQLite backend generates an index on the FK column for both models:\n$ python manage.py sqlmigrate boohoo 0001_initial\nBEGIN;\n--\n-- Create model Category\n--\nCREATE TABLE \"boohoo_category\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"text\" varchar(3) NOT NULL);\n--\n-- Create model IndexMessage\n--\nCREATE TABLE \"boohoo_indexmessage\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL);\n--\n-- Create model Message\n--\nCREATE TABLE \"boohoo_message\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL);\n--\n-- Create model StrongMessage\n--\nCREATE TABLE \"boohoo_strongmessage\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL REFERENCES \"boohoo_category\" (\"id\"));\nCREATE INDEX \"boohoo_indexmessage_05e7bb57\" ON \"boohoo_indexmessage\" (\"cat_id\");\nCREATE INDEX \"boohoo_message_05e7bb57\" ON \"boohoo_message\" (\"cat_id\");\nCREATE INDEX \"boohoo_strongmessage_05e7bb57\" ON \"boohoo_strongmessage\" (\"cat_id\");\n\nCOMMIT;\nWith the MySQL backend, this does not create an index on the FK:\n$ python manage.py sqlmigrate boohoo 0001_initial\nBEGIN;\n--\n-- Create model Category\n--\nCREATE TABLE `boohoo_category` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `text` varchar(3) NOT NULL);\n--\n-- Create model IndexMessage\n--\nCREATE TABLE `boohoo_indexmessage` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\n--\n-- Create model Message\n--\nCREATE TABLE `boohoo_message` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\n--\n-- Create model StrongMessage\n--\nCREATE TABLE `boohoo_strongmessage` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\nALTER TABLE `boohoo_strongmessage` ADD CONSTRAINT `boohoo_strongmessage_cat_id_c843b68a_fk_boohoo_category_id` FOREIGN KEY (`cat_id`) REFERENCES `boohoo_category` (`id`);\n\nCOMMIT;\nI would think that specifying db_constraint=false would only leave out the constraint, and not also the index; Especially with <field>.db_index still set to true. Adding db_index=True does not help, probably because that is the default setting on the FK field object.\nThis also applies to earlier django versions.\nA simple workaround is to use\nindex_together = (('cat', ), )\non the models.\nI'm inclined to blame this on django.db.backends.mysql.schema.DatabaseSchemaEditor#_model_indexes_sql,\nwhich may need an extra check for db_constraint being used. This fixes my problem (but changes current django behavior):\n--- django/db/backends/mysql/schema.py.orig     2016-02-03 12:01:10.000000000 +0100\n+++ django/db/backends/mysql/schema.py  2016-02-03 12:00:19.000000000 +0100\n@@ -64,7 +64,7 @@\n         )\n         if storage == \"InnoDB\":\n             for field in model._meta.local_fields:\n-                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\":\n+                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\" and field.db_constraint:\n                     # Temporary setting db_index to False (in memory) to disable\n                     # index creation for FKs (index automatically created by MySQL)\n                     field.db_index = False",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 3792,
+      "pr_title": "Fixed #24054 -- Enabled sqlsequencereset for apps with migrations.",
+      "pr_body": "https://code.djangoproject.com/ticket/24054\n",
+      "issue_id": 24054,
+      "issue_title": "Enable sqlsequencereset for apps with migrations",
+      "issue_body": "The command doesn't depend on the\nDatabaseCreation\nclass and it doesn't seem that the problem the command aims to solve is obsoleted by migrations.",
+      "issue_closed_at": "2014-12-26T14:56:14",
+      "base_commit": "1729a5250b052832540cd696df3ff0a0a77baddf",
+      "changes": [
+        {
+          "file": "django/core/management/commands/sqlsequencereset.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from __future__ import unicode_literals\n\nfrom django.core.management.base import AppCommand\nfrom django.core.management.sql import check_for_migrations\nfrom django.db import connections, DEFAULT_DB_ALIAS\n\n"
+        },
+        {
+          "file": "django/core/management/commands/sqlsequencereset.py",
+          "type": "function",
+          "name": "handle_app_config",
+          "class_name": "Command",
+          "code": "def handle_app_config(self, app_config, **options):\n        if app_config.models_module is None:\n            return\n        connection = connections[options.get('database')]\n        check_for_migrations(app_config, connection)\n        models = app_config.get_models(include_auto_created=True)\n        statements = connection.ops.sequence_reset_sql(self.style, models)\n        return '\\n'.join(statements)"
+        }
+      ]
+    },
+    {
+      "pr_number": 7036,
+      "pr_title": "Fixed #27024 -- Prevented logging error with empty string as geometry widget value",
+      "pr_body": "Thanks Gavin Wahl for the report.\n",
+      "issue_id": 27024,
+      "issue_title": "BaseGeometryWidget logs a false positive: Error creating geometry from value ''",
+      "issue_body": "When using a form with a PointField (or presumably anything using BaseGeometryWidget), if you\nDon't fill out the map field\nCause a ValidationError for another field\nSubmit the form\nThis error-level message will be logged:\nError creating geometry from value ''\nThere should not be any error logged because there is no error. Maybe\nBaseGeometryWidget.deserialize\nneeds to check for\nEMPTY_VALUES\n?",
+      "issue_closed_at": "2016-08-08T09:25:25",
+      "base_commit": "2a11d2d7a7d5c6609c85dbc631fad6b8a8645a64",
+      "changes": [
+        {
+          "file": "django/contrib/gis/admin/widgets.py",
+          "type": "function",
+          "name": "render",
+          "class_name": "OpenLayersWidget",
+          "code": "def render(self, name, value, attrs=None):\n        # Update the template parameters with any attributes passed in.\n        if attrs:\n            self.params.update(attrs)\n            self.params['editable'] = self.params['modifiable']\n        else:\n            self.params['editable'] = True\n\n        # Defaulting the WKT value to a blank string -- this\n        # will be tested in the JavaScript and the appropriate\n        # interface will be constructed.\n        self.params['wkt'] = ''\n\n        # If a string reaches here (via a validation error on another\n        # field) then just reconstruct the Geometry.\n        if isinstance(value, six.string_types):\n            try:\n                value = GEOSGeometry(value)\n            except (GEOSException, ValueError) as err:\n                logger.error(\"Error creating geometry from value '%s' (%s)\", value, err)\n                value = None\n\n        if (value and value.geom_type.upper() != self.geom_type and\n                self.geom_type != 'GEOMETRY'):\n            value = None\n\n        # Constructing the dictionary of the map options.\n        self.params['map_options'] = self.map_options()\n\n        # Constructing the JavaScript module name using the name of\n        # the GeometryField (passed in via the `attrs` keyword).\n        # Use the 'name' attr for the field name (rather than 'field')\n        self.params['name'] = name\n        # note: we must switch out dashes for underscores since js\n        # functions are created using the module variable\n        js_safe_name = self.params['name'].replace('-', '_')\n        self.params['module'] = 'geodjango_%s' % js_safe_name\n\n        if value:\n            # Transforming the geometry to the projection used on the\n            # OpenLayers map.\n            srid = self.params['srid']\n            if value.srid != srid:\n                try:\n                    ogr = value.ogr\n                    ogr.transform(srid)\n                    wkt = ogr.wkt\n                except GDALException as err:\n                    logger.error(\n                        \"Error transforming geometry from srid '%s' to srid '%s' (%s)\",\n                        value.srid, srid, err\n                    )\n                    wkt = ''\n            else:\n                wkt = value.wkt\n\n            # Setting the parameter WKT with that of the transformed\n            # geometry.\n            self.params['wkt'] = wkt\n\n        self.params.update(geo_context)\n        return loader.render_to_string(self.template, self.params)"
+        },
+        {
+          "file": "django/contrib/gis/forms/widgets.py",
+          "type": "function",
+          "name": "deserialize",
+          "class_name": "BaseGeometryWidget",
+          "code": "def deserialize(self, value):\n        try:\n            return GEOSGeometry(value, self.map_srid)\n        except (GEOSException, ValueError) as err:\n            logger.error(\"Error creating geometry from value '%s' (%s)\", value, err)\n        return None"
+        }
+      ]
+    },
+    {
+      "pr_number": 6177,
+      "pr_title": "Fixed #26253 -- Fixed crashing deprecation shims in SimpleTemplateResponse.",
+      "pr_body": "https://code.djangoproject.com/ticket/26253\n",
+      "issue_id": 26253,
+      "issue_title": "Deprecation for TemplateResponse and SimpleTemplateResponse accepting django.template.Template is broken",
+      "issue_body": "When\nTemplateResponse\nor\nSimpleTemplateResponse\nare called, a TypeError is thrown.\nThis is because their\n__init__() creates a\nBackendTemplate` giving only one argument to the constructor.\nThe resulting error is obviously confusing and obfuscates the warning.\nThe attached patch addresses the issue, although I am unsure whether one should assume, by default, that a DjangoTemplate was given.",
+      "issue_closed_at": "2016-02-22T16:07:54",
+      "base_commit": "174811c5538c8c0b8f66089b31686e80d2bc7d3b",
+      "changes": [
+        {
+          "file": "django/template/response.py",
+          "type": "line",
+          "name": "line 4",
+          "code": "from django.utils import six\nfrom django.utils.deprecation import RemovedInDjango110Warning\n\nfrom .backends.django import Template as BackendTemplate\nfrom .base import Template\nfrom .context import Context, RequestContext, _current_app_undefined\nfrom .loader import get_template, select_template"
+        },
+        {
+          "file": "django/template/response.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "TemplateResponse",
+          "code": "def __init__(self, request, template, context=None, content_type=None,\n            status=None, current_app=_current_app_undefined, charset=None,\n            using=None):\n        # As a convenience we'll allow callers to provide current_app without\n        # having to avoid needing to create the RequestContext directly\n        if current_app is not _current_app_undefined:\n            warnings.warn(\n                \"The current_app argument of TemplateResponse is deprecated. \"\n                \"Set the current_app attribute of its request instead.\",\n                RemovedInDjango110Warning, stacklevel=2)\n            request.current_app = current_app\n        super(TemplateResponse, self).__init__(\n            template, context, content_type, status, charset, using)\n        self._request = request"
+        },
+        {
+          "file": "django/template/response.py",
+          "type": "function",
+          "name": "_resolve_template",
+          "class_name": "SimpleTemplateResponse",
+          "code": "def _resolve_template(self, template):\n        # This wrapper deprecates returning a django.template.Template in\n        # subclasses that override resolve_template. It can be removed in\n        # Django 1.10.\n        new_template = self.resolve_template(template)\n        if isinstance(new_template, Template):\n            warnings.warn(\n                \"{}.resolve_template() must return a backend-specific \"\n                \"template like those created by get_template(), not a \"\n                \"{}.\".format(\n                    self.__class__.__name__, new_template.__class__.__name__),\n                RemovedInDjango110Warning, stacklevel=2)\n            new_template = BackendTemplate(new_template)\n        return new_template"
+        }
+      ]
+    },
+    {
+      "pr_number": 8228,
+      "pr_title": "Fixed #27966 -- Bumped required psycopg2 version to 2.5.4.",
+      "pr_body": "",
+      "issue_id": 27966,
+      "issue_title": "Bump required version of pyscopg2 to 2.5.4",
+      "issue_body": "​\nthis commit\nuses the cursor as context manager (line in question is marked), which were added in psycopg2 2.5 (\n​\nrelease notes\n) (see third item)\nbut\n​\nhere\ndjango checks only for 2.4.5.\n​\nthis commit here\nmade 2.4.5 a requirement and documented that in a few places.",
+      "issue_closed_at": "2017-03-21T11:23:31",
+      "base_commit": "7063a85579f40585f2601ba6e6887b0982e7ce43",
+      "changes": [
+        {
+          "file": "django/db/backends/postgresql/base.py",
+          "type": "function",
+          "name": "psycopg2_version",
+          "class_name": "DatabaseWrapper",
+          "code": "def psycopg2_version(self):\n        return PSYCOPG2_VERSION"
+        }
+      ]
+    }
+  ]
+}

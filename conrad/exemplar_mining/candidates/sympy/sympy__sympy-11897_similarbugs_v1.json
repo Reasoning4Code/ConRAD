@@ -1,0 +1,146 @@
+{
+  "instance_id": "sympy__sympy-11897",
+  "repo": "sympy/sympy",
+  "created_at": "2016-12-03T14:40:51Z",
+  "problem_statement": "LaTeX printer inconsistent with pretty printer\nThe LaTeX printer should always give the same output as the pretty printer, unless better output is possible from LaTeX. In some cases it is inconsistent. For instance:\n\n``` py\nIn [9]: var('x', positive=True)\nOut[9]: x\n\nIn [10]: latex(exp(-x)*log(x))\nOut[10]: '\\\\frac{1}{e^{x}} \\\\log{\\\\left (x \\\\right )}'\n\nIn [11]: pprint(exp(-x)*log(x))\n -x\n\u212f  \u22c5log(x)\n```\n\n(I also don't think the assumptions should affect printing). \n\n``` py\nIn [14]: var('x y')\nOut[14]: (x, y)\n\nIn [15]: latex(1/(x + y)/2)\nOut[15]: '\\\\frac{1}{2 x + 2 y}'\n\nIn [16]: pprint(1/(x + y)/2)\n    1\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n2\u22c5(x + y)\n```\n\n",
+  "patch": "diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py\n--- a/sympy/printing/latex.py\n+++ b/sympy/printing/latex.py\n@@ -235,10 +235,12 @@ def _needs_mul_brackets(self, expr, first=False, last=False):\n         elif expr.is_Mul:\n             if not first and _coeff_isneg(expr):\n                 return True\n+        if expr.is_Piecewise:\n+            return True\n         if any([expr.has(x) for x in (Mod,)]):\n             return True\n         if (not last and\n-            any([expr.has(x) for x in (Integral, Piecewise, Product, Sum)])):\n+            any([expr.has(x) for x in (Integral, Product, Sum)])):\n             return True\n \n         return False\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10889,
+      "pr_title": "Fixed bug in Latex printing",
+      "pr_body": "This should fix #10821; the Latex _print_Mul function was inserting a negative sign at the beginning of a negative expression without worrying about parenthesis.\n",
+      "issue_id": 10821,
+      "issue_title": "latex bug for commutator output",
+      "issue_body": "There is a latex bug in the output of the function sympy.physics.quantum.commutator.doit that gives incorrect result if there is overall negative sign involved. For example, the following code does not give the correct expression for the latex output.\n\n``` python\nfrom sympy.physics.quantum import Commutator, Operator\nimport sympy\nA = Operator('A')\nB = Operator('B')\ncomm = Commutator(B, A)\nprint comm.doit()\nsympy.latex(comm.doit())\n```\n",
+      "issue_closed_at": "2016-03-23T20:40:37Z",
+      "base_commit": "f7a8dbec25b04767a3a6996c11a03781184d45d7",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Float",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Float(self, expr):\n        # Based off of that in StrPrinter\n        dps = prec_to_dps(expr._prec)\n        str_real = mlib.to_str(expr._mpf_, dps, strip_zeros=True)\n\n        # Must always have a mul symbol (as 2.5 10^{20} just looks odd)\n        # thus we use the number separator\n        separator = self._settings['mul_symbol_latex_numbers']\n\n        if 'e' in str_real:\n            (mant, exp) = str_real.split('e')\n\n            if exp[0] == '+':\n                exp = exp[1:]\n\n            return r\"%s%s10^{%s}\" % (mant, separator, exp)\n        elif str_real == \"+inf\":\n            return r\"\\infty\"\n        elif str_real == \"-inf\":\n            return r\"- \\infty\"\n        else:\n            return str_real"
+        },
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "convert",
+          "class_name": "LatexPrinter",
+          "code": "def convert(expr):\n            if not expr.is_Mul:\n                return str(self._print(expr))\n            else:\n                _tex = last_term_tex = \"\"\n\n                if self.order not in ('old', 'none'):\n                    args = expr.as_ordered_factors()\n                else:\n                    args = expr.args\n\n                for i, term in enumerate(args):\n                    term_tex = self._print(term)\n\n                    if self._needs_mul_brackets(term, first=(i == 0),\n                                                last=(i == len(args) - 1)):\n                        term_tex = r\"\\left(%s\\right)\" % term_tex\n\n                    if re.search(\"[0-9][} ]*$\", last_term_tex) and \\\n                            re.match(\"[{ ]*[-+0-9]\", term_tex):\n                        # between two numbers\n                        _tex += numbersep\n                    elif _tex:\n                        _tex += separator\n\n                    _tex += term_tex\n                    last_term_tex = term_tex\n                return _tex"
+        }
+      ]
+    },
+    {
+      "pr_number": 7928,
+      "pr_title": "give MaxMinBase an evalf routine",
+      "pr_body": "Although Or, And, etc... will not have a number as an\nargument, Min and Max can. When the operations version\nof _eval_evalf is called a call to as_independent is\nmade. This creates an x (=1) that is assumed to be an\nargument of the object so Max(0,y).n() becomes Max(1, 0, y) -> Max(1, y).\nTo avoid this an evalf routine was added to handle MaxMinBase separately.\n\nfixes #7233\n",
+      "issue_id": 7233,
+      "issue_title": "N(Max(0.0, n + m)) returns Max(1.0, n + m)",
+      "issue_body": "```\nThe following code does not return what is expected,\n\nn = sympy.Symbol('n')\nm = sympy.Symbol('m')\na = sympy.Max(0.0, n + m)\nprint a\nprint sympy.N(a)\n\noutputs:\n>> Max(0.0, m + n)\n>> Max(1.0, m + n)\n```\n\nOriginal issue for #7233: http://code.google.com/p/sympy/issues/detail?id=4134\nOriginal author: https://code.google.com/u/100679098312105897492/\n",
+      "issue_closed_at": "2014-08-29T23:58:03Z",
+      "base_commit": "d365f932a26c28c4c57b2b9f6dddee2ca94a5c66",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/miscellaneous.py",
+          "type": "function",
+          "name": "_eval_derivative",
+          "class_name": "MinMaxBase",
+          "code": "def _eval_derivative(self, s):\n        # f(x).diff(s) -> x.diff(s) * f.fdiff(1)(s)\n        i = 0\n        l = []\n        for a in self.args:\n            i += 1\n            da = a.diff(s)\n            if da is S.Zero:\n                continue\n            try:\n                df = self.fdiff(i)\n            except ArgumentIndexError:\n                df = Function.fdiff(self, i)\n            l.append(df * da)\n        return Add(*l)"
+        }
+      ]
+    },
+    {
+      "pr_number": 11384,
+      "pr_title": "Update formal power series printing",
+      "pr_body": "fixes #11102 \nping @asmeurer \n",
+      "issue_id": 11102,
+      "issue_title": "fps should print as a formal power series",
+      "issue_body": "When I first used `fps`, I didn't realize it really was a formal power series as it claims to be, because it prints like a normal series (same as `series`)\n\n```\nIn [21]: fps(sin(x))\nOut[21]:\n     3     5\n    x     x     \u239b 6\u239e\nx - \u2500\u2500 + \u2500\u2500\u2500 + O\u239dx \u23a0\n    6    120\n```\n\nBut if you look at the string form, you see\n\n```\nIn [22]: print(fps(sin(x)))\nFormalPowerSeries(sin(x), x, 0, 1, (SeqFormula(Piecewise(((-1/4)**(_k/2 - 1/2)/(RisingFactorial(3/2, _k/2 - 1/2)*factorial(_k/2 - 1/2)), Eq(Mod(_k, 2), 1)), (0, True)), (_k, 2, oo)), SeqFormula(x**_k, (_k, 0, oo)), x))\n```\n\nThat is, it really does represent it as the formula `Sum((-1)**n/factorial(2*n + 1)*x**n, (n, 0, oo))` (albiet, not simplified). It out to print it like this, so you can see that that's what it's working with.\n\nSide question: if you enter something it can't compute, it just returns the function\n\n```\nIn [25]: fps(tan(x))\nOut[25]: tan(x)\n```\n\nIs that intentional? It seems like it ought to raise an exception in that case. \n\n@leosartaj \n",
+      "issue_closed_at": "2016-07-14T22:47:58Z",
+      "base_commit": "496e776108957d8c049cbef49522cef4c1955e2f",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_FourierSeries",
+          "class_name": "LatexPrinter",
+          "code": "def _print_FourierSeries(self, s):\n        return self._print_Add(s.truncate()) + self._print(' + \\ldots')"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_FourierSeries",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_FourierSeries(self, s):\n        if self._use_unicode:\n            dots = u(\"\\N{HORIZONTAL ELLIPSIS}\")\n        else:\n            dots = '...'\n        return self._print_Add(s.truncate()) + self._print(dots)"
+        }
+      ]
+    },
+    {
+      "pr_number": 10899,
+      "pr_title": "Rewrite im() in terms of re() and vice versa fixed #10897",
+      "pr_body": "Now the ouput is:\n\n```\nIn [11]: re(x).rewrite(im)\nOut[11]: x - I*im(x)\n\nIn [12]: im(x).rewrite(re)\nOut[12]: -I*(x - re(x))\n```\n\nAlso added test.\n",
+      "issue_id": 10897,
+      "issue_title": "rewrite im() in terms of re() and vice versa",
+      "issue_body": "There is a bug in the rewrite logic in `complexes.py` (see https://github.com/sympy/sympy/pull/8359#issuecomment-200560081 and https://github.com/sympy/sympy/pull/8359#issuecomment-200713532). \n\nThe expected output should be:\n\n``` py\nre(x).rewrite(im) == x - I*im(x)\nim(x).rewrite(re) == -I*(x - re(x))\n```\n",
+      "issue_closed_at": "2016-03-27T07:03:59Z",
+      "base_commit": "f32d8386dbab72c56575afa19f329912a7849c75",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/complexes.py",
+          "type": "function",
+          "name": "_eval_derivative",
+          "class_name": "conjugate",
+          "code": "def _eval_derivative(self, x):\n        if x.is_real:\n            return conjugate(Derivative(self.args[0], x, evaluate=True))\n        elif x.is_imaginary:\n            return -conjugate(Derivative(self.args[0], x, evaluate=True))"
+        },
+        {
+          "file": "sympy/functions/elementary/complexes.py",
+          "type": "function",
+          "name": "_sage_",
+          "class_name": "Abs",
+          "code": "def _sage_(self):\n        import sage.all as sage\n        return sage.abs_symbolic(self.args[0]._sage_())"
+        }
+      ]
+    },
+    {
+      "pr_number": 7541,
+      "pr_title": "Fixes printing for Not(Equivalent) and Not(Implies).",
+      "pr_body": "fixes #7179\nfixes https://github.com/sympy/sympy/issues/7180\n",
+      "issue_id": 7180,
+      "issue_title": "Equivalent doesn't sort args",
+      "issue_body": "```\nEquivalent(x, y) sometimes prints as Equivalent(x, y) and sometimes as Equivalent(y, x). I haven't checked if it's not sorting the .args or if the issue is just with the printer.\n```\n\nOriginal issue for #7180: http://code.google.com/p/sympy/issues/detail?id=4081\nOriginal author: https://code.google.com/u/asmeurer@gmail.com/\n",
+      "issue_closed_at": "2014-06-01T13:29:34Z",
+      "base_commit": "a5e04411c016def9b1ef15bb792705f4e144efc7",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_im",
+          "class_name": "LatexPrinter",
+          "code": "def _print_im(self, expr, exp=None):\n        if self._needs_brackets(expr.args[0]):\n            tex = r\"\\Im {\\left ( %s \\right )}\" % self._print(expr.args[0])\n        else:\n            tex = r\"\\Im{%s}\" % self._print(expr.args[0])\n\n        return self._do_exponent(tex, exp)"
+        },
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Or",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Or(self, e):\n        args = sorted(e.args, key=default_sort_key)\n        arg = args[0]\n        if arg.is_Boolean and not arg.is_Not:\n            tex = r\"\\left(%s\\right)\" % self._print(arg)\n        else:\n            tex = r\"%s\" % self._print(arg)\n\n        for arg in args[1:]:\n            if arg.is_Boolean and not arg.is_Not:\n                tex += r\" \\vee \\left(%s\\right)\" % (self._print(arg))\n            else:\n                tex += r\" \\vee %s\" % (self._print(arg))\n\n        return tex"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_Relational",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_Relational(self, e):\n        op = prettyForm(' ' + xsym(e.rel_op) + ' ')\n\n        l = self._print(e.lhs)\n        r = self._print(e.rhs)\n        pform = prettyForm(*stringPict.next(l, op, r))\n        return pform"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_Nor",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_Nor(self, e):\n        if self._use_unicode:\n            return self.__print_Boolean(e, u(\"\\u22bd\"))\n        else:\n            return self._print_Function(e, sort=True)"
+        }
+      ]
+    }
+  ]
+}

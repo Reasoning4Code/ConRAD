@@ -1,0 +1,185 @@
+{
+  "instance_id": "django__django-12708",
+  "repo": "django/django",
+  "created_at": "2020-04-12T22:20:59Z",
+  "problem_statement": "Migration crashes deleting an index_together if there is a unique_together on the same fields\nDescription\n\t\nHappens with Django 1.11.10\nSteps to reproduce:\n1) Create models with 2 fields, add 2 same fields to unique_together and to index_together\n2) Delete index_together -> Fail\nIt will fail at django/db/backends/base/schema.py, line 378, in _delete_composed_index(), ValueError: Found wrong number (2) of constraints for as this one will find two constraints, the _uniq and the _idx one. No way to get out of this...\nThe worst in my case is that happened as I wanted to refactor my code to use the \"new\" (Dj 1.11) Options.indexes feature. I am actually not deleting the index, just the way it is declared in my code.\nI think there are 2 different points here:\n1) The deletion of index_together should be possible alone or made coherent (migrations side?) with unique_together\n2) Moving the declaration of an index should not result in an index re-creation\n",
+  "patch": "diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py\n--- a/django/db/backends/base/schema.py\n+++ b/django/db/backends/base/schema.py\n@@ -393,7 +393,12 @@ def alter_index_together(self, model, old_index_together, new_index_together):\n         news = {tuple(fields) for fields in new_index_together}\n         # Deleted indexes\n         for fields in olds.difference(news):\n-            self._delete_composed_index(model, fields, {'index': True}, self.sql_delete_index)\n+            self._delete_composed_index(\n+                model,\n+                fields,\n+                {'index': True, 'unique': False},\n+                self.sql_delete_index,\n+            )\n         # Created indexes\n         for field_names in news.difference(olds):\n             fields = [model._meta.get_field(field) for field in field_names]\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 4655,
+      "pr_title": "Fixed #24757 -- Recreated MySQL index when needed during unique_together removal",
+      "pr_body": "",
+      "issue_id": 24757,
+      "issue_title": "Removing unique_together constraint make Django 1.8 migration fail with MySQL",
+      "issue_body": "Migrations containing\nmigrations.AlterUniqueTogether(name='xxx', unique_together=set([]),)\nmay fail on Django 1.8 but not on Django 1.7 if using the backend mysql.\nGiven the database engine is mysql and the following\nmodels.py\n:\nfrom django.db import models\n\n\nclass MyModelA(models.Model):\n    s = models.CharField(max_length=120)\n\n\nclass MyModelB(models.Model):\n    a = models.ForeignKey(MyModelA)\n    b = models.IntegerField()\nAnd the 2 following migrations:\n# -*- coding: utf-8 -*-\nfrom __future__ import unicode_literals\n\nfrom django.db import models, migrations\n\n\nclass Migration(migrations.Migration):\n\n    dependencies = [\n    ]\n\n    operations = [\n        migrations.CreateModel(\n            name='MyModelA',\n            fields=[\n                ('id', models.AutoField(serialize=False, auto_created=True, verbose_name='ID', primary_key=True)),\n                ('s', models.CharField(max_length=120)),\n            ],\n        ),\n        migrations.CreateModel(\n            name='MyModelB',\n            fields=[\n                ('id', models.AutoField(serialize=False, auto_created=True, verbose_name='ID', primary_key=True)),\n                ('b', models.IntegerField()),\n                ('a', models.ForeignKey(to='mysite.MyModelA')),\n            ],\n        ),\n        migrations.AlterUniqueTogether(\n            name='mymodelb',\n            unique_together=set([('a', 'b')]),\n        ),\n    ]\n# -*- coding: utf-8 -*-\nfrom __future__ import unicode_literals\n\nfrom django.db import models, migrations\n\n\nclass Migration(migrations.Migration):\n\n    dependencies = [\n        ('mysite', '0001_initial'),\n    ]\n\n    operations = [\n        migrations.AlterUniqueTogether(\n            name='mymodelb',\n            unique_together=set([]),\n        ),\n    ]\nRunning\n./manage.py migrate\nworks fine on Django 1.7, but on Django 1.8 I get the following error:\n$ ./manage.py migrate                \nOperations to perform:\n  Synchronize unmigrated apps: staticfiles, messages\n  Apply all migrations: contenttypes, auth, mysite, sessions, admin\nSynchronizing apps without migrations:\n  Creating tables...\n    Running deferred SQL...\n  Installing custom SQL...\nRunning migrations:\n  Rendering model states... DONE\n  [..]\n  Applying mysite.0001_initial... OK\n  Applying mysite.0002_auto...Traceback (most recent call last):\n  [..]\ndjango.db.utils.OperationalError: (1553, \"Cannot drop index 'mysite_mymodelb_a_id_b53c781c93aab9a_uniq': needed in a foreign key constraint\")\nThe same migrations work on psql, I did not have the chance to test it against sqlite.\nInspecting the generated sql I found Django 1.7 add an index in addition to the unique constraint and Django 1.8 does not.\nOn Django 1.7\nBEGIN;\nCREATE TABLE `mysite_mymodela` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `s` varchar(120) NOT NULL);\nCREATE TABLE `mysite_mymodelb` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `b` integer NOT NULL, `a_id` integer NOT NULL);\nALTER TABLE `mysite_mymodelb` ADD CONSTRAINT `mysite_mymodelb_a_id_48275010b87402ed_uniq` UNIQUE (`a_id`, `b`);\nALTER TABLE `mysite_mymodelb` ADD CONSTRAINT `mysite_mymodelb_a_id_4981d3920f0fef1e_fk_mysite_mymodela_id` FOREIGN KEY (`a_id`) REFERENCES `mysite_mymodela` (`id`);\nCREATE INDEX `mysite_mymodelb_e2b453f4` ON `mysite_mymodelb` (`a_id`);\n\nCOMMIT;\nNote the\nCREATE INDEX `mysite_mymodelb_e2b453f4` ON `mysite_mymodelb` (`a_id`);\n.\nAnd on Django 1.8\nBEGIN;\nCREATE TABLE `mysite_mymodela` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `s` varchar(120) NOT NULL);\nCREATE TABLE `mysite_mymodelb` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `b` integer NOT NULL, `a_id` integer NOT NULL);\nALTER TABLE `mysite_mymodelb` ADD CONSTRAINT `mysite_mymodelb_a_id_784bb266d0e363ab_uniq` UNIQUE (`a_id`, `b`);\nALTER TABLE `mysite_mymodelb` ADD CONSTRAINT `mysite_mymodelb_a_id_50892c78e36678b8_fk_mysite_mymodela_id` FOREIGN KEY (`a_id`) REFERENCES `mysite_mymodela` (`id`);\n\nCOMMIT;\nI joined the full traceback.",
+      "issue_closed_at": "2015-05-15T10:06:22",
+      "base_commit": "0eaef8e527af556c0c517a64035929404cf94a39",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "alter_unique_together",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def alter_unique_together(self, model, old_unique_together, new_unique_together):\n        \"\"\"\n        Deals with a model changing its unique_together.\n        Note: The input unique_togethers must be doubly-nested, not the single-\n        nested [\"foo\", \"bar\"] format.\n        \"\"\"\n        olds = set(tuple(fields) for fields in old_unique_together)\n        news = set(tuple(fields) for fields in new_unique_together)\n        # Deleted uniques\n        for fields in olds.difference(news):\n            columns = [model._meta.get_field(field).column for field in fields]\n            constraint_names = self._constraint_names(model, columns, unique=True)\n            if len(constraint_names) != 1:\n                raise ValueError(\"Found wrong number (%s) of constraints for %s(%s)\" % (\n                    len(constraint_names),\n                    model._meta.db_table,\n                    \", \".join(columns),\n                ))\n            self.execute(self._delete_constraint_sql(self.sql_delete_unique, model, constraint_names[0]))\n        # Created uniques\n        for fields in news.difference(olds):\n            columns = [model._meta.get_field(field).column for field in fields]\n            self.execute(self._create_unique_sql(model, columns))"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "alter_index_together",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def alter_index_together(self, model, old_index_together, new_index_together):\n        \"\"\"\n        Deals with a model changing its index_together.\n        Note: The input index_togethers must be doubly-nested, not the single-\n        nested [\"foo\", \"bar\"] format.\n        \"\"\"\n        olds = set(tuple(fields) for fields in old_index_together)\n        news = set(tuple(fields) for fields in new_index_together)\n        # Deleted indexes\n        for fields in olds.difference(news):\n            columns = [model._meta.get_field(field).column for field in fields]\n            constraint_names = self._constraint_names(model, list(columns), index=True)\n            if len(constraint_names) != 1:\n                raise ValueError(\"Found wrong number (%s) of constraints for %s(%s)\" % (\n                    len(constraint_names),\n                    model._meta.db_table,\n                    \", \".join(columns),\n                ))\n            self.execute(self._delete_constraint_sql(self.sql_delete_index, model, constraint_names[0]))\n        # Created indexes\n        for field_names in news.difference(olds):\n            fields = [model._meta.get_field(field) for field in field_names]\n            self.execute(self._create_index_sql(model, fields, suffix=\"_idx\"))"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        storage = self.connection.introspection.get_storage_engine(\n            self.connection.cursor(), model._meta.db_table\n        )\n        if storage == \"InnoDB\":\n            for field in model._meta.local_fields:\n                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\":\n                    # Temporary setting db_index to False (in memory) to disable\n                    # index creation for FKs (index automatically created by MySQL)\n                    field.db_index = False\n        return super(DatabaseSchemaEditor, self)._model_indexes_sql(model)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "I have a model that does not want to use a constraint on a foreign key, but still use a database index:\nclass Category(models.Model):\n    text = models.CharField(max_length=3)\n\nclass Message(models.Model):\n    cat = models.ForeignKey(Category, db_constraint=False)\n\nclass IndexMessage(models.Model):\n    cat = models.ForeignKey(Category, db_constraint=False, db_index=True)\n\nclass StrongMessage(models.Model):\n    cat = models.ForeignKey(Category)\nThe SQLite backend generates an index on the FK column for both models:\n$ python manage.py sqlmigrate boohoo 0001_initial\nBEGIN;\n--\n-- Create model Category\n--\nCREATE TABLE \"boohoo_category\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"text\" varchar(3) NOT NULL);\n--\n-- Create model IndexMessage\n--\nCREATE TABLE \"boohoo_indexmessage\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL);\n--\n-- Create model Message\n--\nCREATE TABLE \"boohoo_message\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL);\n--\n-- Create model StrongMessage\n--\nCREATE TABLE \"boohoo_strongmessage\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL REFERENCES \"boohoo_category\" (\"id\"));\nCREATE INDEX \"boohoo_indexmessage_05e7bb57\" ON \"boohoo_indexmessage\" (\"cat_id\");\nCREATE INDEX \"boohoo_message_05e7bb57\" ON \"boohoo_message\" (\"cat_id\");\nCREATE INDEX \"boohoo_strongmessage_05e7bb57\" ON \"boohoo_strongmessage\" (\"cat_id\");\n\nCOMMIT;\nWith the MySQL backend, this does not create an index on the FK:\n$ python manage.py sqlmigrate boohoo 0001_initial\nBEGIN;\n--\n-- Create model Category\n--\nCREATE TABLE `boohoo_category` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `text` varchar(3) NOT NULL);\n--\n-- Create model IndexMessage\n--\nCREATE TABLE `boohoo_indexmessage` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\n--\n-- Create model Message\n--\nCREATE TABLE `boohoo_message` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\n--\n-- Create model StrongMessage\n--\nCREATE TABLE `boohoo_strongmessage` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\nALTER TABLE `boohoo_strongmessage` ADD CONSTRAINT `boohoo_strongmessage_cat_id_c843b68a_fk_boohoo_category_id` FOREIGN KEY (`cat_id`) REFERENCES `boohoo_category` (`id`);\n\nCOMMIT;\nI would think that specifying db_constraint=false would only leave out the constraint, and not also the index; Especially with <field>.db_index still set to true. Adding db_index=True does not help, probably because that is the default setting on the FK field object.\nThis also applies to earlier django versions.\nA simple workaround is to use\nindex_together = (('cat', ), )\non the models.\nI'm inclined to blame this on django.db.backends.mysql.schema.DatabaseSchemaEditor#_model_indexes_sql,\nwhich may need an extra check for db_constraint being used. This fixes my problem (but changes current django behavior):\n--- django/db/backends/mysql/schema.py.orig     2016-02-03 12:01:10.000000000 +0100\n+++ django/db/backends/mysql/schema.py  2016-02-03 12:00:19.000000000 +0100\n@@ -64,7 +64,7 @@\n         )\n         if storage == \"InnoDB\":\n             for field in model._meta.local_fields:\n-                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\":\n+                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\" and field.db_constraint:\n                     # Temporary setting db_index to False (in memory) to disable\n                     # index creation for FKs (index automatically created by MySQL)\n                     field.db_index = False",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 9345,
+      "pr_title": "Fixed #28792 -- Fixed index name truncation of namespaced tables.",
+      "pr_body": "Refs #27458, #27843.",
+      "issue_id": 28792,
+      "issue_title": "Index names can be incorrectly truncated when using a namespaced table name",
+      "issue_body": "When using a namespaced\n_meta.db_table\n(e.g. Oracle's\n'schema\".\"table'\n) it's possible that\n_create_index_name\nreturns an index name truncating the namespace resulting in an invalid identifier or one that isn't namespaced anymore and thus created in the user's namespace.\nFor example, given the following model:\nclass\nFoo\n(\nmodels\n.\nModel\n):\nfield\n=\nmodels\n.\nIntegerField\n(\nindex\n=\nTrue\n)\nclass\nMeta\n:\ndb_table\n=\n'long_name\".\"table_name'\nThe resulting index name will be\n'long_name\"_field_d21c9e0a'\nwhich is invalid SQL even when quoted to\n'\"long_name\"_field_d21c9e0a\"'\n.\nMarking as a release blocker because this is a regression which I believe was introduced by\n#27458\nand wasn't addressed by\n#27843\n. I confirm that this uses to work on Django 1.10 but was broken on 1.11 as I stumbled upon the issue when upgrading a Django 1.8 LTS codebase to 1.11 LTS on the 1.10 -> 1.11 step.\nThe tests added by\n#27458\njust happened to work because the index name truncation cut the string the in a way that both double quotes are stripped. It should be possible to tweak the table names to trigger the errors but I felt like directly testing\n_create_index_name\nwas more appropriate.",
+      "issue_closed_at": "2017-11-14T20:53:46",
+      "base_commit": "532a4f22ad94db320cb0fd66f4c7ee57d17ac65a",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "line",
+          "name": "line 5",
+          "code": "from django.db.backends.ddl_references import (\n    Columns, ForeignKeyName, IndexName, Statement, Table,\n)\nfrom django.db.backends.utils import strip_quotes\nfrom django.db.models import Index\nfrom django.db.transaction import TransactionManagementError, atomic\nfrom django.utils import timezone"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_create_index_name",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _create_index_name(self, table_name, column_names, suffix=\"\"):\n        \"\"\"\n        Generate a unique name for an index/unique constraint.\n\n        The name is divided into 3 parts: the table name, the column names,\n        and a unique digest and suffix.\n        \"\"\"\n        table_name = strip_quotes(table_name)\n        hash_data = [table_name] + list(column_names)\n        hash_suffix_part = '%s%s' % (self._digest(*hash_data), suffix)\n        max_length = self.connection.ops.max_name_length() or 200\n        # If everything fits into max_length, use that name.\n        index_name = '%s_%s_%s' % (table_name, '_'.join(column_names), hash_suffix_part)\n        if len(index_name) <= max_length:\n            return index_name\n        # Shorten a long suffix.\n        if len(hash_suffix_part) > max_length / 3:\n            hash_suffix_part = hash_suffix_part[:max_length // 3]\n        other_length = (max_length - len(hash_suffix_part)) // 2 - 1\n        index_name = '%s_%s_%s' % (\n            table_name[:other_length],\n            '_'.join(column_names)[:other_length],\n            hash_suffix_part,\n        )\n        # Prepend D if needed to prevent the name from starting with an\n        # underscore or a number (not permitted on Oracle).\n        if index_name[0] == \"_\" or index_name[0].isdigit():\n            index_name = \"D%s\" % index_name[:-1]\n        return index_name"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "import functools\nimport hashlib\nimport logging\nimport re\nfrom time import time\n\nfrom django.conf import settings"
+        },
+        {
+          "file": "django/db/backends/utils.py",
+          "type": "function",
+          "name": "rev_typecast_decimal",
+          "class_name": null,
+          "code": "def rev_typecast_decimal(d):\n    if d is None:\n        return None\n    return str(d)"
+        }
+      ]
+    },
+    {
+      "pr_number": 3265,
+      "pr_title": "Fixed #23538 -- Added SchemaEditor for MySQL GIS.",
+      "pr_body": "",
+      "issue_id": 23538,
+      "issue_title": "MySQL GIS backend missing SchemaEditor",
+      "issue_body": "I think this results in a missing index for GIS fields on apps that have migrations.",
+      "issue_closed_at": "2014-09-25T12:53:52",
+      "base_commit": "215aa4f53b6bbd07d5c1eecfa94e7fcd00da813e",
+      "changes": [
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "line",
+          "name": "line 6",
+          "code": "from django.contrib.gis.db.backends.mysql.creation import MySQLCreation\nfrom django.contrib.gis.db.backends.mysql.introspection import MySQLIntrospection\nfrom django.contrib.gis.db.backends.mysql.operations import MySQLOperations\n\n\nclass DatabaseFeatures(BaseSpatialFeatures, MySQLDatabaseFeatures):"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "DatabaseWrapper",
+          "code": "def __init__(self, *args, **kwargs):\n        super(DatabaseWrapper, self).__init__(*args, **kwargs)\n        self.features = DatabaseFeatures(self)\n        self.creation = MySQLCreation(self)\n        self.ops = MySQLOperations(self)\n        self.introspection = MySQLIntrospection(self)"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "MySQLIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # In order to get the specific geometry type of the field,\n            # we introspect on the table definition using `DESCRIBE`.\n            cursor.execute('DESCRIBE %s' %\n                           self.connection.ops.quote_name(table_name))\n            # Increment over description info until we get to the geometry\n            # column.\n            for column, typ, null, key, default, extra in cursor.fetchall():\n                if column == geo_col:\n                    # Using OGRGeomType to convert from OGC name to Django field.\n                    # MySQL does not support 3D or SRIDs, so the field params\n                    # are empty.\n                    field_type = OGRGeomType(typ).django\n                    field_params = {}\n                    break\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/spatialite/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "SpatiaLiteIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # Querying the `geometry_columns` table to get additional metadata.\n            type_col = 'type' if self.connection.ops.spatial_version < (4, 0, 0) else 'geometry_type'\n            cursor.execute('SELECT coord_dimension, srid, %s '\n                           'FROM geometry_columns '\n                           'WHERE f_table_name=%%s AND f_geometry_column=%%s' % type_col,\n                           (table_name, geo_col))\n            row = cursor.fetchone()\n            if not row:\n                raise Exception('Could not find a geometry column for \"%s\".\"%s\"' %\n                                (table_name, geo_col))\n\n            # OGRGeomType does not require GDAL and makes it easy to convert\n            # from OGC geom type name to Django field.\n            field_type = OGRGeomType(row[2]).django\n\n            # Getting any GeometryField keyword arguments that are not the default.\n            dim = row[0]\n            srid = row[1]\n            field_params = {}\n            if srid != 4326:\n                field_params['srid'] = srid\n            if isinstance(dim, six.string_types) and 'Z' in dim:\n                field_params['dim'] = 3\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_indexes",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_indexes(self, cursor, table_name):\n        cursor.execute(\"SHOW INDEX FROM %s\" % self.connection.ops.quote_name(table_name))\n        # Do a two-pass search for indexes: on first pass check which indexes\n        # are multicolumn, on second pass check which single-column indexes\n        # are present.\n        rows = list(cursor.fetchall())\n        multicol_indexes = set()\n        for row in rows:\n            if row[3] > 1:\n                multicol_indexes.add(row[2])\n        indexes = {}\n        for row in rows:\n            if row[2] in multicol_indexes:\n                continue\n            if row[4] not in indexes:\n                indexes[row[4]] = {'primary_key': False, 'unique': False}\n            # It's possible to have the unique and PK constraints in separate indexes.\n            if row[2] == 'PRIMARY':\n                indexes[row[4]]['primary_key'] = True\n            if not row[1]:\n                indexes[row[4]]['unique'] = True\n        return indexes"
+        }
+      ]
+    },
+    {
+      "pr_number": 4352,
+      "pr_title": "Fixed #24508 -- Made annotations reflective",
+      "pr_body": "We should backport this to 1.8 to be consistent with `filter(a=2+F())`.\n",
+      "issue_id": 24508,
+      "issue_title": "F() object operations do not correcly reflect with annotate",
+      "issue_body": "Hello,\nThis ticket is related to the 1.8 new feature of using various F operations within an annotation.\nI have spotted 2 problems so far :\n1) F('field') * 2 apparently isn't the same as 2 * F('field')\nDescription of the problem :\nSomeModel.objects.all().annotate(computed = F('some_field') * 2)\nWorks as expected\n\nSomeModel.objects.all().annotate(computed = 2 * F('some_field'))\nE: django.core.exceptions.FieldError: Expression contains mixed types. You must set output_field\n\nSomeModel.objects.all().annotate(computed = Expression(2 * F('some_field'), output_field = FloatField()))\nE : TypeError: __init__() got multiple values for argument 'output_field'\nThe last exception, about init, is the most problematic as it doesn't state anything about where is the problem (no info in the traceback)\n2) When  a F object is added to None, it causes a conflict\nDescription of the problem :\nSomeModel.objects.all().annotate(computed = F('some_field') + None)\nWorks as expected\n\nSomeModel.objects.all().annotate(computed = None + F('some_field'))\nE: django.core.exceptions.FieldError: Expression contains mixed types. You must set output_field\n\nSomeModel.objects.all().annotate(computed = Expression(None + F('some_field'), output_field = FloatField()))\nE : TypeError: __init__() got multiple values for argument 'output_field'\nYou might wonder why there would be a None in the construction. For me it is because I am building the object in a for, so I have something like this :\nannotation = None\nfor field in fields_to_be_added:\n    annotation += F(field)\nSomeModel.objects.all().annotate(annotation)",
+      "issue_closed_at": "2015-03-22T01:34:12",
+      "base_commit": "a6bada1ee0c3756e4b8d6bd4b4346dd5235c78ce",
+      "changes": [
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempts to infer the output type of the expression. If the output\n        fields of all source fields match then we can simply infer the same\n        type here.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                self._output_field = sources[0]\n                for source in sources:\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempts to infer the output type of the expression. If the output\n        fields of all source fields match then we can simply infer the same\n        type here.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                self._output_field = sources[0]\n                for source in sources:\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        }
+      ]
+    }
+  ]
+}

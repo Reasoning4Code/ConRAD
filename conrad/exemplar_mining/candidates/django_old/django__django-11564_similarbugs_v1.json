@@ -1,0 +1,186 @@
+{
+  "instance_id": "django__django-11564",
+  "repo": "django/django",
+  "created_at": "2019-07-12T21:06:28Z",
+  "problem_statement": "Add support for SCRIPT_NAME in STATIC_URL and MEDIA_URL\nDescription\n\t \n\t\t(last modified by Rostyslav Bryzgunov)\n\t \nBy default, {% static '...' %} tag just appends STATIC_URL in the path. When running on sub-path, using SCRIPT_NAME WSGI param, it results in incorrect static URL - it doesn't prepend SCRIPT_NAME prefix.\nThis problem can be solved with prepending SCRIPT_NAME to STATIC_URL in settings.py but that doesn't work when SCRIPT_NAME is a dynamic value.\nThis can be easily added into default Django static tag and django.contrib.staticfiles tag as following:\ndef render(self, context):\n\turl = self.url(context)\n\t# Updating url here with request.META['SCRIPT_NAME'] \n\tif self.varname is None:\n\t\treturn url\n\tcontext[self.varname] = url\n\t\treturn ''\nOn more research I found that FileSystemStorage and StaticFilesStorage ignores SCRIPT_NAME as well. \nWe might have to do a lot of changes but I think it's worth the efforts.\n",
+  "patch": "diff --git a/django/conf/__init__.py b/django/conf/__init__.py\n--- a/django/conf/__init__.py\n+++ b/django/conf/__init__.py\n@@ -15,7 +15,8 @@\n \n import django\n from django.conf import global_settings\n-from django.core.exceptions import ImproperlyConfigured\n+from django.core.exceptions import ImproperlyConfigured, ValidationError\n+from django.core.validators import URLValidator\n from django.utils.deprecation import RemovedInDjango40Warning\n from django.utils.functional import LazyObject, empty\n \n@@ -109,6 +110,26 @@ def configure(self, default_settings=global_settings, **options):\n             setattr(holder, name, value)\n         self._wrapped = holder\n \n+    @staticmethod\n+    def _add_script_prefix(value):\n+        \"\"\"\n+        Add SCRIPT_NAME prefix to relative paths.\n+\n+        Useful when the app is being served at a subpath and manually prefixing\n+        subpath to STATIC_URL and MEDIA_URL in settings is inconvenient.\n+        \"\"\"\n+        # Don't apply prefix to valid URLs.\n+        try:\n+            URLValidator()(value)\n+            return value\n+        except (ValidationError, AttributeError):\n+            pass\n+        # Don't apply prefix to absolute paths.\n+        if value.startswith('/'):\n+            return value\n+        from django.urls import get_script_prefix\n+        return '%s%s' % (get_script_prefix(), value)\n+\n     @property\n     def configured(self):\n         \"\"\"Return True if the settings have already been configured.\"\"\"\n@@ -128,6 +149,14 @@ def PASSWORD_RESET_TIMEOUT_DAYS(self):\n             )\n         return self.__getattr__('PASSWORD_RESET_TIMEOUT_DAYS')\n \n+    @property\n+    def STATIC_URL(self):\n+        return self._add_script_prefix(self.__getattr__('STATIC_URL'))\n+\n+    @property\n+    def MEDIA_URL(self):\n+        return self._add_script_prefix(self.__getattr__('MEDIA_URL'))\n+\n \n class Settings:\n     def __init__(self, settings_module):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 6173,
+      "pr_title": "Fixed #26249 -- Fixed collectstatic crash for files in STATIC_ROOT referenced by absolute URL.",
+      "pr_body": "collectstatic crashed when:\n- a hashing static file storage backend was used\n- a static file referenced another static file located directly in\n  STATIC_ROOT (not a subdirectory) with an absolute URL (which must\n  start with STATIC_URL, which cannot be empty)\n\nIt seems to me that the current implementation reimplements relative\npath joining and doesn't handle edge cases correctly. I suspect it\nassumes that STATIC_URL is of the form r'/[^/]+/'.\n\nThrowing out the current code in favor of the posixpath module makes the\nlogic much easier to follow. Handling absolute paths correctly also\nbecomes easier.\n\nFinally I reworked comments to make the code hopefully easier to\nunderstand for future developers.\n",
+      "issue_id": 26249,
+      "issue_title": "ManifestStaticFilesStorage crashes on absolute URLs",
+      "issue_body": "",
+      "issue_closed_at": "2016-02-23T12:38:56",
+      "base_commit": "c62807968d7930bfd34afc2036c67921b943592f",
+      "changes": [
+        {
+          "file": "django/contrib/staticfiles/storage.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "CachedFilesMixin",
+          "code": "def __init__(self, *args, **kwargs):\n        super(CachedFilesMixin, self).__init__(*args, **kwargs)\n        try:\n            self.hashed_files = _MappingCache(caches['staticfiles'])\n        except InvalidCacheBackendError:\n            # Use the default backend\n            self.hashed_files = _MappingCache(default_cache)"
+        },
+        {
+          "file": "django/contrib/staticfiles/storage.py",
+          "type": "function",
+          "name": "hashed_name",
+          "class_name": "HashedFilesMixin",
+          "code": "def hashed_name(self, name, content=None):\n        parsed_name = urlsplit(unquote(name))\n        clean_name = parsed_name.path.strip()\n        opened = False\n        if content is None:\n            if not self.exists(clean_name):\n                raise ValueError(\"The file '%s' could not be found with %r.\" %\n                                 (clean_name, self))\n            try:\n                content = self.open(clean_name)\n            except IOError:\n                # Handle directory paths and fragments\n                return name\n            opened = True\n        try:\n            file_hash = self.file_hash(clean_name, content)\n        finally:\n            if opened:\n                content.close()\n        path, filename = os.path.split(clean_name)\n        root, ext = os.path.splitext(filename)\n        if file_hash is not None:\n            file_hash = \".%s\" % file_hash\n        hashed_name = os.path.join(path, \"%s%s%s\" %\n                                   (root, file_hash, ext))\n        unparsed_name = list(parsed_name)\n        unparsed_name[2] = hashed_name\n        # Special casing for a @font-face hack, like url(myfont.eot?#iefix\")\n        # http://www.fontspring.com/blog/the-new-bulletproof-font-face-syntax\n        if '?#' in name and not unparsed_name[3]:\n            unparsed_name[2] += '?'\n        return urlunsplit(unparsed_name)"
+        },
+        {
+          "file": "django/contrib/staticfiles/storage.py",
+          "type": "function",
+          "name": "url",
+          "class_name": "HashedFilesMixin",
+          "code": "def url(self, name, force=False):\n        \"\"\"\n        Returns the real URL in DEBUG mode.\n        \"\"\"\n        if settings.DEBUG and not force:\n            hashed_name, fragment = name, ''\n        else:\n            clean_name, fragment = urldefrag(name)\n            if urlsplit(clean_name).path.endswith('/'):  # don't hash paths\n                hashed_name = name\n            else:\n                hashed_name = self.stored_name(clean_name)\n\n        final_url = super(HashedFilesMixin, self).url(hashed_name)\n\n        # Special casing for a @font-face hack, like url(myfont.eot?#iefix\")\n        # http://www.fontspring.com/blog/the-new-bulletproof-font-face-syntax\n        query_fragment = '?#' in name  # [sic!]\n        if fragment or query_fragment:\n            urlparts = list(urlsplit(final_url))\n            if fragment and not urlparts[4]:\n                urlparts[4] = fragment\n            if query_fragment and not urlparts[3]:\n                urlparts[2] += '?'\n            final_url = urlunsplit(urlparts)\n\n        return unquote(final_url)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8754,
+      "pr_title": "Fixed #28391 -- Fixed Cast() with CharField and max_length on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/28391",
+      "issue_id": 28391,
+      "issue_title": "Cast doesn't take into account CharField's max_length on MySQL.",
+      "issue_body": "",
+      "issue_closed_at": "2017-07-17T14:12:39",
+      "base_commit": "feeafdad02e2874e2e2f879a825d3527f6b193ad",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite cannot handle us only partially reading from a cursor's result set\n    # and then writing the same rows to the database in another cursor. This\n    # setting ensures we always read result sets fully into memory all in one\n    # go.\n    can_use_chunked_reads = False\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    has_bulk_insert = True\n    supports_column_check_constraints = False\n    autocommits_when_autocommit_is_off = True\n    can_introspect_decimal_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n\n    @cached_property\n    def uses_savepoints(self):\n        return Database.sqlite_version_info >= (3, 6, 8)\n\n    @cached_property\n    def supports_index_column_ordering(self):\n        return Database.sqlite_version_info >= (3, 3, 0)\n\n    @cached_property\n    def can_release_savepoints(self):\n        return self.uses_savepoints\n\n    @cached_property\n    def can_share_in_memory_db(self):\n        return (\n            Database.__name__ == 'sqlite3.dbapi2' and\n            Database.sqlite_version_info >= (3, 7, 13)\n        )\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "clean",
+          "class_name": "Field",
+          "code": "def clean(self, value, model_instance):\n        \"\"\"\n        Convert the value's type and run validation. Validation errors\n        from to_python() and validate() are propagated. Return the correct\n        value if no error is raised.\n        \"\"\"\n        value = self.to_python(value)\n        self.validate(value, model_instance)\n        self.run_validators(value)\n        return value"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "db_type",
+          "class_name": "Field",
+          "code": "def db_type(self, connection):\n        \"\"\"\n        Return the database column data type for this field, for the provided\n        connection.\n        \"\"\"\n        # The default implementation of this method looks at the\n        # backend-specific data_types dictionary, looking up the field by its\n        # \"internal type\".\n        #\n        # A Field class can implement the get_internal_type() method to specify\n        # which *preexisting* Django Field class it's most similar to -- i.e.,\n        # a custom field might be represented by a TEXT column type, which is\n        # the same as the TextField Django field type, which means the custom\n        # field's get_internal_type() returns 'TextField'.\n        #\n        # But the limitation of the get_internal_type() / data_types approach\n        # is that it cannot handle database column types that aren't already\n        # mapped to one of the built-in Django field types. In this case, you\n        # can implement db_type() instead of get_internal_type() to specify\n        # exactly which wacky database column type you want to use.\n        data = DictWrapper(self.__dict__, connection.ops.quote_name, \"qn_\")\n        try:\n            return connection.data_types[self.get_internal_type()] % data\n        except KeyError:\n            return None"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "class",
+          "name": "Cast",
+          "code": "class Cast(Func):\n    \"\"\"Coerce an expression to a new field type.\"\"\"\n    function = 'CAST'\n    template = '%(function)s(%(expressions)s AS %(db_type)s)'\n\n    mysql_types = {\n        fields.CharField: 'char',\n        fields.IntegerField: 'signed integer',\n        fields.BigIntegerField: 'signed integer',\n        fields.SmallIntegerField: 'signed integer',\n        fields.FloatField: 'signed',\n        fields.PositiveIntegerField: 'unsigned integer',\n        fields.PositiveSmallIntegerField: 'unsigned integer',\n    }\n\n    def __init__(self, expression, output_field):\n        super().__init__(expression, output_field=output_field)\n\n    def as_sql(self, compiler, connection, **extra_context):\n        if 'db_type' not in extra_context:\n            extra_context['db_type'] = self.output_field.db_type(connection)\n        return super().as_sql(compiler, connection, **extra_context)\n\n    def as_mysql(self, compiler, connection):\n        extra_context = {}\n        output_field_class = type(self.output_field)\n        if output_field_class in self.mysql_types:\n            extra_context['db_type'] = self.mysql_types[output_field_class]\n        return self.as_sql(compiler, connection, **extra_context)\n\n    def as_postgresql(self, compiler, connection):\n        # CAST would be valid too, but the :: shortcut syntax is more readable.\n        return self.as_sql(compiler, connection, template='%(expressions)s::%(db_type)s')"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "function",
+          "name": "as_mysql",
+          "class_name": "Length",
+          "code": "def as_mysql(self, compiler, connection):\n        return super().as_sql(compiler, connection, function='CHAR_LENGTH')"
+        }
+      ]
+    },
+    {
+      "pr_number": 9964,
+      "pr_title": "Fixed #29413 -- Prevented evaluation of QuerySet.get_or_create()/update_or_create() defaults unless needed.",
+      "pr_body": "https://code.djangoproject.com/ticket/29413",
+      "issue_id": 29413,
+      "issue_title": "QuerySet.get_or_create()/update_or_create() shouldn't evaluate lazy defaults unless they are needed",
+      "issue_body": "",
+      "issue_closed_at": "2018-07-16T21:09:12",
+      "base_commit": "4d48ddd8f93800a80330ec1dee7b7d4afe6ea95a",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "get_or_create",
+          "class_name": "QuerySet",
+          "code": "def get_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, creating one if necessary.\n        Return a tuple of (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        # The get() needs to be targeted at the write database in order\n        # to avoid potential transaction consistency problems.\n        self._for_write = True\n        try:\n            return self.get(**lookup), False\n        except self.model.DoesNotExist:\n            return self._create_object_from_params(lookup, params)"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "update_or_create",
+          "class_name": "QuerySet",
+          "code": "def update_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, updating one with defaults\n        if it exists, otherwise create a new one.\n        Return a tuple (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        defaults = defaults or {}\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        self._for_write = True\n        with transaction.atomic(using=self.db):\n            try:\n                obj = self.select_for_update().get(**lookup)\n            except self.model.DoesNotExist:\n                obj, created = self._create_object_from_params(lookup, params)\n                if created:\n                    return obj, created\n            for k, v in defaults.items():\n                setattr(obj, k, v() if callable(v) else v)\n            obj.save(using=self.db)\n        return obj, False"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_create_object_from_params",
+          "class_name": "QuerySet",
+          "code": "def _create_object_from_params(self, lookup, params):\n        \"\"\"\n        Try to create an object using passed params. Used by get_or_create()\n        and update_or_create().\n        \"\"\"\n        try:\n            with transaction.atomic(using=self.db):\n                params = {k: v() if callable(v) else v for k, v in params.items()}\n                obj = self.create(**params)\n            return obj, True\n        except IntegrityError as e:\n            try:\n                return self.get(**lookup), False\n            except self.model.DoesNotExist:\n                pass\n            raise e"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_extract_model_params",
+          "class_name": "QuerySet",
+          "code": "def _extract_model_params(self, defaults, **kwargs):\n        \"\"\"\n        Prepare `lookup` (kwargs that are valid model attributes), `params`\n        (for creating a model instance) based on given kwargs; for use by\n        get_or_create() and update_or_create().\n        \"\"\"\n        defaults = defaults or {}\n        lookup = kwargs.copy()\n        for f in self.model._meta.fields:\n            if f.attname in lookup:\n                lookup[f.name] = lookup.pop(f.attname)\n        params = {k: v for k, v in kwargs.items() if LOOKUP_SEP not in k}\n        params.update(defaults)\n        property_names = self.model._meta._property_names\n        invalid_params = []\n        for param in params:\n            try:\n                self.model._meta.get_field(param)\n            except exceptions.FieldDoesNotExist:\n                # It's okay to use a model's property if it has a setter.\n                if not (param in property_names and getattr(self.model, param).fset):\n                    invalid_params.append(param)\n        if invalid_params:\n            raise exceptions.FieldError(\n                \"Invalid field name(s) for model %s: '%s'.\" % (\n                    self.model._meta.object_name,\n                    \"', '\".join(sorted(invalid_params)),\n                ))\n        return lookup, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 4356,
+      "pr_title": "Fixed #24515 -- Fixed DjangoTranslation plural handling",
+      "pr_body": "",
+      "issue_id": 24515,
+      "issue_title": "Plural handling broken",
+      "issue_body": "",
+      "issue_closed_at": "2015-03-21T04:28:18",
+      "base_commit": "aea02ddfb7c610db9a7cb291b113d6e561d8eba9",
+      "changes": [
+        {
+          "file": "django/utils/translation/trans_real.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "DjangoTranslation",
+          "code": "def __init__(self, language):\n        \"\"\"Create a GNUTranslations() using many locale directories\"\"\"\n        gettext_module.GNUTranslations.__init__(self)\n\n        self.__language = language\n        self.__to_language = to_language(language)\n        self.__locale = to_locale(language)\n        self.plural = lambda n: int(n != 1)\n\n        self._init_translation_catalog()\n        self._add_installed_apps_translations()\n        self._add_local_translations()\n        self._add_fallback()"
+        },
+        {
+          "file": "django/utils/translation/trans_real.py",
+          "type": "function",
+          "name": "_new_gnu_trans",
+          "class_name": "DjangoTranslation",
+          "code": "def _new_gnu_trans(self, localedir, use_null_fallback=True):\n        \"\"\"\n        Returns a mergeable gettext.GNUTranslations instance.\n\n        A convenience wrapper. By default gettext uses 'fallback=False'.\n        Using param `use_null_fallback` to avoid confusion with any other\n        references to 'fallback'.\n        \"\"\"\n        translation = gettext_module.translation(\n            domain='django',\n            localedir=localedir,\n            languages=[self.__locale],\n            codeset='utf-8',\n            fallback=use_null_fallback)\n        if not hasattr(translation, '_catalog'):\n            # provides merge support for NullTranslations()\n            translation._catalog = {}\n            translation._info = {}\n        return translation"
+        },
+        {
+          "file": "django/utils/translation/trans_real.py",
+          "type": "function",
+          "name": "_init_translation_catalog",
+          "class_name": "DjangoTranslation",
+          "code": "def _init_translation_catalog(self):\n        \"\"\"Creates a base catalog using global django translations.\"\"\"\n        settingsfile = upath(sys.modules[settings.__module__].__file__)\n        localedir = os.path.join(os.path.dirname(settingsfile), 'locale')\n        use_null_fallback = True\n        if self.__language == settings.LANGUAGE_CODE:\n            # default lang should be present and parseable, if not\n            # gettext will raise an IOError (refs #18192).\n            use_null_fallback = False\n        translation = self._new_gnu_trans(localedir, use_null_fallback)\n        self._info = translation._info.copy()\n        self._catalog = translation._catalog.copy()"
+        }
+      ]
+    },
+    {
+      "pr_number": 2938,
+      "pr_title": "Fixed #23071 -- Use last migration's name in dependency to other app",
+      "pr_body": "Changed the autodetector to lookup the name of the other app's last\nmigration in the graph and use that as dependency instead of using\n**latest**.\n",
+      "issue_id": 23071,
+      "issue_title": "Can't create migration for apps that have ForeignKeys to each other",
+      "issue_body": "",
+      "issue_closed_at": "2014-07-25T10:54:21",
+      "base_commit": "b4cf7e3d1de2d9700812872b04f6fe8eb88e8bff",
+      "changes": [
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "_detect_changes",
+          "class_name": "MigrationAutodetector",
+          "code": "def _detect_changes(self, convert_apps=None, graph=None):\n        \"\"\"\n        Returns a dict of migration plans which will achieve the\n        change from from_state to to_state. The dict has app labels\n        as keys and a list of migrations as values.\n\n        The resulting migrations aren't specially named, but the names\n        do matter for dependencies inside the set.\n\n        convert_apps is the list of apps to convert to use migrations\n        (i.e. to make initial migrations for, in the usual case)\n\n        graph is an optional argument that, if provided, can help improve\n        dependency generation and avoid potential circular dependencies.\n        \"\"\"\n\n        # The first phase is generating all the operations for each app\n        # and gathering them into a big per-app list.\n        # We'll then go through that list later and order it and split\n        # into migrations to resolve dependencies caused by M2Ms and FKs.\n        self.generated_operations = {}\n\n        # Prepare some old/new state and model lists, separating\n        # proxy models and ignoring unmigrated apps.\n        self.old_apps = self.from_state.render(ignore_swappable=True)\n        self.new_apps = self.to_state.render()\n        self.old_model_keys = []\n        self.old_proxy_keys = []\n        self.new_model_keys = []\n        self.new_proxy_keys = []\n        for al, mn in sorted(self.from_state.models.keys()):\n            model = self.old_apps.get_model(al, mn)\n            if model._meta.managed and al not in self.from_state.real_apps:\n                if model._meta.proxy:\n                    self.old_proxy_keys.append((al, mn))\n                else:\n                    self.old_model_keys.append((al, mn))\n\n        for al, mn in sorted(self.to_state.models.keys()):\n            model = self.new_apps.get_model(al, mn)\n            if model._meta.managed and (\n                al not in self.from_state.real_apps or\n                (convert_apps and al in convert_apps)\n            ):\n                if model._meta.proxy:\n                    self.new_proxy_keys.append((al, mn))\n                else:\n                    self.new_model_keys.append((al, mn))\n\n        # Renames have to come first\n        self.generate_renamed_models()\n\n        # Prepare field lists, and prepare a list of the fields that used\n        # through models in the old state so we can make dependencies\n        # from the through model deletion to the field that uses it.\n        self.kept_model_keys = set(self.old_model_keys).intersection(self.new_model_keys)\n        self.through_users = {}\n        self.old_field_keys = set()\n        self.new_field_keys = set()\n        for app_label, model_name in sorted(self.kept_model_keys):\n            old_model_name = self.renamed_models.get((app_label, model_name), model_name)\n            old_model_state = self.from_state.models[app_label, old_model_name]\n            new_model_state = self.to_state.models[app_label, model_name]\n            self.old_field_keys.update((app_label, model_name, x) for x, y in old_model_state.fields)\n            self.new_field_keys.update((app_label, model_name, x) for x, y in new_model_state.fields)\n\n        # Through model map generation\n        for app_label, model_name in sorted(self.old_model_keys):\n            old_model_name = self.renamed_models.get((app_label, model_name), model_name)\n            old_model_state = self.from_state.models[app_label, old_model_name]\n            for field_name, field in old_model_state.fields:\n                old_field = self.old_apps.get_model(app_label, old_model_name)._meta.get_field_by_name(field_name)[0]\n                if hasattr(old_field, \"rel\") and getattr(old_field.rel, \"through\", None) and not old_field.rel.through._meta.auto_created:\n                    through_key = (\n                        old_field.rel.through._meta.app_label,\n                        old_field.rel.through._meta.object_name.lower(),\n                    )\n                    self.through_users[through_key] = (app_label, old_model_name, field_name)\n\n        # Generate non-rename model operations\n        self.generate_created_models()\n        self.generate_deleted_models()\n        self.generate_created_proxies()\n        self.generate_deleted_proxies()\n        self.generate_altered_options()\n\n        # Generate field operations\n        self.generate_added_fields()\n        self.generate_removed_fields()\n        self.generate_altered_fields()\n        self.generate_altered_unique_together()\n        self.generate_altered_index_together()\n        self.generate_altered_order_with_respect_to()\n\n        # Now, reordering to make things possible. The order we have already\n        # isn't bad, but we need to pull a few things around so FKs work nicely\n        # inside the same app\n        for app_label, ops in sorted(self.generated_operations.items()):\n            for i in range(10000):\n                found = False\n                for i, op in enumerate(ops):\n                    for dep in op._auto_deps:\n                        if dep[0] == app_label:\n                            # Alright, there's a dependency on the same app.\n                            for j, op2 in enumerate(ops):\n                                if self.check_dependency(op2, dep) and j > i:\n                                    ops = ops[:i] + ops[i + 1:j + 1] + [op] + ops[j + 1:]\n                                    found = True\n                                    break\n                        if found:\n                            break\n                    if found:\n                        break\n                if not found:\n                    break\n            else:\n                raise ValueError(\"Infinite loop caught in operation dependency resolution\")\n            self.generated_operations[app_label] = ops\n\n        # Now, we need to chop the lists of operations up into migrations with\n        # dependencies on each other.\n        # We do this by stepping up an app's list of operations until we\n        # find one that has an outgoing dependency that isn't in another app's\n        # migration yet (hasn't been chopped off its list). We then chop off the\n        # operations before it into a migration and move onto the next app.\n        # If we loop back around without doing anything, there's a circular\n        # dependency (which _should_ be impossible as the operations are all\n        # split at this point so they can't depend and be depended on)\n\n        self.migrations = {}\n        num_ops = sum(len(x) for x in self.generated_operations.values())\n        chop_mode = False\n        while num_ops:\n            # On every iteration, we step through all the apps and see if there\n            # is a completed set of operations.\n            # If we find that a subset of the operations are complete we can\n            # try to chop it off from the rest and continue, but we only\n            # do this if we've already been through the list once before\n            # without any chopping and nothing has changed.\n            for app_label in sorted(self.generated_operations.keys()):\n                chopped = []\n                dependencies = set()\n                for operation in list(self.generated_operations[app_label]):\n                    deps_satisfied = True\n                    operation_dependencies = set()\n                    for dep in operation._auto_deps:\n                        if dep[0] == \"__setting__\":\n                            operation_dependencies.add((dep[0], dep[1]))\n                        elif dep[0] != app_label:\n                            # External app dependency. See if it's not yet\n                            # satisfied.\n                            for other_operation in self.generated_operations.get(dep[0], []):\n                                if self.check_dependency(other_operation, dep):\n                                    deps_satisfied = False\n                                    break\n                            if not deps_satisfied:\n                                break\n                            else:\n                                if self.migrations.get(dep[0], None):\n                                    operation_dependencies.add((dep[0], self.migrations[dep[0]][-1].name))\n                                else:\n                                    # If we can't find the other app, we add a first/last dependency,\n                                    # but only if we've already been through once and checked everything\n                                    if chop_mode:\n                                        # If the app already exists, we add __latest__, as we don't know which\n                                        # migration contains the target field.\n                                        # If it's not yet migrated or has no migrations, we use __first__\n                                        if graph and not graph.root_nodes(dep[0]):\n                                            operation_dependencies.add((dep[0], \"__first__\"))\n                                        else:\n                                            operation_dependencies.add((dep[0], \"__latest__\"))\n                                    else:\n                                        deps_satisfied = False\n                    if deps_satisfied:\n                        chopped.append(operation)\n                        dependencies.update(operation_dependencies)\n                        self.generated_operations[app_label] = self.generated_operations[app_label][1:]\n                    else:\n                        break\n                # Make a migration! Well, only if there's stuff to put in it\n                if dependencies or chopped:\n                    if not self.generated_operations[app_label] or chop_mode:\n                        subclass = type(str(\"Migration\"), (Migration,), {\"operations\": [], \"dependencies\": []})\n                        instance = subclass(\"auto_%i\" % (len(self.migrations.get(app_label, [])) + 1), app_label)\n                        instance.dependencies = list(dependencies)\n                        instance.operations = chopped\n                        self.migrations.setdefault(app_label, []).append(instance)\n                        chop_mode = False\n                    else:\n                        self.generated_operations[app_label] = chopped + self.generated_operations[app_label]\n            new_num_ops = sum(len(x) for x in self.generated_operations.values())\n            if new_num_ops == num_ops:\n                if not chop_mode:\n                    chop_mode = True\n                else:\n                    raise ValueError(\"Cannot resolve operation dependencies\")\n            num_ops = new_num_ops\n\n        # OK, add in internal dependencies among the migrations\n        for app_label, migrations in self.migrations.items():\n            for m1, m2 in zip(migrations, migrations[1:]):\n                m2.dependencies.append((app_label, m1.name))\n\n        # De-dupe dependencies\n        for app_label, migrations in self.migrations.items():\n            for migration in migrations:\n                migration.dependencies = list(set(migration.dependencies))\n\n        # Optimize migrations\n        for app_label, migrations in self.migrations.items():\n            for migration in migrations:\n                migration.operations = MigrationOptimizer().optimize(migration.operations, app_label=app_label)\n\n        return self.migrations"
+        },
+        {
+          "file": "django/db/migrations/loader.py",
+          "type": "function",
+          "name": "get_migration_by_prefix",
+          "class_name": "MigrationLoader",
+          "code": "def get_migration_by_prefix(self, app_label, name_prefix):\n        \"Returns the migration(s) which match the given app label and name _prefix_\"\n        # Do the search\n        results = []\n        for l, n in self.disk_migrations:\n            if l == app_label and n.startswith(name_prefix):\n                results.append((l, n))\n        if len(results) > 1:\n            raise AmbiguityError(\"There is more than one migration for '%s' with the prefix '%s'\" % (app_label, name_prefix))\n        elif len(results) == 0:\n            raise KeyError(\"There no migrations for '%s' with the prefix '%s'\" % (app_label, name_prefix))\n        else:\n            return self.disk_migrations[results[0]]"
+        }
+      ]
+    }
+  ]
+}

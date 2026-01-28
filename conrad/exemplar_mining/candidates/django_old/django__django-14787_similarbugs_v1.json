@@ -1,0 +1,125 @@
+{
+  "instance_id": "django__django-14787",
+  "repo": "django/django",
+  "created_at": "2021-08-23T12:59:59Z",
+  "problem_statement": "method_decorator() should preserve wrapper assignments\nDescription\n\t\nthe function that is passed to the decorator is a partial object and does not have any of the attributes expected from a function i.e. __name__, __module__ etc...\nconsider the following case\ndef logger(func):\n\t@wraps(func)\n\tdef inner(*args, **kwargs):\n\t\ttry:\n\t\t\tresult = func(*args, **kwargs)\n\t\texcept Exception as e:\n\t\t\tresult = str(e)\n\t\tfinally:\n\t\t\tlogger.debug(f\"{func.__name__} called with args: {args} and kwargs: {kwargs} resulting: {result}\")\n\treturn inner\nclass Test:\n\t@method_decorator(logger)\n\tdef hello_world(self):\n\t\treturn \"hello\"\nTest().test_method()\nThis results in the following exception\nAttributeError: 'functools.partial' object has no attribute '__name__'\n",
+  "patch": "diff --git a/django/utils/decorators.py b/django/utils/decorators.py\n--- a/django/utils/decorators.py\n+++ b/django/utils/decorators.py\n@@ -37,7 +37,7 @@ def _wrapper(self, *args, **kwargs):\n         # 'self' argument, but it's a closure over self so it can call\n         # 'func'. Also, wrap method.__get__() in a function because new\n         # attributes can't be set on bound method objects, only on functions.\n-        bound_method = partial(method.__get__(self, type(self)))\n+        bound_method = wraps(method)(partial(method.__get__(self, type(self))))\n         for dec in decorators:\n             bound_method = dec(bound_method)\n         return bound_method(*args, **kwargs)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 3765,
+      "pr_title": "Fixed #24034 -- Don't always overwrite deconstruct path.",
+      "pr_body": "Made deconstruct path overwriting for ArrayField conditional, so it only occurs when the deconstructed field is an instance of ArrayField itself and not a subclass.\n\nSee ticket https://code.djangoproject.com/ticket/24034.\n",
+      "issue_id": 24034,
+      "issue_title": "ArrayField.deconstruct always overwrites path",
+      "issue_body": "",
+      "issue_closed_at": "2014-12-21T18:40:16",
+      "base_commit": "653a3a4e18134803bf9cbe8668bcdd678844c995",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/fields/array.py",
+          "type": "function",
+          "name": "get_db_prep_lookup",
+          "class_name": "ArrayField",
+          "code": "def get_db_prep_lookup(self, lookup_type, value, connection, prepared=False):\n        if lookup_type == 'contains':\n            return [self.get_prep_value(value)]\n        return super(ArrayField, self).get_db_prep_lookup(lookup_type, value,\n                connection, prepared=False)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6802,
+      "pr_title": "Fixed #26778 -- Fixed ModelSignal.connect() weak argument.",
+      "pr_body": "https://code.djangoproject.com/ticket/26778\n",
+      "issue_id": 26778,
+      "issue_title": "ModelSignal.connect() does not work when 'weak' is set to False and receiver is a local function",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-18T19:42:54",
+      "base_commit": "8ba44ecda024050c219e7cbc1f16c2d56fa258ac",
+      "changes": [
+        {
+          "file": "django/db/models/signals.py",
+          "type": "function",
+          "name": "_lazy_method",
+          "class_name": "ModelSignal",
+          "code": "def _lazy_method(self, method, apps, receiver, sender, **kwargs):\n        from django.db.models.options import Options\n\n        # This partial takes a single optional argument named \"sender\".\n        partial_method = partial(method, receiver, **kwargs)\n        if isinstance(sender, six.string_types):\n            apps = apps or Options.default_apps\n            apps.lazy_model_operation(partial_method, make_model_tuple(sender))\n        else:\n            return partial_method(sender)"
+        }
+      ]
+    },
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 8629,
+      "pr_title": "Fixed #28293 -- Fixed union(), intersection(), and difference() when combining with an EmptyQuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/28293",
+      "issue_id": 28293,
+      "issue_title": "QuerySet.union(QuerySet.none()) results in an empty queryset, should be the original queryset",
+      "issue_body": "",
+      "issue_closed_at": "2017-06-13T01:16:29",
+      "base_commit": "9dc83c356d363c090f3351c908cad6f823aeb7bf",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_combinator_query",
+          "class_name": "QuerySet",
+          "code": "def _combinator_query(self, combinator, *other_qs, all=False):\n        # Clone the query to inherit the select list and everything\n        clone = self._clone()\n        # Clear limits and ordering so they can be reapplied\n        clone.query.clear_ordering(True)\n        clone.query.clear_limits()\n        clone.query.combined_queries = (self.query,) + tuple(qs.query for qs in other_qs)\n        clone.query.combinator = combinator\n        clone.query.combinator_all = all\n        return clone"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = (compiler.as_sql() for compiler in compilers)\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 8362,
+      "pr_title": "Fixed #28058 -- Restored empty BoundFields evaluating to True.",
+      "pr_body": "https://code.djangoproject.com/ticket/28058",
+      "issue_id": 28058,
+      "issue_title": "Empty Select widget (no choices) evaluates to False",
+      "issue_body": "",
+      "issue_closed_at": "2017-04-17T07:49:12",
+      "base_commit": "e5dce7b0fbd2965e524ce97114f501319ec2bb6f",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "subwidgets",
+          "class_name": "BoundField",
+          "code": "def subwidgets(self):\n        \"\"\"\n        Most widgets yield a single subwidget, but others like RadioSelect and\n        CheckboxSelectMultiple produce one subwidget for each choice.\n\n        This property is cached so that only one database query occurs when\n        rendering ModelChoiceFields.\n        \"\"\"\n        id_ = self.field.widget.attrs.get('id') or self.auto_id\n        attrs = {'id': id_} if id_ else {}\n        attrs = self.build_widget_attrs(attrs)\n        return list(\n            BoundWidget(self.field.widget, widget, self.form.renderer)\n            for widget in self.field.widget.subwidgets(self.html_name, self.value(), attrs=attrs)\n        )"
+        }
+      ]
+    }
+  ]
+}

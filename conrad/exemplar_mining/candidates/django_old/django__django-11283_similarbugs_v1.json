@@ -1,0 +1,174 @@
+{
+  "instance_id": "django__django-11283",
+  "repo": "django/django",
+  "created_at": "2019-04-26T07:02:50Z",
+  "problem_statement": "Migration auth.0011_update_proxy_permissions fails for models recreated as a proxy.\nDescription\n\t \n\t\t(last modified by Mariusz Felisiak)\n\t \nI am trying to update my project to Django 2.2. When I launch python manage.py migrate, I get this error message when migration auth.0011_update_proxy_permissions is applying (full stacktrace is available \u200bhere):\ndjango.db.utils.IntegrityError: duplicate key value violates unique constraint \"idx_18141_auth_permission_content_type_id_01ab375a_uniq\" DETAIL: Key (co.ntent_type_id, codename)=(12, add_agency) already exists.\nIt looks like the migration is trying to re-create already existing entries in the auth_permission table. At first I though it cloud because we recently renamed a model. But after digging and deleting the entries associated with the renamed model from our database in the auth_permission table, the problem still occurs with other proxy models.\nI tried to update directly from 2.0.13 and 2.1.8. The issues appeared each time. I also deleted my venv and recreated it without an effect.\nI searched for a ticket about this on the bug tracker but found nothing. I also posted this on \u200bdjango-users and was asked to report this here.\n",
+  "patch": "diff --git a/django/contrib/auth/migrations/0011_update_proxy_permissions.py b/django/contrib/auth/migrations/0011_update_proxy_permissions.py\n--- a/django/contrib/auth/migrations/0011_update_proxy_permissions.py\n+++ b/django/contrib/auth/migrations/0011_update_proxy_permissions.py\n@@ -1,5 +1,18 @@\n-from django.db import migrations\n+import sys\n+\n+from django.core.management.color import color_style\n+from django.db import migrations, transaction\n from django.db.models import Q\n+from django.db.utils import IntegrityError\n+\n+WARNING = \"\"\"\n+    A problem arose migrating proxy model permissions for {old} to {new}.\n+\n+      Permission(s) for {new} already existed.\n+      Codenames Q: {query}\n+\n+    Ensure to audit ALL permissions for {old} and {new}.\n+\"\"\"\n \n \n def update_proxy_model_permissions(apps, schema_editor, reverse=False):\n@@ -7,6 +20,7 @@ def update_proxy_model_permissions(apps, schema_editor, reverse=False):\n     Update the content_type of proxy model permissions to use the ContentType\n     of the proxy model.\n     \"\"\"\n+    style = color_style()\n     Permission = apps.get_model('auth', 'Permission')\n     ContentType = apps.get_model('contenttypes', 'ContentType')\n     for Model in apps.get_models():\n@@ -24,10 +38,16 @@ def update_proxy_model_permissions(apps, schema_editor, reverse=False):\n         proxy_content_type = ContentType.objects.get_for_model(Model, for_concrete_model=False)\n         old_content_type = proxy_content_type if reverse else concrete_content_type\n         new_content_type = concrete_content_type if reverse else proxy_content_type\n-        Permission.objects.filter(\n-            permissions_query,\n-            content_type=old_content_type,\n-        ).update(content_type=new_content_type)\n+        try:\n+            with transaction.atomic():\n+                Permission.objects.filter(\n+                    permissions_query,\n+                    content_type=old_content_type,\n+                ).update(content_type=new_content_type)\n+        except IntegrityError:\n+            old = '{}_{}'.format(old_content_type.app_label, old_content_type.model)\n+            new = '{}_{}'.format(new_content_type.app_label, new_content_type.model)\n+            sys.stdout.write(style.WARNING(WARNING.format(old=old, new=new, query=permissions_query)))\n \n \n def revert_proxy_model_permissions(apps, schema_editor):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 9421,
+      "pr_title": "Fixed #28884 -- Fixed crash in renames of fields of tables referenced by m2ms on SQlite.",
+      "pr_body": "https://code.djangoproject.com/ticket/28884\r\n\r\nIntrospected database constraints instead of relying on `_meta.related_objects` to determine whether or not a table or a column is referenced on rename operations.\r\n\r\nThis has the side effect of ignoring both ``db_constraint=False`` and virtual fields such as ``GenericRelation`` which are not backend by database level constraints and thus shouldn't prevent the rename operations from being performed in a transaction.\r\n\r\nThis also highlighted false negatives in the existing schema and migrations tests where `_meta.related_objects` was not appropriately populated.",
+      "issue_id": 28884,
+      "issue_title": "RenameField crashes with AttributeError when renaming a ManyToManyField (sqlite3)",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-22T15:09:50",
+      "base_commit": "f3a98224e6dd5f8846008512f281e452dc3b1909",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "_table_info",
+          "class_name": "DatabaseIntrospection",
+          "code": "def _table_info(self, cursor, name):\n        cursor.execute('PRAGMA table_info(%s)' % self.connection.ops.quote_name(name))\n        # cid, name, type, notnull, default_value, pk\n        return [{\n            'name': field[1],\n            'type': field[2],\n            'size': get_field_size(field[2]),\n            'null_ok': not field[3],\n            'default': field[4],\n            'pk': field[5],  # undocumented\n        } for field in cursor.fetchall()]"
+        },
+        {
+          "file": "django/db/backends/sqlite3/introspection.py",
+          "type": "function",
+          "name": "get_constraints",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_constraints(self, cursor, table_name):\n        \"\"\"\n        Retrieve any constraints or keys (unique, pk, fk, check, index) across\n        one or more columns.\n        \"\"\"\n        constraints = {}\n        # Get the index info\n        cursor.execute(\"PRAGMA index_list(%s)\" % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Sqlite3 3.8.9+ has 5 columns, however older versions only give 3\n            # columns. Discard last 2 columns if there.\n            number, index, unique = row[:3]\n            # Get the index info for that index\n            cursor.execute('PRAGMA index_info(%s)' % self.connection.ops.quote_name(index))\n            for index_rank, column_rank, column in cursor.fetchall():\n                if index not in constraints:\n                    constraints[index] = {\n                        \"columns\": [],\n                        \"primary_key\": False,\n                        \"unique\": bool(unique),\n                        \"foreign_key\": False,\n                        \"check\": False,\n                        \"index\": True,\n                    }\n                constraints[index]['columns'].append(column)\n            # Add type and column orders for indexes\n            if constraints[index]['index'] and not constraints[index]['unique']:\n                # SQLite doesn't support any index type other than b-tree\n                constraints[index]['type'] = Index.suffix\n                cursor.execute(\n                    \"SELECT sql FROM sqlite_master \"\n                    \"WHERE type='index' AND name=%s\" % self.connection.ops.quote_name(index)\n                )\n                orders = []\n                # There would be only 1 row to loop over\n                for sql, in cursor.fetchall():\n                    order_info = sql.split('(')[-1].split(')')[0].split(',')\n                    orders = ['DESC' if info.endswith('DESC') else 'ASC' for info in order_info]\n                constraints[index]['orders'] = orders\n        # Get the PK\n        pk_column = self.get_primary_key_column(cursor, table_name)\n        if pk_column:\n            # SQLite doesn't actually give a name to the PK constraint,\n            # so we invent one. This is fine, as the SQLite backend never\n            # deletes PK constraints by name, as you can't delete constraints\n            # in SQLite; we remake the table with a new PK instead.\n            constraints[\"__primary__\"] = {\n                \"columns\": [pk_column],\n                \"primary_key\": True,\n                \"unique\": False,  # It's not actually a unique constraint.\n                \"foreign_key\": False,\n                \"check\": False,\n                \"index\": False,\n            }\n        # Get foreign keys\n        cursor.execute('PRAGMA foreign_key_list(%s)' % self.connection.ops.quote_name(table_name))\n        for row in cursor.fetchall():\n            # Remaining on_update/on_delete/match values are of no interest here\n            id_, seq, table, from_, to = row[:5]\n            constraints['fk_%d' % id_] = {\n                'columns': [from_],\n                'primary_key': False,\n                'unique': False,\n                'foreign_key': (table, to),\n                'check': False,\n                'index': False,\n            }\n        return constraints"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "quote_value",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def quote_value(self, value):\n        # The backend \"mostly works\" without this function and there are use\n        # cases for compiling Python without the sqlite3 libraries (e.g.\n        # security hardening).\n        try:\n            import sqlite3\n            value = sqlite3.adapt(value)\n        except ImportError:\n            pass\n        except sqlite3.ProgrammingError:\n            pass\n        # Manual emulation of SQLite parameter quoting\n        if isinstance(value, bool):\n            return str(int(value))\n        elif isinstance(value, (Decimal, float, int)):\n            return str(value)\n        elif isinstance(value, str):\n            return \"'%s'\" % value.replace(\"\\'\", \"\\'\\'\")\n        elif value is None:\n            return \"NULL\"\n        elif isinstance(value, (bytes, bytearray, memoryview)):\n            # Bytes are only allowed for BLOB fields, encoded as string\n            # literals containing hexadecimal data and preceded by a single \"X\"\n            # character.\n            return \"X'%s'\" % value.hex()\n        else:\n            raise ValueError(\"Cannot quote parameter value %r of type %s\" % (value, type(value)))"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_db_table",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_db_table(self, model, old_db_table, new_db_table, disable_constraints=True):\n        if model._meta.related_objects and disable_constraints:\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r table while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % old_db_table)\n            self.connection.enable_constraint_checking()\n            super().alter_db_table(model, old_db_table, new_db_table)\n            self.connection.disable_constraint_checking()\n        else:\n            super().alter_db_table(model, old_db_table, new_db_table)"
+        },
+        {
+          "file": "django/db/backends/sqlite3/schema.py",
+          "type": "function",
+          "name": "alter_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def alter_field(self, model, old_field, new_field, strict=False):\n        old_field_name = old_field.name\n        if (new_field.name != old_field_name and\n                any(r.field_name == old_field.name for r in model._meta.related_objects)):\n            if self.connection.in_atomic_block:\n                raise NotSupportedError((\n                    'Renaming the %r.%r column while in a transaction is not '\n                    'supported on SQLite because it would break referential '\n                    'integrity. Try adding `atomic = False` to the Migration class.'\n                ) % (model._meta.db_table, old_field_name))\n            with atomic(self.connection.alias):\n                super().alter_field(model, old_field, new_field, strict=strict)\n                # Follow SQLite's documented procedure for performing changes\n                # that don't affect the on-disk content.\n                # https://sqlite.org/lang_altertable.html#otheralter\n                with self.connection.cursor() as cursor:\n                    schema_version = cursor.execute('PRAGMA schema_version').fetchone()[0]\n                    cursor.execute('PRAGMA writable_schema = 1')\n                    table_name = model._meta.db_table\n                    references_template = ' REFERENCES \"%s\" (\"%%s\") ' % table_name\n                    old_column_name = old_field.get_attname_column()[1]\n                    new_column_name = new_field.get_attname_column()[1]\n                    search = references_template % old_column_name\n                    replacement = references_template % new_column_name\n                    cursor.execute('UPDATE sqlite_master SET sql = replace(sql, %s, %s)', (search, replacement))\n                    cursor.execute('PRAGMA schema_version = %d' % (schema_version + 1))\n                    cursor.execute('PRAGMA writable_schema = 0')\n                    # The integrity check will raise an exception and rollback\n                    # the transaction if the sqlite_master updates corrupt the\n                    # database.\n                    cursor.execute('PRAGMA integrity_check')\n            # Perform a VACUUM to refresh the database representation from\n            # the sqlite_master table.\n            with self.connection.cursor() as cursor:\n                cursor.execute('VACUUM')\n        else:\n            super().alter_field(model, old_field, new_field, strict=strict)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9964,
+      "pr_title": "Fixed #29413 -- Prevented evaluation of QuerySet.get_or_create()/update_or_create() defaults unless needed.",
+      "pr_body": "https://code.djangoproject.com/ticket/29413",
+      "issue_id": 29413,
+      "issue_title": "QuerySet.get_or_create()/update_or_create() shouldn't evaluate lazy defaults unless they are needed",
+      "issue_body": "",
+      "issue_closed_at": "2018-07-16T21:09:12",
+      "base_commit": "4d48ddd8f93800a80330ec1dee7b7d4afe6ea95a",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "get_or_create",
+          "class_name": "QuerySet",
+          "code": "def get_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, creating one if necessary.\n        Return a tuple of (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        # The get() needs to be targeted at the write database in order\n        # to avoid potential transaction consistency problems.\n        self._for_write = True\n        try:\n            return self.get(**lookup), False\n        except self.model.DoesNotExist:\n            return self._create_object_from_params(lookup, params)"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "update_or_create",
+          "class_name": "QuerySet",
+          "code": "def update_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, updating one with defaults\n        if it exists, otherwise create a new one.\n        Return a tuple (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        defaults = defaults or {}\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        self._for_write = True\n        with transaction.atomic(using=self.db):\n            try:\n                obj = self.select_for_update().get(**lookup)\n            except self.model.DoesNotExist:\n                obj, created = self._create_object_from_params(lookup, params)\n                if created:\n                    return obj, created\n            for k, v in defaults.items():\n                setattr(obj, k, v() if callable(v) else v)\n            obj.save(using=self.db)\n        return obj, False"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_create_object_from_params",
+          "class_name": "QuerySet",
+          "code": "def _create_object_from_params(self, lookup, params):\n        \"\"\"\n        Try to create an object using passed params. Used by get_or_create()\n        and update_or_create().\n        \"\"\"\n        try:\n            with transaction.atomic(using=self.db):\n                params = {k: v() if callable(v) else v for k, v in params.items()}\n                obj = self.create(**params)\n            return obj, True\n        except IntegrityError as e:\n            try:\n                return self.get(**lookup), False\n            except self.model.DoesNotExist:\n                pass\n            raise e"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_extract_model_params",
+          "class_name": "QuerySet",
+          "code": "def _extract_model_params(self, defaults, **kwargs):\n        \"\"\"\n        Prepare `lookup` (kwargs that are valid model attributes), `params`\n        (for creating a model instance) based on given kwargs; for use by\n        get_or_create() and update_or_create().\n        \"\"\"\n        defaults = defaults or {}\n        lookup = kwargs.copy()\n        for f in self.model._meta.fields:\n            if f.attname in lookup:\n                lookup[f.name] = lookup.pop(f.attname)\n        params = {k: v for k, v in kwargs.items() if LOOKUP_SEP not in k}\n        params.update(defaults)\n        property_names = self.model._meta._property_names\n        invalid_params = []\n        for param in params:\n            try:\n                self.model._meta.get_field(param)\n            except exceptions.FieldDoesNotExist:\n                # It's okay to use a model's property if it has a setter.\n                if not (param in property_names and getattr(self.model, param).fset):\n                    invalid_params.append(param)\n        if invalid_params:\n            raise exceptions.FieldError(\n                \"Invalid field name(s) for model %s: '%s'.\" % (\n                    self.model._meta.object_name,\n                    \"', '\".join(sorted(invalid_params)),\n                ))\n        return lookup, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 10468,
+      "pr_title": "Fixed #29827 -- Fixed reuse of existing test DBs with --keepdb on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/29827",
+      "issue_id": 29827,
+      "issue_title": "cloned DBs are not reused during tests on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2018-10-25T18:38:15",
+      "base_commit": "76b3367035889d87ffef7a52cd44d70e30537f6f",
+      "changes": [
+        {
+          "file": "django/db/backends/mysql/creation.py",
+          "type": "function",
+          "name": "sql_table_creation_suffix",
+          "class_name": "DatabaseCreation",
+          "code": "def sql_table_creation_suffix(self):\n        suffix = []\n        test_settings = self.connection.settings_dict['TEST']\n        if test_settings['CHARSET']:\n            suffix.append('CHARACTER SET %s' % test_settings['CHARSET'])\n        if test_settings['COLLATION']:\n            suffix.append('COLLATE %s' % test_settings['COLLATION'])\n        return ' '.join(suffix)"
+        },
+        {
+          "file": "django/db/backends/mysql/creation.py",
+          "type": "function",
+          "name": "_clone_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _clone_test_db(self, suffix, verbosity, keepdb=False):\n        source_database_name = self.connection.settings_dict['NAME']\n        target_database_name = self.get_test_db_clone_settings(suffix)['NAME']\n        test_db_params = {\n            'dbname': self.connection.ops.quote_name(target_database_name),\n            'suffix': self.sql_table_creation_suffix(),\n        }\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                self._execute_create_test_db(cursor, test_db_params, keepdb)\n            except Exception:\n                try:\n                    if verbosity >= 1:\n                        self.log('Destroying old test database for alias %s\u2026' % (\n                            self._get_database_display_str(verbosity, target_database_name),\n                        ))\n                    cursor.execute('DROP DATABASE %(dbname)s' % test_db_params)\n                    self._execute_create_test_db(cursor, test_db_params, keepdb)\n                except Exception as e:\n                    self.log('Got an error recreating the test database: %s' % e)\n                    sys.exit(2)\n\n        dump_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        dump_cmd[0] = 'mysqldump'\n        dump_cmd[-1] = source_database_name\n        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        load_cmd[-1] = target_database_name\n\n        with subprocess.Popen(dump_cmd, stdout=subprocess.PIPE) as dump_proc:\n            with subprocess.Popen(load_cmd, stdin=dump_proc.stdout, stdout=subprocess.DEVNULL):\n                # Allow dump_proc to receive a SIGPIPE if the load process exits.\n                dump_proc.stdout.close()"
+        },
+        {
+          "file": "django/db/backends/mysql/creation.py",
+          "type": "function",
+          "name": "_clone_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _clone_test_db(self, suffix, verbosity, keepdb=False):\n        source_database_name = self.connection.settings_dict['NAME']\n        target_database_name = self.get_test_db_clone_settings(suffix)['NAME']\n        test_db_params = {\n            'dbname': self.connection.ops.quote_name(target_database_name),\n            'suffix': self.sql_table_creation_suffix(),\n        }\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                self._execute_create_test_db(cursor, test_db_params, keepdb)\n            except Exception:\n                try:\n                    if verbosity >= 1:\n                        self.log('Destroying old test database for alias %s\u2026' % (\n                            self._get_database_display_str(verbosity, target_database_name),\n                        ))\n                    cursor.execute('DROP DATABASE %(dbname)s' % test_db_params)\n                    self._execute_create_test_db(cursor, test_db_params, keepdb)\n                except Exception as e:\n                    self.log('Got an error recreating the test database: %s' % e)\n                    sys.exit(2)\n\n        dump_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        dump_cmd[0] = 'mysqldump'\n        dump_cmd[-1] = source_database_name\n        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        load_cmd[-1] = target_database_name\n\n        with subprocess.Popen(dump_cmd, stdout=subprocess.PIPE) as dump_proc:\n            with subprocess.Popen(load_cmd, stdin=dump_proc.stdout, stdout=subprocess.DEVNULL):\n                # Allow dump_proc to receive a SIGPIPE if the load process exits.\n                dump_proc.stdout.close()"
+        }
+      ]
+    },
+    {
+      "pr_number": 6642,
+      "pr_title": "Fixed #26647 -- Included the state of all applied migrations when migrating forward.",
+      "pr_body": "Thanks Jasper Maes for the detailed report.\n",
+      "issue_id": 26647,
+      "issue_title": "Post migrate signal old content type model",
+      "issue_body": "",
+      "issue_closed_at": "2016-05-26T12:29:12",
+      "base_commit": "30d110ef43d8a3c50ea8ec4e4fe49bd2bb859530",
+      "changes": [
+        {
+          "file": "django/db/migrations/executor.py",
+          "type": "function",
+          "name": "_migrate_all_forwards",
+          "class_name": "MigrationExecutor",
+          "code": "def _migrate_all_forwards(self, plan, full_plan, fake, fake_initial):\n        \"\"\"\n        Take a list of 2-tuples of the form (migration instance, False) and\n        apply them in the order they occur in the full_plan.\n        \"\"\"\n        migrations_to_run = {m[0] for m in plan}\n        state = self._create_project_state()\n        applied_migrations = {\n            self.loader.graph.nodes[key] for key in self.loader.applied_migrations\n            if key in self.loader.graph.nodes\n        }\n        for migration, _ in full_plan:\n            if not migrations_to_run:\n                # We remove every migration that we applied from this set so\n                # that we can bail out once the last migration has been applied\n                # and don't always run until the very end of the migration\n                # process.\n                break\n            if migration in migrations_to_run:\n                if 'apps' not in state.__dict__:\n                    if self.progress_callback:\n                        self.progress_callback(\"render_start\")\n                    state.apps  # Render all -- performance critical\n                    if self.progress_callback:\n                        self.progress_callback(\"render_success\")\n                state = self.apply_migration(state, migration, fake=fake, fake_initial=fake_initial)\n                migrations_to_run.remove(migration)\n            elif migration in applied_migrations:\n                # Only mutate the state if the migration is actually applied\n                # to make sure the resulting state doesn't include changes\n                # from unrelated migrations.\n                migration.mutate_state(state, preserve=False)\n\n        return state"
+        },
+        {
+          "file": "django/db/migrations/executor.py",
+          "type": "function",
+          "name": "_migrate_all_forwards",
+          "class_name": "MigrationExecutor",
+          "code": "def _migrate_all_forwards(self, plan, full_plan, fake, fake_initial):\n        \"\"\"\n        Take a list of 2-tuples of the form (migration instance, False) and\n        apply them in the order they occur in the full_plan.\n        \"\"\"\n        migrations_to_run = {m[0] for m in plan}\n        state = self._create_project_state()\n        applied_migrations = {\n            self.loader.graph.nodes[key] for key in self.loader.applied_migrations\n            if key in self.loader.graph.nodes\n        }\n        for migration, _ in full_plan:\n            if not migrations_to_run:\n                # We remove every migration that we applied from this set so\n                # that we can bail out once the last migration has been applied\n                # and don't always run until the very end of the migration\n                # process.\n                break\n            if migration in migrations_to_run:\n                if 'apps' not in state.__dict__:\n                    if self.progress_callback:\n                        self.progress_callback(\"render_start\")\n                    state.apps  # Render all -- performance critical\n                    if self.progress_callback:\n                        self.progress_callback(\"render_success\")\n                state = self.apply_migration(state, migration, fake=fake, fake_initial=fake_initial)\n                migrations_to_run.remove(migration)\n            elif migration in applied_migrations:\n                # Only mutate the state if the migration is actually applied\n                # to make sure the resulting state doesn't include changes\n                # from unrelated migrations.\n                migration.mutate_state(state, preserve=False)\n\n        return state"
+        }
+      ]
+    },
+    {
+      "pr_number": 8926,
+      "pr_title": "Fixed #28493 -- Made migrations autodetector find dependencies for model renaming.",
+      "pr_body": "https://code.djangoproject.com/ticket/28493",
+      "issue_id": 28493,
+      "issue_title": "Foreign keys break on migration if models are renamed in a different app",
+      "issue_body": "",
+      "issue_closed_at": "2017-09-04T14:40:14",
+      "base_commit": "3f2b1d926bb3a72b4c3d2cd958455ebb9b4ca458",
+      "changes": [
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_renamed_models",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_renamed_models(self):\n        \"\"\"\n        Find any renamed models, generate the operations for them, and remove\n        the old entry from the model lists. Must be run before other\n        model-level generation.\n        \"\"\"\n        self.renamed_models = {}\n        self.renamed_models_rel = {}\n        added_models = self.new_model_keys - self.old_model_keys\n        for app_label, model_name in sorted(added_models):\n            model_state = self.to_state.models[app_label, model_name]\n            model_fields_def = self.only_relation_agnostic_fields(model_state.fields)\n\n            removed_models = self.old_model_keys - self.new_model_keys\n            for rem_app_label, rem_model_name in removed_models:\n                if rem_app_label == app_label:\n                    rem_model_state = self.from_state.models[rem_app_label, rem_model_name]\n                    rem_model_fields_def = self.only_relation_agnostic_fields(rem_model_state.fields)\n                    if model_fields_def == rem_model_fields_def:\n                        if self.questioner.ask_rename_model(rem_model_state, model_state):\n                            self.add_operation(\n                                app_label,\n                                operations.RenameModel(\n                                    old_name=rem_model_state.name,\n                                    new_name=model_state.name,\n                                )\n                            )\n                            self.renamed_models[app_label, model_name] = rem_model_name\n                            renamed_models_rel_key = '%s.%s' % (rem_model_state.app_label, rem_model_state.name)\n                            self.renamed_models_rel[renamed_models_rel_key] = '%s.%s' % (\n                                model_state.app_label,\n                                model_state.name,\n                            )\n                            self.old_model_keys.remove((rem_app_label, rem_model_name))\n                            self.old_model_keys.add((app_label, model_name))\n                            break"
+        }
+      ]
+    }
+  ]
+}

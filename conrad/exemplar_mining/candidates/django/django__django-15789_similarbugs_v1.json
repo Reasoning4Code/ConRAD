@@ -1,0 +1,164 @@
+{
+  "instance_id": "django__django-15789",
+  "repo": "django/django",
+  "created_at": "2022-06-23T08:59:04Z",
+  "problem_statement": "Add an encoder parameter to django.utils.html.json_script().\nDescription\n\t\nI have a use case where I want to customize the JSON encoding of some values to output to the template layer. It looks like django.utils.html.json_script is a good utility for that, however the JSON encoder is hardcoded to DjangoJSONEncoder. I think it would be nice to be able to pass a custom encoder class.\nBy the way, django.utils.html.json_script is not documented (only its template filter counterpart is), would it be a good thing to add to the docs?\n",
+  "patch": "diff --git a/django/utils/html.py b/django/utils/html.py\n--- a/django/utils/html.py\n+++ b/django/utils/html.py\n@@ -59,7 +59,7 @@ def escapejs(value):\n }\n \n \n-def json_script(value, element_id=None):\n+def json_script(value, element_id=None, encoder=None):\n     \"\"\"\n     Escape all the HTML/XML special characters with their unicode escapes, so\n     value is safe to be output anywhere except for inside a tag attribute. Wrap\n@@ -67,7 +67,9 @@ def json_script(value, element_id=None):\n     \"\"\"\n     from django.core.serializers.json import DjangoJSONEncoder\n \n-    json_str = json.dumps(value, cls=DjangoJSONEncoder).translate(_json_script_escapes)\n+    json_str = json.dumps(value, cls=encoder or DjangoJSONEncoder).translate(\n+        _json_script_escapes\n+    )\n     if element_id:\n         template = '<script id=\"{}\" type=\"application/json\">{}</script>'\n         args = (element_id, mark_safe(json_str))\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8213,
+      "pr_title": "Refs #27935 -- Fixed BrinIndex.max_name_length if a project's default database isn't PostgreSQL.",
+      "pr_body": "",
+      "issue_id": 27935,
+      "issue_title": "BrinIndex crashes if name  > 30 characters",
+      "issue_body": "BrinIndex.suffix ( django.contrib.postgres.indexes) longer 3 char, but Index.set_name_with_model method allowed 3 char in suffix\nAssertionError: Index too long for multiple database support. Is self.suffix longer than 3 characters?",
+      "issue_closed_at": "2017-03-20T10:30:05",
+      "base_commit": "6cb0a3ac2836c044987f7a0cca0d1e99d52e002e",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from django.db import connection\nfrom django.db.models import Index\nfrom django.utils.functional import cached_property\n\n__all__ = ['BrinIndex', 'GinIndex']\n\n\nclass BrinIndex(Index):\n    suffix = 'brin'\n\n    def __init__(self, fields=[], name=None, pages_per_range=None):\n        if pages_per_range is not None and pages_per_range <= 0:"
+        },
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "function",
+          "name": "get_sql_create_template_values",
+          "class_name": "BrinIndex",
+          "code": "def get_sql_create_template_values(self, model, schema_editor, using):\n        parameters = super().get_sql_create_template_values(model, schema_editor, using=' USING brin')\n        if self.pages_per_range is not None:\n            parameters['extra'] = ' WITH (pages_per_range={})'.format(\n                schema_editor.quote_value(self.pages_per_range)) + parameters['extra']\n        return parameters"
+        }
+      ]
+    },
+    {
+      "pr_number": 13800,
+      "pr_title": "Fixed #32191 -- Made CookieStorage use RFC 6265 compliant format.",
+      "pr_body": "Continues work by Florian Apolloner in this [PR](https://github.com/django/django/pull/13793).\r\nThe aim is to make messages, when stored in cookies, compliant with RFC6265 which defines allowed characters for cookies. It does this by base64 encoding them, and then to reduce their size, it compresses them using zlib.\r\nThis fix is achieved by introducing `sign_object` and `unsign_object` into the base signer class.",
+      "issue_id": 32191,
+      "issue_title": "Not RFC 6265 compliant cookies in contrib.messages.",
+      "issue_body": "Hi\nA Customer of mine is using a WAF which is handling Cookies as it is described tin the RFC:\n​\nhttps://tools.ietf.org/html/rfc6265\nThe issue now is that Django is trying to use an escape-character in cookie-Values which is not supported in the RFC\nan example of such a cookie:\nmessages=\\\"123\\\\\\\"NOTRECEIVED\\\"\"\nPlease consider to get this fixed so there can be a protection of this system.\nRegards,\nNico",
+      "issue_closed_at": "2021-01-07T06:20:56",
+      "base_commit": "3eb98743dcaa0b7abd2d5832cba8cc9cb586a964",
+      "changes": [
+        {
+          "file": "django/contrib/messages/storage/cookie.py",
+          "type": "class",
+          "name": "MessageEncoder",
+          "code": "class MessageEncoder(json.JSONEncoder):\n    \"\"\"\n    Compactly serialize instances of the ``Message`` class as JSON.\n    \"\"\"\n    message_key = '__json_message'\n\n    def __init__(self, *args, **kwargs):\n        kwargs.setdefault('separators', (',', ':'))\n        super().__init__(*args, **kwargs)\n\n    def default(self, obj):\n        if isinstance(obj, Message):\n            # Using 0/1 here instead of False/True to produce more compact json\n            is_safedata = 1 if isinstance(obj.message, SafeData) else 0\n            message = [self.message_key, is_safedata, obj.level, obj.message]\n            if obj.extra_tags:\n                message.append(obj.extra_tags)\n            return message\n        return super().default(obj)"
+        },
+        {
+          "file": "django/contrib/messages/storage/cookie.py",
+          "type": "function",
+          "name": "decode",
+          "class_name": "MessageDecoder",
+          "code": "def decode(self, s, **kwargs):\n        decoded = super().decode(s, **kwargs)\n        return self.process_messages(decoded)"
+        },
+        {
+          "file": "django/contrib/messages/storage/cookie.py",
+          "type": "function",
+          "name": "_encode",
+          "class_name": "CookieStorage",
+          "code": "def _encode(self, messages, encode_empty=False):\n        \"\"\"\n        Return an encoded version of the messages list which can be stored as\n        plain text.\n\n        Since the data will be retrieved from the client-side, the encoded data\n        also contains a hash to ensure that the data was not tampered with.\n        \"\"\"\n        if messages or encode_empty:\n            encoder = MessageEncoder()\n            value = encoder.encode(messages)\n            return self.signer.sign(value)"
+        },
+        {
+          "file": "django/contrib/messages/storage/cookie.py",
+          "type": "function",
+          "name": "_decode",
+          "class_name": "CookieStorage",
+          "code": "def _decode(self, data):\n        \"\"\"\n        Safely decode an encoded text stream back into a list of messages.\n\n        If the encoded text stream contained an invalid hash or was in an\n        invalid format, return None.\n        \"\"\"\n        if not data:\n            return None\n        try:\n            decoded = self.signer.unsign(data)\n        except signing.BadSignature:\n            # RemovedInDjango40Warning: when the deprecation ends, replace\n            # with:\n            #   decoded = None.\n            decoded = self._legacy_decode(data)\n        if decoded:\n            try:\n                return json.loads(decoded, cls=MessageDecoder)\n            except json.JSONDecodeError:\n                pass\n        # Mark the data as used (so it gets removed) since something was wrong\n        # with the data.\n        self.used = True\n        return None"
+        }
+      ]
+    },
+    {
+      "pr_number": 11615,
+      "pr_title": "Fixed #29019 -- Added ManyToManyField support to REQUIRED_FIELDS.",
+      "pr_body": "[ticket 29019](https://code.djangoproject.com/ticket/29019)",
+      "issue_id": 29019,
+      "issue_title": "createsuperuser crashes if a ManyToManyField is in REQUIRED_FIELDS",
+      "issue_body": "I've defined a custom user model with a ManyToMany field.\nWhen running\nmanage.py createsuperuser\nI receive the following error after entering the user's email address:\nTraceback (most recent call last):\n  File \"./manage.py\", line 22, in <module>\n    execute_from_command_line(sys.argv)\n  File \"/Users/jkirsop/Development/artemis/venv/lib/python3.6/site-packages/django/core/management/__init__.py\", line 371, in execute_from_command_line\n    utility.execute()\n  File \"/Users/jkirsop/Development/artemis/venv/lib/python3.6/site-packages/django/core/management/__init__.py\", line 365, in execute\n    self.fetch_command(subcommand).run_from_argv(self.argv)\n  File \"/Users/jkirsop/Development/artemis/venv/lib/python3.6/site-packages/django/core/management/base.py\", line 288, in run_from_argv\n    self.execute(*args, **cmd_options)\n  File \"/Users/jkirsop/Development/artemis/venv/lib/python3.6/site-packages/django/contrib/auth/management/commands/createsuperuser.py\", line 59, in execute\n    return super().execute(*args, **options)\n  File \"/Users/jkirsop/Development/artemis/venv/lib/python3.6/site-packages/django/core/management/base.py\", line 335, in execute\n    output = self.handle(*args, **options)\n  File \"/Users/jkirsop/Development/artemis/venv/lib/python3.6/site-packages/django/contrib/auth/management/commands/createsuperuser.py\", line 133, in handle\n    ) if field.remote_field else '',\nAttributeError: 'ManyToManyRel' object has no attribute 'field_name'\nModels\nMy custom user model is defined as such (relevant pieces only included):\nclass OrgUser(AbstractBaseUser, PermissionsMixin):\n\temail = models.EmailField(\n\t\tverbose_name='email address',\n\t\tmax_length=255,\n\t\tunique=True,\n\t)\n\torgs = models.ManyToManyField(Organisation)\n\tUSERNAME_FIELD = 'email'\n\tREQUIRED_FIELDS = ['orgs']\n        objects = OrgUserManager()\nand Organisations\nclass Organisation(models.Model):\n\tname = models.CharField(max_length=60)\n\n\tdef __str__(self):\n\t\treturn self.name\nIt seems that if I remove the need for the Orgs to be a\nREQUIRED_FIELD\nthe issue goes away. However, it's central to my project and needs to be defined on every user.\nHappy to update the ticket with any other code snippets if required.",
+      "issue_closed_at": "2019-08-26T08:17:38",
+      "base_commit": "5dac63bb844d0a976e1dd1591a323c5ba9674a97",
+      "changes": [
+        {
+          "file": "django/contrib/auth/management/commands/createsuperuser.py",
+          "type": "function",
+          "name": "add_arguments",
+          "class_name": "Command",
+          "code": "def add_arguments(self, parser):\n        parser.add_argument(\n            '--%s' % self.UserModel.USERNAME_FIELD,\n            help='Specifies the login for the superuser.',\n        )\n        parser.add_argument(\n            '--noinput', '--no-input', action='store_false', dest='interactive',\n            help=(\n                'Tells Django to NOT prompt the user for input of any kind. '\n                'You must use --%s with --noinput, along with an option for '\n                'any other required field. Superusers created with --noinput will '\n                'not be able to log in until they\\'re given a valid password.' %\n                self.UserModel.USERNAME_FIELD\n            ),\n        )\n        parser.add_argument(\n            '--database',\n            default=DEFAULT_DB_ALIAS,\n            help='Specifies the database to use. Default is \"default\".',\n        )\n        for field in self.UserModel.REQUIRED_FIELDS:\n            parser.add_argument(\n                '--%s' % field,\n                help='Specifies the %s for the superuser.' % field,\n            )"
+        },
+        {
+          "file": "django/contrib/auth/management/commands/createsuperuser.py",
+          "type": "function",
+          "name": "handle",
+          "class_name": "Command",
+          "code": "def handle(self, *args, **options):\n        username = options[self.UserModel.USERNAME_FIELD]\n        database = options['database']\n        user_data = {}\n        verbose_field_name = self.username_field.verbose_name\n        try:\n            self.UserModel._meta.get_field(PASSWORD_FIELD)\n        except exceptions.FieldDoesNotExist:\n            pass\n        else:\n            # If not provided, create the user with an unusable password.\n            user_data[PASSWORD_FIELD] = None\n        try:\n            if options['interactive']:\n                # Same as user_data but with foreign keys as fake model\n                # instances instead of raw IDs.\n                fake_user_data = {}\n                if hasattr(self.stdin, 'isatty') and not self.stdin.isatty():\n                    raise NotRunningInTTYException\n                default_username = get_default_username()\n                if username:\n                    error_msg = self._validate_username(username, verbose_field_name, database)\n                    if error_msg:\n                        self.stderr.write(error_msg)\n                        username = None\n                elif username == '':\n                    raise CommandError('%s cannot be blank.' % capfirst(verbose_field_name))\n                # Prompt for username.\n                while username is None:\n                    message = self._get_input_message(self.username_field, default_username)\n                    username = self.get_input_data(self.username_field, message, default_username)\n                    if username:\n                        error_msg = self._validate_username(username, verbose_field_name, database)\n                        if error_msg:\n                            self.stderr.write(error_msg)\n                            username = None\n                            continue\n                user_data[self.UserModel.USERNAME_FIELD] = username\n                fake_user_data[self.UserModel.USERNAME_FIELD] = (\n                    self.username_field.remote_field.model(username)\n                    if self.username_field.remote_field else username\n                )\n                # Prompt for required fields.\n                for field_name in self.UserModel.REQUIRED_FIELDS:\n                    field = self.UserModel._meta.get_field(field_name)\n                    user_data[field_name] = options[field_name]\n                    while user_data[field_name] is None:\n                        message = self._get_input_message(field)\n                        input_value = self.get_input_data(field, message)\n                        user_data[field_name] = input_value\n                        fake_user_data[field_name] = input_value\n\n                        # Wrap any foreign keys in fake model instances\n                        if field.remote_field:\n                            fake_user_data[field_name] = field.remote_field.model(input_value)\n\n                # Prompt for a password if the model has one.\n                while PASSWORD_FIELD in user_data and user_data[PASSWORD_FIELD] is None:\n                    password = getpass.getpass()\n                    password2 = getpass.getpass('Password (again): ')\n                    if password != password2:\n                        self.stderr.write(\"Error: Your passwords didn't match.\")\n                        # Don't validate passwords that don't match.\n                        continue\n                    if password.strip() == '':\n                        self.stderr.write(\"Error: Blank passwords aren't allowed.\")\n                        # Don't validate blank passwords.\n                        continue\n                    try:\n                        validate_password(password2, self.UserModel(**fake_user_data))\n                    except exceptions.ValidationError as err:\n                        self.stderr.write('\\n'.join(err.messages))\n                        response = input('Bypass password validation and create user anyway? [y/N]: ')\n                        if response.lower() != 'y':\n                            continue\n                    user_data[PASSWORD_FIELD] = password\n            else:\n                # Non-interactive mode.\n                # Use password from environment variable, if provided.\n                if PASSWORD_FIELD in user_data and 'DJANGO_SUPERUSER_PASSWORD' in os.environ:\n                    user_data[PASSWORD_FIELD] = os.environ['DJANGO_SUPERUSER_PASSWORD']\n                # Use username from environment variable, if not provided in\n                # options.\n                if username is None:\n                    username = os.environ.get('DJANGO_SUPERUSER_' + self.UserModel.USERNAME_FIELD.upper())\n                if username is None:\n                    raise CommandError('You must use --%s with --noinput.' % self.UserModel.USERNAME_FIELD)\n                else:\n                    error_msg = self._validate_username(username, verbose_field_name, database)\n                    if error_msg:\n                        raise CommandError(error_msg)\n\n                user_data[self.UserModel.USERNAME_FIELD] = username\n                for field_name in self.UserModel.REQUIRED_FIELDS:\n                    env_var = 'DJANGO_SUPERUSER_' + field_name.upper()\n                    value = options[field_name] or os.environ.get(env_var)\n                    if not value:\n                        raise CommandError('You must use --%s with --noinput.' % field_name)\n                    field = self.UserModel._meta.get_field(field_name)\n                    user_data[field_name] = field.clean(value, None)\n\n            self.UserModel._default_manager.db_manager(database).create_superuser(**user_data)\n            if options['verbosity'] >= 1:\n                self.stdout.write(\"Superuser created successfully.\")\n        except KeyboardInterrupt:\n            self.stderr.write('\\nOperation cancelled.')\n            sys.exit(1)\n        except exceptions.ValidationError as e:\n            raise CommandError('; '.join(e.messages))\n        except NotRunningInTTYException:\n            self.stdout.write(\n                'Superuser creation skipped due to not running in a TTY. '\n                'You can run `manage.py createsuperuser` in your project '\n                'to create one manually.'\n            )"
+        },
+        {
+          "file": "django/contrib/auth/management/commands/createsuperuser.py",
+          "type": "function",
+          "name": "handle",
+          "class_name": "Command",
+          "code": "def handle(self, *args, **options):\n        username = options[self.UserModel.USERNAME_FIELD]\n        database = options['database']\n        user_data = {}\n        verbose_field_name = self.username_field.verbose_name\n        try:\n            self.UserModel._meta.get_field(PASSWORD_FIELD)\n        except exceptions.FieldDoesNotExist:\n            pass\n        else:\n            # If not provided, create the user with an unusable password.\n            user_data[PASSWORD_FIELD] = None\n        try:\n            if options['interactive']:\n                # Same as user_data but with foreign keys as fake model\n                # instances instead of raw IDs.\n                fake_user_data = {}\n                if hasattr(self.stdin, 'isatty') and not self.stdin.isatty():\n                    raise NotRunningInTTYException\n                default_username = get_default_username()\n                if username:\n                    error_msg = self._validate_username(username, verbose_field_name, database)\n                    if error_msg:\n                        self.stderr.write(error_msg)\n                        username = None\n                elif username == '':\n                    raise CommandError('%s cannot be blank.' % capfirst(verbose_field_name))\n                # Prompt for username.\n                while username is None:\n                    message = self._get_input_message(self.username_field, default_username)\n                    username = self.get_input_data(self.username_field, message, default_username)\n                    if username:\n                        error_msg = self._validate_username(username, verbose_field_name, database)\n                        if error_msg:\n                            self.stderr.write(error_msg)\n                            username = None\n                            continue\n                user_data[self.UserModel.USERNAME_FIELD] = username\n                fake_user_data[self.UserModel.USERNAME_FIELD] = (\n                    self.username_field.remote_field.model(username)\n                    if self.username_field.remote_field else username\n                )\n                # Prompt for required fields.\n                for field_name in self.UserModel.REQUIRED_FIELDS:\n                    field = self.UserModel._meta.get_field(field_name)\n                    user_data[field_name] = options[field_name]\n                    while user_data[field_name] is None:\n                        message = self._get_input_message(field)\n                        input_value = self.get_input_data(field, message)\n                        user_data[field_name] = input_value\n                        fake_user_data[field_name] = input_value\n\n                        # Wrap any foreign keys in fake model instances\n                        if field.remote_field:\n                            fake_user_data[field_name] = field.remote_field.model(input_value)\n\n                # Prompt for a password if the model has one.\n                while PASSWORD_FIELD in user_data and user_data[PASSWORD_FIELD] is None:\n                    password = getpass.getpass()\n                    password2 = getpass.getpass('Password (again): ')\n                    if password != password2:\n                        self.stderr.write(\"Error: Your passwords didn't match.\")\n                        # Don't validate passwords that don't match.\n                        continue\n                    if password.strip() == '':\n                        self.stderr.write(\"Error: Blank passwords aren't allowed.\")\n                        # Don't validate blank passwords.\n                        continue\n                    try:\n                        validate_password(password2, self.UserModel(**fake_user_data))\n                    except exceptions.ValidationError as err:\n                        self.stderr.write('\\n'.join(err.messages))\n                        response = input('Bypass password validation and create user anyway? [y/N]: ')\n                        if response.lower() != 'y':\n                            continue\n                    user_data[PASSWORD_FIELD] = password\n            else:\n                # Non-interactive mode.\n                # Use password from environment variable, if provided.\n                if PASSWORD_FIELD in user_data and 'DJANGO_SUPERUSER_PASSWORD' in os.environ:\n                    user_data[PASSWORD_FIELD] = os.environ['DJANGO_SUPERUSER_PASSWORD']\n                # Use username from environment variable, if not provided in\n                # options.\n                if username is None:\n                    username = os.environ.get('DJANGO_SUPERUSER_' + self.UserModel.USERNAME_FIELD.upper())\n                if username is None:\n                    raise CommandError('You must use --%s with --noinput.' % self.UserModel.USERNAME_FIELD)\n                else:\n                    error_msg = self._validate_username(username, verbose_field_name, database)\n                    if error_msg:\n                        raise CommandError(error_msg)\n\n                user_data[self.UserModel.USERNAME_FIELD] = username\n                for field_name in self.UserModel.REQUIRED_FIELDS:\n                    env_var = 'DJANGO_SUPERUSER_' + field_name.upper()\n                    value = options[field_name] or os.environ.get(env_var)\n                    if not value:\n                        raise CommandError('You must use --%s with --noinput.' % field_name)\n                    field = self.UserModel._meta.get_field(field_name)\n                    user_data[field_name] = field.clean(value, None)\n\n            self.UserModel._default_manager.db_manager(database).create_superuser(**user_data)\n            if options['verbosity'] >= 1:\n                self.stdout.write(\"Superuser created successfully.\")\n        except KeyboardInterrupt:\n            self.stderr.write('\\nOperation cancelled.')\n            sys.exit(1)\n        except exceptions.ValidationError as e:\n            raise CommandError('; '.join(e.messages))\n        except NotRunningInTTYException:\n            self.stdout.write(\n                'Superuser creation skipped due to not running in a TTY. '\n                'You can run `manage.py createsuperuser` in your project '\n                'to create one manually.'\n            )"
+        },
+        {
+          "file": "django/contrib/auth/management/commands/createsuperuser.py",
+          "type": "function",
+          "name": "_get_input_message",
+          "class_name": "Command",
+          "code": "def _get_input_message(self, field, default=None):\n        return '%s%s%s: ' % (\n            capfirst(field.verbose_name),\n            \" (leave blank to use '%s')\" % default if default else '',\n            ' (%s.%s)' % (\n                field.remote_field.model._meta.object_name,\n                field.remote_field.field_name,\n            ) if field.remote_field else '',\n        )"
+        }
+      ]
+    },
+    {
+      "pr_number": 6177,
+      "pr_title": "Fixed #26253 -- Fixed crashing deprecation shims in SimpleTemplateResponse.",
+      "pr_body": "https://code.djangoproject.com/ticket/26253\n",
+      "issue_id": 26253,
+      "issue_title": "Deprecation for TemplateResponse and SimpleTemplateResponse accepting django.template.Template is broken",
+      "issue_body": "When\nTemplateResponse\nor\nSimpleTemplateResponse\nare called, a TypeError is thrown.\nThis is because their\n__init__() creates a\nBackendTemplate` giving only one argument to the constructor.\nThe resulting error is obviously confusing and obfuscates the warning.\nThe attached patch addresses the issue, although I am unsure whether one should assume, by default, that a DjangoTemplate was given.",
+      "issue_closed_at": "2016-02-22T16:07:54",
+      "base_commit": "174811c5538c8c0b8f66089b31686e80d2bc7d3b",
+      "changes": [
+        {
+          "file": "django/template/response.py",
+          "type": "line",
+          "name": "line 4",
+          "code": "from django.utils import six\nfrom django.utils.deprecation import RemovedInDjango110Warning\n\nfrom .backends.django import Template as BackendTemplate\nfrom .base import Template\nfrom .context import Context, RequestContext, _current_app_undefined\nfrom .loader import get_template, select_template"
+        },
+        {
+          "file": "django/template/response.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "TemplateResponse",
+          "code": "def __init__(self, request, template, context=None, content_type=None,\n            status=None, current_app=_current_app_undefined, charset=None,\n            using=None):\n        # As a convenience we'll allow callers to provide current_app without\n        # having to avoid needing to create the RequestContext directly\n        if current_app is not _current_app_undefined:\n            warnings.warn(\n                \"The current_app argument of TemplateResponse is deprecated. \"\n                \"Set the current_app attribute of its request instead.\",\n                RemovedInDjango110Warning, stacklevel=2)\n            request.current_app = current_app\n        super(TemplateResponse, self).__init__(\n            template, context, content_type, status, charset, using)\n        self._request = request"
+        },
+        {
+          "file": "django/template/response.py",
+          "type": "function",
+          "name": "_resolve_template",
+          "class_name": "SimpleTemplateResponse",
+          "code": "def _resolve_template(self, template):\n        # This wrapper deprecates returning a django.template.Template in\n        # subclasses that override resolve_template. It can be removed in\n        # Django 1.10.\n        new_template = self.resolve_template(template)\n        if isinstance(new_template, Template):\n            warnings.warn(\n                \"{}.resolve_template() must return a backend-specific \"\n                \"template like those created by get_template(), not a \"\n                \"{}.\".format(\n                    self.__class__.__name__, new_template.__class__.__name__),\n                RemovedInDjango110Warning, stacklevel=2)\n            new_template = BackendTemplate(new_template)\n        return new_template"
+        }
+      ]
+    },
+    {
+      "pr_number": 11119,
+      "pr_title": "Fixed #29791 -- Honor engine's autoescape attribute in render_to_string",
+      "pr_body": "Passed down autoescape value from Engine to Context in Engine.render_to_string.",
+      "issue_id": 29791,
+      "issue_title": "Engine.render_to_string() should honor the autoescape attribute",
+      "issue_body": "In\nEngine.render_to_string\n, a\nContext\nis created without specifying the engine\nautoescape\nattribute. So if you create en engine with\nautoescape=False\nand then call its\nrender_to_string()\nmethod, the result will always be autoescaped. It was probably overlooked in\n[19a5f6da329d58653bcda85]\n.",
+      "issue_closed_at": "2019-03-25T17:26:24",
+      "base_commit": "d4df5e1b0b1c643fe0fc521add0236764ec8e92a",
+      "changes": [
+        {
+          "file": "django/template/engine.py",
+          "type": "function",
+          "name": "render_to_string",
+          "class_name": "Engine",
+          "code": "def render_to_string(self, template_name, context=None):\n        \"\"\"\n        Render the template specified by template_name with the given context.\n        For use in Django's test suite.\n        \"\"\"\n        if isinstance(template_name, (list, tuple)):\n            t = self.select_template(template_name)\n        else:\n            t = self.get_template(template_name)\n        # Django < 1.8 accepted a Context in `context` even though that's\n        # unintended. Preserve this ability but don't rewrap `context`.\n        if isinstance(context, Context):\n            return t.render(context)\n        else:\n            return t.render(Context(context))"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,158 @@
+{
+  "instance_id": "sympy__sympy-13480",
+  "repo": "sympy/sympy",
+  "created_at": "2017-10-18T17:27:03Z",
+  "problem_statement": ".subs on coth(log(tan(x))) errors for certain integral values\n    >>> from sympy import *\r\n    >>> x = Symbol('x')\r\n    >>> e = coth(log(tan(x)))\r\n    >>> print(e.subs(x, 2))\r\n    ...\r\n    File \"C:\\Users\\E\\Desktop\\sympy-master\\sympy\\functions\\elementary\\hyperbolic.py\", line 590, in eval\r\n        if cotm is S.ComplexInfinity:\r\n    NameError: name 'cotm' is not defined\r\n\r\nFails for 2, 3, 5, 6, 8, 9, 11, 12, 13, 15, 18, ... etc.\n",
+  "patch": "diff --git a/sympy/functions/elementary/hyperbolic.py b/sympy/functions/elementary/hyperbolic.py\n--- a/sympy/functions/elementary/hyperbolic.py\n+++ b/sympy/functions/elementary/hyperbolic.py\n@@ -587,7 +587,7 @@ def eval(cls, arg):\n                 x, m = _peeloff_ipi(arg)\n                 if m:\n                     cothm = coth(m)\n-                    if cotm is S.ComplexInfinity:\n+                    if cothm is S.ComplexInfinity:\n                         return coth(x)\n                     else: # cothm == 0\n                         return tanh(x)\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8548,
+      "pr_title": "Issue #6988: expand_log(exp(x), force=True) = x",
+      "pr_body": "This is a try to fix issue #6988. If I made some mistake just let me know, as I'm still new to sympy development.\n\n```\nIn [9]: expand_log(log(exp(x)), force=True)\nOut[9]: x\n\nIn [10]: expand_log(log(y**(x)), force=True)\nOut[10]: x\u22c5log(y)\n```\n",
+      "issue_id": 6988,
+      "issue_title": "expand_log(exp(x), force=True) should give x",
+      "issue_body": "```\nIn [5]: expand_log(log(exp(x)), force=True)\nOut[5]:\n   \u239b x\u239e\nlog\u239d\u212f \u23a0\n\nIn [6]: expand_log(log(y**(x)), force=True)\nOut[6]: x\u22c5log(y) Issue 1799 is probably to blame.\n```\n\nOriginal issue for #6988: http://code.google.com/p/sympy/issues/detail?id=3889\nOriginal author: https://code.google.com/u/asmeurer@gmail.com/\n",
+      "issue_closed_at": "2014-12-03T13:34:14Z",
+      "base_commit": "e6fc53f27ee872b27bc79b96529fc4bf34d4f023",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/exponential.py",
+          "type": "function",
+          "name": "_eval_expand_log",
+          "class_name": "log",
+          "code": "def _eval_expand_log(self, deep=True, **hints):\n        from sympy import unpolarify\n        from sympy.concrete import Sum, Product\n        force = hints.get('force', False)\n        arg = self.args[0]\n        if arg.is_Integer:\n            # remove perfect powers\n            p = perfect_power(int(arg))\n            if p is not False:\n                return p[1]*self.func(p[0])\n        elif arg.is_Mul:\n            expr = []\n            nonpos = []\n            for x in arg.args:\n                if force or x.is_positive or x.is_polar:\n                    a = self.func(x)\n                    if isinstance(a, log):\n                        expr.append(self.func(x)._eval_expand_log(**hints))\n                    else:\n                        expr.append(a)\n                elif x.is_negative:\n                    a = self.func(-x)\n                    expr.append(a)\n                    nonpos.append(S.NegativeOne)\n                else:\n                    nonpos.append(x)\n            return Add(*expr) + log(Mul(*nonpos))\n        elif arg.is_Pow:\n            if force or (arg.exp.is_real and arg.base.is_positive) or \\\n                    arg.base.is_polar:\n                b = arg.base\n                e = arg.exp\n                a = self.func(b)\n                if isinstance(a, log):\n                    return unpolarify(e) * a._eval_expand_log(**hints)\n                else:\n                    return unpolarify(e) * a\n        elif isinstance(arg, Product):\n            if arg.function.is_positive:\n                return Sum(log(arg.function), *arg.limits)\n\n        return self.func(arg)"
+        }
+      ]
+    },
+    {
+      "pr_number": 12920,
+      "pr_title": "fix Piecewise assumptions",
+      "pr_body": "fixes #10258\r\n",
+      "issue_id": 10258,
+      "issue_title": "Relational involving Piecewise evaluates incorrectly as True",
+      "issue_body": "``` python\n>>> p = Piecewise((1,x<0),(0,True)); p\nPiecewise((1, x < 0), (0, True))\n>>> p > 0\nTrue  <---- should not evaluate since if x >= 0, the value of the Piecewise is 0 which is not gt 0\n```\n",
+      "issue_closed_at": "2017-07-12T13:10:41Z",
+      "base_commit": "3a771edb034c81957c0975ca06f0e0d51ab3741b",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/piecewise.py",
+          "type": "function",
+          "name": "_eval_subs",
+          "class_name": "Piecewise",
+          "code": "def _eval_subs(self, old, new):\n        \"\"\"\n        Piecewise conditions may contain bool which are not of Basic type.\n        \"\"\"\n        args = list(self.args)\n        for i, (e, c) in enumerate(args):\n            if isinstance(c, bool):\n                pass\n            elif isinstance(c, Basic):\n                c = c._subs(old, new)\n            if c != False:\n                e = e._subs(old, new)\n            args[i] = e, c\n            if c == True:\n                return self.func(*args)\n\n        return self.func(*args)"
+        },
+        {
+          "file": "sympy/functions/elementary/piecewise.py",
+          "type": "function",
+          "name": "_eval_template_is_attr",
+          "class_name": "Piecewise",
+          "code": "def _eval_template_is_attr(self, is_attr, when_multiple=None):\n        b = None\n        for expr, _ in self.args:\n            a = getattr(expr, is_attr)\n            if a is None:\n                return None\n            if b is None:\n                b = a\n            elif b is not a:\n                return when_multiple\n        return b"
+        }
+      ]
+    },
+    {
+      "pr_number": 13131,
+      "pr_title": "Fix powsimp issues #9183, #10095, and KeyError",
+      "pr_body": "- Fixed powsimp raising ValueError when base is float and Pow is argument of Mul. Since multiplicity expects integer or rational but powsimp doesn't checks it, it raises ValueError: fixes #9183\r\n- Fixed Pow.as_numer_denom() returning nan when either numerator or denominator of base is 1 and exp is infinite. Since 1**oo is NaN, numerator or denominator becomes NaN: fixes #10095\r\n- Fixed powsimp raising KeyError in common_b[b] = common_b[b] + e, when one base is Float and another is equal Rational(Integer). This seems to be caused by #11707.\r\n\r\n~**Thing(s) to consider:** Should we automatically evaluate k**oo to zero where k is in (-1, 1), i.e., `(1/(2*E))**oo`?~",
+      "issue_id": 10095,
+      "issue_title": "simplify((1/(2*E))**oo) returns `nan`",
+      "issue_body": "```\n>>> (1/(2*E))**oo\n(1/(2*E))**oo\n>>> simplify((1/(2*E))**oo)\nnan\n>>> powsimp((1/(2*E))**oo)\n(1/(2*E))**oo\n```\n",
+      "issue_closed_at": "2017-09-09T23:38:26Z",
+      "base_commit": "dceb708ca035c568c816d9457af1b7ca9e57c0a5",
+      "changes": [
+        {
+          "file": "sympy/core/power.py",
+          "type": "function",
+          "name": "as_numer_denom",
+          "class_name": "Pow",
+          "code": "def as_numer_denom(self):\n        if not self.is_commutative:\n            return self, S.One\n        base, exp = self.as_base_exp()\n        n, d = base.as_numer_denom()\n        # this should be the same as ExpBase.as_numer_denom wrt\n        # exponent handling\n        neg_exp = exp.is_negative\n        if not neg_exp and not (-exp).is_negative:\n            neg_exp = _coeff_isneg(exp)\n        int_exp = exp.is_integer\n        # the denominator cannot be separated from the numerator if\n        # its sign is unknown unless the exponent is an integer, e.g.\n        # sqrt(a/b) != sqrt(a)/sqrt(b) when a=1 and b=-1. But if the\n        # denominator is negative the numerator and denominator can\n        # be negated and the denominator (now positive) separated.\n        if not (d.is_real or int_exp):\n            n = base\n            d = S.One\n        dnonpos = d.is_nonpositive\n        if dnonpos:\n            n, d = -n, -d\n        elif dnonpos is None and not int_exp:\n            n = base\n            d = S.One\n        if neg_exp:\n            n, d = d, n\n            exp = -exp\n        return self.func(n, exp), self.func(d, exp)"
+        },
+        {
+          "file": "sympy/simplify/powsimp.py",
+          "type": "function",
+          "name": "recurse",
+          "class_name": null,
+          "code": "def recurse(arg, **kwargs):\n        _deep = kwargs.get('deep', deep)\n        _combine = kwargs.get('combine', combine)\n        _force = kwargs.get('force', force)\n        _measure = kwargs.get('measure', measure)\n        return powsimp(arg, _deep, _combine, _force, _measure)"
+        },
+        {
+          "file": "sympy/simplify/powsimp.py",
+          "type": "function",
+          "name": "update",
+          "class_name": null,
+          "code": "def update(b):\n            '''Decide what to do with base, b. If its exponent is now an\n            integer multiple of the Rational denominator, then remove it\n            and put the factors of its base in the common_b dictionary or\n            update the existing bases if necessary. If it has been zeroed\n            out, simply remove the base.\n            '''\n            newe, r = divmod(common_b[b], b[1])\n            if not r:\n                common_b.pop(b)\n                if newe:\n                    for m in Mul.make_args(b[0]**newe):\n                        b, e = bkey(m)\n                        if b not in common_b:\n                            common_b[b] = 0\n                        common_b[b] += e\n                        if b[1] != 1:\n                            bases.append(b)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9256,
+      "pr_title": "fixes #7183: rewrite as sqrt, fibonacci(n) and lucas(n)",
+      "pr_body": "`Fibonacci` and `Lucas` can now be rewritten using `sqrt`.\n\n```\n>>> fibonacci(n).rewrite(sqrt)\n2**(-n)*sqrt(5)*((1 + sqrt(5))**n - (-sqrt(5) + 1)**n) / 5\n>>> lucas(n).rewrite(sqrt)\n2**(-n)*((1 + sqrt(5))**n + (-sqrt(5) + 1)**n)\n```\n\nFixes #7183\n",
+      "issue_id": 7183,
+      "issue_title": "fibonacci(n).rewrite(sqrt) returns fibonacci(n)",
+      "issue_body": "```\nfibonacci(n).rewrite(sqrt) should return:\n2**(-n)*sqrt(5)*((1 + sqrt(5))**n - (-sqrt(5) + 1)**n)/5\n\nIt seems finbonacci._eval_rewrite_sqrt() is not implemented.\n```\n\nOriginal issue for #7183: http://code.google.com/p/sympy/issues/detail?id=4084\nOriginal author: https://code.google.com/u/118279007905392951376/\n",
+      "issue_closed_at": "2015-04-15T19:21:05Z",
+      "base_commit": "56c63a9bb0f7c9a70a7fc1d27b21022c0dfb85e9",
+      "changes": [
+        {
+          "file": "sympy/functions/combinatorial/numbers.py",
+          "type": "line",
+          "name": "line 19",
+          "code": "from sympy.functions.elementary.exponential import log\nfrom sympy.functions.elementary.integers import floor\nfrom sympy.functions.elementary.trigonometric import sin, cos, cot\n\nfrom mpmath import bernfrac, workprec\nfrom mpmath.libmp import ifib as _ifib"
+        },
+        {
+          "file": "sympy/functions/combinatorial/numbers.py",
+          "type": "function",
+          "name": "eval",
+          "class_name": "genocchi",
+          "code": "def eval(cls, n):\n        if n.is_Number:\n            if (not n.is_Integer) or n.is_nonpositive:\n                raise ValueError(\"Genocchi numbers are defined only for \" +\n                                 \"positive integers\")\n            return 2 * (1 - S(2) ** n) * bernoulli(n)\n\n        if n.is_odd and (n - 1).is_positive:\n            return S.Zero\n\n        if (n - 1).is_zero:\n            return S.One"
+        },
+        {
+          "file": "sympy/functions/combinatorial/numbers.py",
+          "type": "function",
+          "name": "eval",
+          "class_name": "genocchi",
+          "code": "def eval(cls, n):\n        if n.is_Number:\n            if (not n.is_Integer) or n.is_nonpositive:\n                raise ValueError(\"Genocchi numbers are defined only for \" +\n                                 \"positive integers\")\n            return 2 * (1 - S(2) ** n) * bernoulli(n)\n\n        if n.is_odd and (n - 1).is_positive:\n            return S.Zero\n\n        if (n - 1).is_zero:\n            return S.One"
+        }
+      ]
+    },
+    {
+      "pr_number": 12270,
+      "pr_title": "fix bug in extract_multiplicatively()",
+      "pr_body": "Fixes #12254 .\r\nCan you review this and suggest improvements @smichr, @cbm755 ?\r\n\r\nAnd consider this test case : \r\n```\r\n>>> (4*y**2*(-x*y-2*y)).extract_multiplicatively(-2*y)\r\n```\r\nI am not sure whether we should return ```None``` or ```2*x*y**2 + 4*y**2``` ,  currently it returns ```None```",
+      "issue_id": 12254,
+      "issue_title": "cannot extract_multiplicatively(-2) from (-2*x - 2*y)",
+      "issue_body": "I think this might be a bug.\r\n````\r\n>>> (2+4*I).extract_multiplicatively(2)    # yes\r\n1 + 2*I\r\n>>> (-2-4*I).extract_multiplicatively(-1)   # yes\r\n2 + 4*I\r\n>>> (-2-4*I).extract_multiplicatively(-2)   # bug?\r\n````\r\nsimilarly:\r\n````\r\n>>> (2*x + 4*y + 8).extract_multiplicatively(2)   # yes\r\nx + 2*y + 4\r\n>>> (-2*x - 4*y - 8).extract_multiplicatively(2)    # yes\r\n-x - 2*y - 4\r\n>>> (-2*x - 4*y - 8).extract_multiplicatively(-1)    # yes\r\n2*x + 4*y + 8\r\n>>> (-2*x - 4*y - 8).extract_multiplicatively(-2)    # bug?\r\n````\r\n\r\nAssuming it is indeed a bug, here is why it happens:\r\n\r\nLook in `core/expr.py` where:\r\n````\r\n>>> (-2*x - 4*y - 8).primitive()\r\n(2, -x - 2*y - 4)\r\n````\r\nwhich is then made into a *non-evaluated* `Mul`, from which `-2` cannot be multiplicatively extracted; for example:\r\n````\r\n>>> Mul(2, -x).extract_multiplicatively(-2)\r\nx\r\n>>> Mul(2, -x, evaluate=False).extract_multiplicatively(-2)\r\n````\r\n@smichr do you think this is bug? (see your commit 8968b85310506c0a2b34f3d7aeb8e0d88f87885b: not clear whether we still need this special case anyway)",
+      "issue_closed_at": "2017-03-11T15:24:28Z",
+      "base_commit": "a79801c044c2b0ed74176e4abc18f4ca2b38ac58",
+      "changes": [
+        {
+          "file": "sympy/core/expr.py",
+          "type": "line",
+          "name": "line 11",
+          "code": "\nfrom collections import defaultdict\n\n\nclass Expr(Basic, EvalfMixin):\n    \"\"\"\n    Base class for algebraic expressions."
+        },
+        {
+          "file": "sympy/core/expr.py",
+          "type": "function",
+          "name": "extract_multiplicatively",
+          "class_name": "Expr",
+          "code": "def extract_multiplicatively(self, c):\n        \"\"\"Return None if it's not possible to make self in the form\n           c * something in a nice way, i.e. preserving the properties\n           of arguments of self.\n\n           >>> from sympy import symbols, Rational\n\n           >>> x, y = symbols('x,y', real=True)\n\n           >>> ((x*y)**3).extract_multiplicatively(x**2 * y)\n           x*y**2\n\n           >>> ((x*y)**3).extract_multiplicatively(x**4 * y)\n\n           >>> (2*x).extract_multiplicatively(2)\n           x\n\n           >>> (2*x).extract_multiplicatively(3)\n\n           >>> (Rational(1, 2)*x).extract_multiplicatively(3)\n           x/6\n\n        \"\"\"\n        c = sympify(c)\n        if self is S.NaN:\n            return None\n        if c is S.One:\n            return self\n        elif c == self:\n            return S.One\n        if c.is_Add:\n            cc, pc = c.primitive()\n            if cc is not S.One:\n                c = Mul(cc, pc, evaluate=False)\n        if c.is_Mul:\n            a, b = c.as_two_terms()\n            x = self.extract_multiplicatively(a)\n            if x is not None:\n                return x.extract_multiplicatively(b)\n        quotient = self / c\n        if self.is_Number:\n            if self is S.Infinity:\n                if c.is_positive:\n                    return S.Infinity\n            elif self is S.NegativeInfinity:\n                if c.is_negative:\n                    return S.Infinity\n                elif c.is_positive:\n                    return S.NegativeInfinity\n            elif self is S.ComplexInfinity:\n                if not c.is_zero:\n                    return S.ComplexInfinity\n            elif self.is_Integer:\n                if not quotient.is_Integer:\n                    return None\n                elif self.is_positive and quotient.is_negative:\n                    return None\n                else:\n                    return quotient\n            elif self.is_Rational:\n                if not quotient.is_Rational:\n                    return None\n                elif self.is_positive and quotient.is_negative:\n                    return None\n                else:\n                    return quotient\n            elif self.is_Float:\n                if not quotient.is_Float:\n                    return None\n                elif self.is_positive and quotient.is_negative:\n                    return None\n                else:\n                    return quotient\n        elif self.is_NumberSymbol or self.is_Symbol or self is S.ImaginaryUnit:\n            if quotient.is_Mul and len(quotient.args) == 2:\n                if quotient.args[0].is_Integer and quotient.args[0].is_positive and quotient.args[1] == self:\n                    return quotient\n            elif quotient.is_Integer and c.is_Number:\n                return quotient\n        elif self.is_Add:\n            cs, ps = self.primitive()\n            if cs is not S.One:\n                return Mul(cs, ps, evaluate=False).extract_multiplicatively(c)\n            newargs = []\n            for arg in self.args:\n                newarg = arg.extract_multiplicatively(c)\n                if newarg is not None:\n                    newargs.append(newarg)\n                else:\n                    return None\n            return Add(*newargs)\n        elif self.is_Mul:\n            args = list(self.args)\n            for i, arg in enumerate(args):\n                newarg = arg.extract_multiplicatively(c)\n                if newarg is not None:\n                    args[i] = newarg\n                    return Mul(*args)\n        elif self.is_Pow:\n            if c.is_Pow and c.base == self.base:\n                new_exp = self.exp.extract_additively(c.exp)\n                if new_exp is not None:\n                    return self.base ** (new_exp)\n            elif c == self.base:\n                new_exp = self.exp.extract_additively(1)\n                if new_exp is not None:\n                    return self.base ** (new_exp)"
+        },
+        {
+          "file": "sympy/core/expr.py",
+          "type": "function",
+          "name": "extract_multiplicatively",
+          "class_name": "Expr",
+          "code": "def extract_multiplicatively(self, c):\n        \"\"\"Return None if it's not possible to make self in the form\n           c * something in a nice way, i.e. preserving the properties\n           of arguments of self.\n\n           >>> from sympy import symbols, Rational\n\n           >>> x, y = symbols('x,y', real=True)\n\n           >>> ((x*y)**3).extract_multiplicatively(x**2 * y)\n           x*y**2\n\n           >>> ((x*y)**3).extract_multiplicatively(x**4 * y)\n\n           >>> (2*x).extract_multiplicatively(2)\n           x\n\n           >>> (2*x).extract_multiplicatively(3)\n\n           >>> (Rational(1, 2)*x).extract_multiplicatively(3)\n           x/6\n\n        \"\"\"\n        c = sympify(c)\n        if self is S.NaN:\n            return None\n        if c is S.One:\n            return self\n        elif c == self:\n            return S.One\n        if c.is_Add:\n            cc, pc = c.primitive()\n            if cc is not S.One:\n                c = Mul(cc, pc, evaluate=False)\n        if c.is_Mul:\n            a, b = c.as_two_terms()\n            x = self.extract_multiplicatively(a)\n            if x is not None:\n                return x.extract_multiplicatively(b)\n        quotient = self / c\n        if self.is_Number:\n            if self is S.Infinity:\n                if c.is_positive:\n                    return S.Infinity\n            elif self is S.NegativeInfinity:\n                if c.is_negative:\n                    return S.Infinity\n                elif c.is_positive:\n                    return S.NegativeInfinity\n            elif self is S.ComplexInfinity:\n                if not c.is_zero:\n                    return S.ComplexInfinity\n            elif self.is_Integer:\n                if not quotient.is_Integer:\n                    return None\n                elif self.is_positive and quotient.is_negative:\n                    return None\n                else:\n                    return quotient\n            elif self.is_Rational:\n                if not quotient.is_Rational:\n                    return None\n                elif self.is_positive and quotient.is_negative:\n                    return None\n                else:\n                    return quotient\n            elif self.is_Float:\n                if not quotient.is_Float:\n                    return None\n                elif self.is_positive and quotient.is_negative:\n                    return None\n                else:\n                    return quotient\n        elif self.is_NumberSymbol or self.is_Symbol or self is S.ImaginaryUnit:\n            if quotient.is_Mul and len(quotient.args) == 2:\n                if quotient.args[0].is_Integer and quotient.args[0].is_positive and quotient.args[1] == self:\n                    return quotient\n            elif quotient.is_Integer and c.is_Number:\n                return quotient\n        elif self.is_Add:\n            cs, ps = self.primitive()\n            if cs is not S.One:\n                return Mul(cs, ps, evaluate=False).extract_multiplicatively(c)\n            newargs = []\n            for arg in self.args:\n                newarg = arg.extract_multiplicatively(c)\n                if newarg is not None:\n                    newargs.append(newarg)\n                else:\n                    return None\n            return Add(*newargs)\n        elif self.is_Mul:\n            args = list(self.args)\n            for i, arg in enumerate(args):\n                newarg = arg.extract_multiplicatively(c)\n                if newarg is not None:\n                    args[i] = newarg\n                    return Mul(*args)\n        elif self.is_Pow:\n            if c.is_Pow and c.base == self.base:\n                new_exp = self.exp.extract_additively(c.exp)\n                if new_exp is not None:\n                    return self.base ** (new_exp)\n            elif c == self.base:\n                new_exp = self.exp.extract_additively(1)\n                if new_exp is not None:\n                    return self.base ** (new_exp)"
+        },
+        {
+          "file": "sympy/core/expr.py",
+          "type": "function",
+          "name": "extract_multiplicatively",
+          "class_name": "Expr",
+          "code": "def extract_multiplicatively(self, c):\n        \"\"\"Return None if it's not possible to make self in the form\n           c * something in a nice way, i.e. preserving the properties\n           of arguments of self.\n\n           >>> from sympy import symbols, Rational\n\n           >>> x, y = symbols('x,y', real=True)\n\n           >>> ((x*y)**3).extract_multiplicatively(x**2 * y)\n           x*y**2\n\n           >>> ((x*y)**3).extract_multiplicatively(x**4 * y)\n\n           >>> (2*x).extract_multiplicatively(2)\n           x\n\n           >>> (2*x).extract_multiplicatively(3)\n\n           >>> (Rational(1, 2)*x).extract_multiplicatively(3)\n           x/6\n\n        \"\"\"\n        c = sympify(c)\n        if self is S.NaN:\n            return None\n        if c is S.One:\n            return self\n        elif c == self:\n            return S.One\n        if c.is_Add:\n            cc, pc = c.primitive()\n            if cc is not S.One:\n                c = Mul(cc, pc, evaluate=False)\n        if c.is_Mul:\n            a, b = c.as_two_terms()\n            x = self.extract_multiplicatively(a)\n            if x is not None:\n                return x.extract_multiplicatively(b)\n        quotient = self / c\n        if self.is_Number:\n            if self is S.Infinity:\n                if c.is_positive:\n                    return S.Infinity\n            elif self is S.NegativeInfinity:\n                if c.is_negative:\n                    return S.Infinity\n                elif c.is_positive:\n                    return S.NegativeInfinity\n            elif self is S.ComplexInfinity:\n                if not c.is_zero:\n                    return S.ComplexInfinity\n            elif self.is_Integer:\n                if not quotient.is_Integer:\n                    return None\n                elif self.is_positive and quotient.is_negative:\n                    return None\n                else:\n                    return quotient\n            elif self.is_Rational:\n                if not quotient.is_Rational:\n                    return None\n                elif self.is_positive and quotient.is_negative:\n                    return None\n                else:\n                    return quotient\n            elif self.is_Float:\n                if not quotient.is_Float:\n                    return None\n                elif self.is_positive and quotient.is_negative:\n                    return None\n                else:\n                    return quotient\n        elif self.is_NumberSymbol or self.is_Symbol or self is S.ImaginaryUnit:\n            if quotient.is_Mul and len(quotient.args) == 2:\n                if quotient.args[0].is_Integer and quotient.args[0].is_positive and quotient.args[1] == self:\n                    return quotient\n            elif quotient.is_Integer and c.is_Number:\n                return quotient\n        elif self.is_Add:\n            cs, ps = self.primitive()\n            if cs is not S.One:\n                return Mul(cs, ps, evaluate=False).extract_multiplicatively(c)\n            newargs = []\n            for arg in self.args:\n                newarg = arg.extract_multiplicatively(c)\n                if newarg is not None:\n                    newargs.append(newarg)\n                else:\n                    return None\n            return Add(*newargs)\n        elif self.is_Mul:\n            args = list(self.args)\n            for i, arg in enumerate(args):\n                newarg = arg.extract_multiplicatively(c)\n                if newarg is not None:\n                    args[i] = newarg\n                    return Mul(*args)\n        elif self.is_Pow:\n            if c.is_Pow and c.base == self.base:\n                new_exp = self.exp.extract_additively(c.exp)\n                if new_exp is not None:\n                    return self.base ** (new_exp)\n            elif c == self.base:\n                new_exp = self.exp.extract_additively(1)\n                if new_exp is not None:\n                    return self.base ** (new_exp)"
+        }
+      ]
+    }
+  ]
+}

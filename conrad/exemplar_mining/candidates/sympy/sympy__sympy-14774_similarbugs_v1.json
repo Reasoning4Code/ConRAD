@@ -1,0 +1,166 @@
+{
+  "instance_id": "sympy__sympy-14774",
+  "repo": "sympy/sympy",
+  "created_at": "2018-06-05T08:03:47Z",
+  "problem_statement": "Latex printer does not support full inverse trig function names for acsc and asec\nFor example\r\n`latex(asin(x), inv_trig_style=\"full\")` works as expected returning `'\\\\arcsin{\\\\left (x \\\\right )}'`\r\nBut `latex(acsc(x), inv_trig_style=\"full\")` gives `'\\\\operatorname{acsc}{\\\\left (x \\\\right )}'` instead of `'\\\\operatorname{arccsc}{\\\\left (x \\\\right )}'`\r\n\r\nA fix seems to be to change line 743 of sympy/printing/latex.py from\r\n`inv_trig_table = [\"asin\", \"acos\", \"atan\", \"acot\"]` to\r\n`inv_trig_table = [\"asin\", \"acos\", \"atan\", \"acsc\", \"asec\", \"acot\"]`\n",
+  "patch": "diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py\n--- a/sympy/printing/latex.py\n+++ b/sympy/printing/latex.py\n@@ -740,7 +740,7 @@ def _print_Function(self, expr, exp=None):\n                 len(args) == 1 and \\\n                 not self._needs_function_brackets(expr.args[0])\n \n-            inv_trig_table = [\"asin\", \"acos\", \"atan\", \"acot\"]\n+            inv_trig_table = [\"asin\", \"acos\", \"atan\", \"acsc\", \"asec\", \"acot\"]\n \n             # If the function is an inverse trig function, handle the style\n             if func in inv_trig_table:\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 11947,
+      "pr_title": "aligned middle of matrix with baseline",
+      "pr_body": "**Previous Output**: \r\n\r\n```\r\n>>> Z = Matrix(5,5, lambda i,j: i+j)\r\n>>> pprint(MatMul(2,Z))\r\n2\u22c5\u23a10  1  2  3  4\u23a4\r\n  \u23a2             \u23a5\r\n  \u23a21  2  3  4  5\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a22  3  4  5  6\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a23  4  5  6  7\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a34  5  6  7  8\u23a6\r\n```\r\n\r\n**Output after this PR**:\r\n```\r\n>>> Z = Matrix(5,5, lambda i,j: i+j)\r\n>>> pprint(MatMul(2,Z))\r\n  \u23a10  1  2  3  4\u23a4\r\n  \u23a2             \u23a5\r\n  \u23a21  2  3  4  5\u23a5\r\n  \u23a2             \u23a5\r\n2.\u23a22  3  4  5  6\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a23  4  5  6  7\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a34  5  6  7  8\u23a6\r\n```\r\nFixes #10472 . ",
+      "issue_id": 10472,
+      "issue_title": "pprint should align the middle of the matrix to the baseline?",
+      "issue_body": "Consider the current behaviour, where operators align with the top of the matrix:\n\n```\n>>> Z = Matrix(5,5, lambda i,j: i+j)\n>>> pprint(MatMul(2,Z))\n2\u22c5\u23a10  1  2  3  4\u23a4\n  \u23a2             \u23a5\n  \u23a21  2  3  4  5\u23a5\n  \u23a2             \u23a5\n  \u23a22  3  4  5  6\u23a5\n  \u23a2             \u23a5\n  \u23a23  4  5  6  7\u23a5\n  \u23a2             \u23a5\n  \u23a34  5  6  7  8\u23a6\n>>> pprint(MatAdd(Z,Z))\n\u23a10  1  2  3  4\u23a4 + \u23a10  1  2  3  4\u23a4\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a21  2  3  4  5\u23a5   \u23a21  2  3  4  5\u23a5\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a22  3  4  5  6\u23a5   \u23a22  3  4  5  6\u23a5\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a23  4  5  6  7\u23a5   \u23a23  4  5  6  7\u23a5\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a34  5  6  7  8\u23a6   \u23a34  5  6  7  8\u23a6\n```\n\nThis looks poor, but I figured it might be the desired behaviour...\n\nHere's the example that makes me think its wrong:\n\n```\n>>> pprint(sin((1+1/x)/(1+1/y)) + det(MatMul(2,Z)))\n   \u239b    1\u239e                       \n   \u239c1 + \u2500\u239f                       \n   \u239c    x\u239f                       \nsin\u239c\u2500\u2500\u2500\u2500\u2500\u239f + 32\u22c5\u2502\u23a10  1  2  3  4\u23a4\u2502\n   \u239c    1\u239f      \u2502\u23a2             \u23a5\u2502\n   \u239c1 + \u2500\u239f      \u2502\u23a21  2  3  4  5\u23a5\u2502\n   \u239d    y\u23a0      \u2502\u23a2             \u23a5\u2502\n                \u2502\u23a22  3  4  5  6\u23a5\u2502\n                \u2502\u23a2             \u23a5\u2502\n                \u2502\u23a23  4  5  6  7\u23a5\u2502\n                \u2502\u23a2             \u23a5\u2502\n                \u2502\u23a34  5  6  7  8\u23a6\u2502\n```\n\nHere's how I think it should work, using the proposed #10423:\n\n```\npprint(sin((1+1/x)/y) + Trace(Z))\n               \u239b\u23a10  1  2  3  4\u23a4\u239e\n   \u239b    1\u239e     \u239c\u23a2             \u23a5\u239f\n   \u239c1 + \u2500\u239f     \u239c\u23a21  2  3  4  5\u23a5\u239f\n   \u239c    x\u239f     \u239c\u23a2             \u23a5\u239f\nsin\u239c\u2500\u2500\u2500\u2500\u2500\u239f + tr\u239c\u23a22  3  4  5  6\u23a5\u239f\n   \u239d  y  \u23a0     \u239c\u23a2             \u23a5\u239f\n               \u239c\u23a23  4  5  6  7\u23a5\u239f\n               \u239c\u23a2             \u23a5\u239f\n               \u239d\u23a34  5  6  7  8\u23a6\u23a0\n```\n\nwhere note the `sin` alignment is by-design, and (relevant to this bug) the `+` and `tr` operator line up with `sin`.\n\nAt least, det, MatAdd, MatMul, MatPow would need fixed, maybe others I haven't thought of.\n",
+      "issue_closed_at": "2016-12-22T06:52:11Z",
+      "base_commit": "9a724a42c033c1aae97064947a0f44ec3b922d73",
+      "changes": [
+        {
+          "file": "sympy/matrices/expressions/matadd.py",
+          "type": "function",
+          "name": "merge_explicit",
+          "class_name": null,
+          "code": "def merge_explicit(matadd):\n    \"\"\" Merge explicit MatrixBase arguments\n\n    >>> from sympy import MatrixSymbol, eye, Matrix, MatAdd, pprint\n    >>> from sympy.matrices.expressions.matadd import merge_explicit\n    >>> A = MatrixSymbol('A', 2, 2)\n    >>> B = eye(2)\n    >>> C = Matrix([[1, 2], [3, 4]])\n    >>> X = MatAdd(A, B, C)\n    >>> pprint(X)\n    A + [1  0] + [1  2]\n        [    ]   [    ]\n        [0  1]   [3  4]\n    >>> pprint(merge_explicit(X))\n    A + [2  2]\n        [    ]\n        [3  5]\n    \"\"\"\n    groups = sift(matadd.args, lambda arg: isinstance(arg, MatrixBase))\n    if len(groups[True]) > 1:\n        return MatAdd(*(groups[False] + [reduce(add, groups[True])]))\n    else:\n        return matadd"
+        },
+        {
+          "file": "sympy/matrices/expressions/matmul.py",
+          "type": "function",
+          "name": "merge_explicit",
+          "class_name": null,
+          "code": "def merge_explicit(matmul):\n    \"\"\" Merge explicit MatrixBase arguments\n\n    >>> from sympy import MatrixSymbol, eye, Matrix, MatMul, pprint\n    >>> from sympy.matrices.expressions.matmul import merge_explicit\n    >>> A = MatrixSymbol('A', 2, 2)\n    >>> B = Matrix([[1, 1], [1, 1]])\n    >>> C = Matrix([[1, 2], [3, 4]])\n    >>> X = MatMul(A, B, C)\n    >>> pprint(X)\n    A*[1  1]*[1  2]\n      [    ] [    ]\n      [1  1] [3  4]\n    >>> pprint(merge_explicit(X))\n    A*[4  6]\n      [    ]\n      [4  6]\n\n    >>> X = MatMul(B, A, C)\n    >>> pprint(X)\n    [1  1]*A*[1  2]\n    [    ]   [    ]\n    [1  1]   [3  4]\n    >>> pprint(merge_explicit(X))\n    [1  1]*A*[1  2]\n    [    ]   [    ]\n    [1  1]   [3  4]\n    \"\"\"\n    if not any(isinstance(arg, MatrixBase) for arg in matmul.args):\n        return matmul\n    newargs = []\n    last = matmul.args[0]\n    for arg in matmul.args[1:]:\n        if isinstance(arg, (MatrixBase, Number)) and isinstance(last, (MatrixBase, Number)):\n            last = last * arg\n        else:\n            newargs.append(last)\n            last = arg\n    newargs.append(last)\n\n    return MatMul(*newargs)"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_matrix_contents",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_matrix_contents(self, e):\n        \"\"\"\n        This method factors out what is essentially grid printing.\n        \"\"\"\n        M = e   # matrix\n        Ms = {}  # i,j -> pretty(M[i,j])\n        for i in range(M.rows):\n            for j in range(M.cols):\n                Ms[i, j] = self._print(M[i, j])\n\n        # h- and v- spacers\n        hsep = 2\n        vsep = 1\n\n        # max width for columns\n        maxw = [-1] * M.cols\n\n        for j in range(M.cols):\n            maxw[j] = max([Ms[i, j].width() for i in range(M.rows)] or [0])\n\n        # drawing result\n        D = None\n\n        for i in range(M.rows):\n\n            D_row = None\n            for j in range(M.cols):\n                s = Ms[i, j]\n\n                # reshape s to maxw\n                # XXX this should be generalized, and go to stringPict.reshape ?\n                assert s.width() <= maxw[j]\n\n                # hcenter it, +0.5 to the right                        2\n                # ( it's better to align formula starts for say 0 and r )\n                # XXX this is not good in all cases -- maybe introduce vbaseline?\n                wdelta = maxw[j] - s.width()\n                wleft = wdelta // 2\n                wright = wdelta - wleft\n\n                s = prettyForm(*s.right(' '*wright))\n                s = prettyForm(*s.left(' '*wleft))\n\n                # we don't need vcenter cells -- this is automatically done in\n                # a pretty way because when their baselines are taking into\n                # account in .right()\n\n                if D_row is None:\n                    D_row = s   # first box in a row\n                    continue\n\n                D_row = prettyForm(*D_row.right(' '*hsep))  # h-spacer\n                D_row = prettyForm(*D_row.right(s))\n\n            if D is None:\n                D = D_row       # first row in a picture\n                continue\n\n            # v-spacer\n            for _ in range(vsep):\n                D = prettyForm(*D.below(' '))\n\n            D = prettyForm(*D.below(D_row))\n\n        if D is None:\n            D = prettyForm('')  # Empty Matrix\n\n        return D"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_MatrixElement",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_MatrixElement(self, expr):\n        from sympy.matrices import MatrixSymbol\n        from sympy import Symbol\n        if (isinstance(expr.parent, MatrixSymbol)\n                and expr.i.is_number and expr.j.is_number):\n            return self._print(\n                    Symbol(expr.parent.name + '_%d%d'%(expr.i, expr.j)))\n        else:\n            prettyFunc = self._print(expr.parent)\n            prettyIndices = self._print_seq((expr.i, expr.j), delimiter=', '\n                    ).parens(left='[', right=']')[0]\n            pform = prettyForm(binding=prettyForm.FUNC,\n                    *stringPict.next(prettyFunc, prettyIndices))\n\n            # store pform parts so it can be reassembled e.g. when powered\n            pform.prettyFunc = prettyFunc\n            pform.prettyArgs = prettyIndices\n\n            return pform"
+        }
+      ]
+    },
+    {
+      "pr_number": 13564,
+      "pr_title": "Resolves RecursionError in latex representation",
+      "pr_body": "fixes #13559. It was due to factor of `1/1`  \r\n```python\r\nexpr = parse_expr('5/1', evaluate=False)\r\nexpr.args\r\n```\r\nit gives `(5 , 1/1)` , which was not handled properly in latex conversion . So everytime an expression was divided by 1 , it resulted in RecursionError",
+      "issue_id": 13559,
+      "issue_title": "LaTeX representation raises RecursionError",
+      "issue_body": "LaTeX representation of an expression that has division by 1 causes `RecursionError`. SymPy version: 1.1.1.\r\n\r\nCode to reproduce the bug:\r\n```python\r\nfrom sympy import latex\r\nfrom sympy.parsing.sympy_parser import parse_expr\r\n\r\nexpr = parse_expr('2/1', evaluate=False)\r\nlatex(expr)\r\n```\r\nOutput:\r\n```\r\n...\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/printer.py in _print(self, expr, *args, **kwargs)\r\n    255                 printmethod = '_print_' + cls.__name__\r\n    256                 if hasattr(self, printmethod):\r\n--> 257                     return getattr(self, printmethod)(expr, *args, **kwargs)\r\n    258             # Unknown object, fall back to the emptyPrinter.\r\n    259             return self.emptyPrinter(expr)\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/latex.py in _print_Pow(self, expr)\r\n    466         elif expr.exp.is_Rational and expr.exp.is_negative and expr.base.is_commutative:\r\n    467             # Things like 1/x\r\n--> 468             return self._print_Mul(expr)\r\n    469         else:\r\n    470             if expr.base.is_Function:\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/latex.py in _print_Mul(self, expr)\r\n    396             # use the original expression here, since fraction() may have\r\n    397             # altered it when producing numer and denom\r\n--> 398             tex += convert(expr)\r\n    399         else:\r\n    400             snumer = convert(numer)\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/latex.py in convert(expr)\r\n    366         def convert(expr):\r\n    367             if not expr.is_Mul:\r\n--> 368                 return str(self._print(expr))\r\n    369             else:\r\n    370                 _tex = last_term_tex = \"\"\r\n\r\n... last 4 frames repeated, from the frame below ...\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/printer.py in _print(self, expr, *args, **kwargs)\r\n    255                 printmethod = '_print_' + cls.__name__\r\n    256                 if hasattr(self, printmethod):\r\n--> 257                     return getattr(self, printmethod)(expr, *args, **kwargs)\r\n    258             # Unknown object, fall back to the emptyPrinter.\r\n    259             return self.emptyPrinter(expr)\r\n\r\nRecursionError: maximum recursion depth exceeded in comparison\r\n```\r\n",
+      "issue_closed_at": "2017-11-09T16:49:04Z",
+      "base_commit": "36d9c850c642bec047e2cbad0a07c48f4fc7c779",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Gradient",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Gradient(self, expr):\n        func = expr._expr\n        return r\"\\nabla\\cdot %s\" % self.parenthesize(func, PRECEDENCE['Mul'])"
+        },
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "convert",
+          "class_name": "LatexPrinter",
+          "code": "def convert(expr):\n            if not expr.is_Mul:\n                return str(self._print(expr))\n            else:\n                _tex = last_term_tex = \"\"\n\n                if self.order not in ('old', 'none'):\n                    args = expr.as_ordered_factors()\n                else:\n                    args = expr.args\n\n                for i, term in enumerate(args):\n                    term_tex = self._print(term)\n\n                    if self._needs_mul_brackets(term, first=(i == 0),\n                                                last=(i == len(args) - 1)):\n                        term_tex = r\"\\left(%s\\right)\" % term_tex\n\n                    if _between_two_numbers_p[0].search(last_term_tex) and \\\n                            _between_two_numbers_p[1].match(term_tex):\n                        # between two numbers\n                        _tex += numbersep\n                    elif _tex:\n                        _tex += separator\n\n                    _tex += term_tex\n                    last_term_tex = term_tex\n                return _tex"
+        }
+      ]
+    },
+    {
+      "pr_number": 12882,
+      "pr_title": "Checker functions for orthogonality of coordinate system",
+      "pr_body": "This PR introduce additional condition for transformation equation which must be fulfill. \r\nIn `vector` module we are dealing with orthogonal curvilinear coordinate system only, so we need to check if transformation equations are correctly defined.\r\n\r\nCloses #12852",
+      "issue_id": 12852,
+      "issue_title": "Vector module: make sure that the base vectors remain orthogonal",
+      "issue_body": "Given a generic transformation equation, make sure that the base vectors remain orthogonal, if not, raise an exception.",
+      "issue_closed_at": "2017-07-05T15:10:49Z",
+      "base_commit": "c87c0fbf1223c28db8590f2591f64db75d5bdd66",
+      "changes": [
+        {
+          "file": "sympy/vector/coordsysrect.py",
+          "type": "line",
+          "name": "line 4",
+          "code": "from sympy.core.cache import cacheit\nfrom sympy.core import S\nfrom sympy.vector.scalar import BaseScalar\nfrom sympy import eye, trigsimp, ImmutableMatrix as Matrix, Symbol, sin, cos, sqrt, diff, Tuple\nimport sympy.vector\nfrom sympy import simplify\nfrom sympy.vector.orienters import (Orienter, AxisOrienter, BodyOrienter,"
+        },
+        {
+          "file": "sympy/vector/coordsysrect.py",
+          "type": "function",
+          "name": "_connect_to_standard_cartesian",
+          "class_name": "CoordSys3D",
+          "code": "def _connect_to_standard_cartesian(self, curv_coord_type):\n        \"\"\"\n        Change the type of orthogonal curvilinear system. It could be done\n        by tuple of transformation equations or by choosing one of pre-defined\n        coordinate system.\n\n        Parameters\n        ==========\n\n        :param curv_coord_type: str, tuple\n\n        \"\"\"\n        if isinstance(curv_coord_type, string_types):\n            self._set_transformation_equations_mapping(curv_coord_type)\n            self._set_lame_coefficient_mapping(curv_coord_type)\n\n        elif isinstance(curv_coord_type, (tuple, list, Tuple)) and len(curv_coord_type) == 3:\n            self._transformation_eqs = curv_coord_type\n            self._h1, self._h2, self._h3 = self._calculate_lame_coefficients(curv_coord_type)\n\n        elif isinstance(curv_coord_type, (tuple, list, Tuple)) and len(curv_coord_type) == 2:\n            self._transformation_eqs = \\\n            tuple([eq.subs({curv_coord_type[0][0]: self.x,\n                            curv_coord_type[0][1]: self.y,\n                            curv_coord_type[0][2]: self.z}) for eq in curv_coord_type[1]])\n            self._h1, self._h2, self._h3 = self._calculate_lame_coefficients(self._transformation_equations())\n\n        else:\n            raise ValueError(\"Wrong set of parameter.\")"
+        }
+      ]
+    },
+    {
+      "pr_number": 10889,
+      "pr_title": "Fixed bug in Latex printing",
+      "pr_body": "This should fix #10821; the Latex _print_Mul function was inserting a negative sign at the beginning of a negative expression without worrying about parenthesis.\n",
+      "issue_id": 10821,
+      "issue_title": "latex bug for commutator output",
+      "issue_body": "There is a latex bug in the output of the function sympy.physics.quantum.commutator.doit that gives incorrect result if there is overall negative sign involved. For example, the following code does not give the correct expression for the latex output.\n\n``` python\nfrom sympy.physics.quantum import Commutator, Operator\nimport sympy\nA = Operator('A')\nB = Operator('B')\ncomm = Commutator(B, A)\nprint comm.doit()\nsympy.latex(comm.doit())\n```\n",
+      "issue_closed_at": "2016-03-23T20:40:37Z",
+      "base_commit": "f7a8dbec25b04767a3a6996c11a03781184d45d7",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Float",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Float(self, expr):\n        # Based off of that in StrPrinter\n        dps = prec_to_dps(expr._prec)\n        str_real = mlib.to_str(expr._mpf_, dps, strip_zeros=True)\n\n        # Must always have a mul symbol (as 2.5 10^{20} just looks odd)\n        # thus we use the number separator\n        separator = self._settings['mul_symbol_latex_numbers']\n\n        if 'e' in str_real:\n            (mant, exp) = str_real.split('e')\n\n            if exp[0] == '+':\n                exp = exp[1:]\n\n            return r\"%s%s10^{%s}\" % (mant, separator, exp)\n        elif str_real == \"+inf\":\n            return r\"\\infty\"\n        elif str_real == \"-inf\":\n            return r\"- \\infty\"\n        else:\n            return str_real"
+        },
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "convert",
+          "class_name": "LatexPrinter",
+          "code": "def convert(expr):\n            if not expr.is_Mul:\n                return str(self._print(expr))\n            else:\n                _tex = last_term_tex = \"\"\n\n                if self.order not in ('old', 'none'):\n                    args = expr.as_ordered_factors()\n                else:\n                    args = expr.args\n\n                for i, term in enumerate(args):\n                    term_tex = self._print(term)\n\n                    if self._needs_mul_brackets(term, first=(i == 0),\n                                                last=(i == len(args) - 1)):\n                        term_tex = r\"\\left(%s\\right)\" % term_tex\n\n                    if re.search(\"[0-9][} ]*$\", last_term_tex) and \\\n                            re.match(\"[{ ]*[-+0-9]\", term_tex):\n                        # between two numbers\n                        _tex += numbersep\n                    elif _tex:\n                        _tex += separator\n\n                    _tex += term_tex\n                    last_term_tex = term_tex\n                return _tex"
+        }
+      ]
+    },
+    {
+      "pr_number": 9009,
+      "pr_title": "MatrixExpr: add MatPow doit(), changes to doit for MatAdd, MatMul, Trace",
+      "pr_body": "I'm been looking at `doit()` support in MatrixExpr.  In particular, I'm interested in cases where these have ImmutableMatrices inside and they could be evaluated (e.g., after a substitution).\n\nHere are some fixes:\n- MatPow: added `doit()`.\n- MatPow: refactor my older `.as_explicit()` code to use the the `doit()`.\n- MatAdd: had rather ineffective `doit()`, improved.\n- MatMul: change the default from `deep=False` to `deep=True`.  I cannot find a reason for it, so I've switched it.\n- MatMul: clean up test code.\n- Trace: change the default to `deep=True`.\n\nThe `deep=True` changes might be controversial: if someone knows why it `deep=False` before, I could always revert that (and add a comment to the code!)\n\nAnyway, here is what it does:\n\n```\nIn [6]: A = Matrix([[1,2],[3,4]])\n\nIn [7]: B = Matrix([[2,3],[4,5]])\n\nIn [8]: n = Symbol('n', integer=True)\n\nIn [9]: w = MatPow(A, n) + MatMul(A, MatPow(B,2*n))\n\nIn [10]: pprint(w)\n               2\u22c5n           n\n\u23a11  2\u23a4\u22c5\u239b\u23a12  3\u23a4\u239e    + \u239b\u23a11  2\u23a4\u239e \n\u23a2    \u23a5 \u239c\u23a2    \u23a5\u239f      \u239c\u23a2    \u23a5\u239f \n\u23a33  4\u23a6 \u239d\u23a34  5\u23a6\u23a0      \u239d\u23a33  4\u23a6\u23a0 \n\nIn [21]: pprint(w.subs(n, 1))\n               2           1\n\u23a11  2\u23a4\u22c5\u239b\u23a12  3\u23a4\u239e  + \u239b\u23a11  2\u23a4\u239e \n\u23a2    \u23a5 \u239c\u23a2    \u23a5\u239f    \u239c\u23a2    \u23a5\u239f \n\u23a33  4\u23a6 \u239d\u23a34  5\u23a6\u23a0    \u239d\u23a33  4\u23a6\u23a0 \n\nIn [22]: pprint(w.subs(n, 1).doit())    % these fixes make this work\n\u23a173   97 \u23a4\n\u23a2        \u23a5\n\u23a3163  215\u23a6\n```\n",
+      "issue_id": 8138,
+      "issue_title": "MatExpr.doit: deep default should be True for Expr (and still False for MatExpr?)",
+      "issue_body": "I notice `MatExpr.doit()` has deep defaulting to False.  I assume that is deliberate (forget where but recall it looked deliberate).\n\nAnyway, deep should probably still default to True for any `Expr` (i.e., non-Matrix) it encounters.  \n\nConsider the following current behaviour:\n\n```\nx = S('x')\nn = S('n')\nA = MatrixSymbol('A', n, n)\nfive = Add(2, 3, evaluate=False)\n\nf = five*x\nG = five*A\n\nf.doit()\n# gives: 5*x\n\nG.doit()\n# gives: (2 + 3)*A\n```\n\nSame for `MatPow` where I saw this.\n",
+      "issue_closed_at": "2015-02-19T04:28:17Z",
+      "base_commit": "cf171b2f088bc6985f5973972425fa0a9fc65f31",
+      "changes": [
+        {
+          "file": "sympy/matrices/expressions/matadd.py",
+          "type": "function",
+          "name": "_eval_trace",
+          "class_name": "MatAdd",
+          "code": "def _eval_trace(self):\n        from trace import Trace\n        return MatAdd(*[Trace(arg) for arg in self.args]).doit()"
+        },
+        {
+          "file": "sympy/matrices/expressions/matmul.py",
+          "type": "function",
+          "name": "_eval_inverse",
+          "class_name": "MatMul",
+          "code": "def _eval_inverse(self):\n        try:\n            return MatMul(*[\n                arg.inverse() if isinstance(arg, MatrixExpr) else arg**-1\n                    for arg in self.args[::-1]]).doit()\n        except ShapeError:\n            from sympy.matrices.expressions.inverse import Inverse\n            return Inverse(self)"
+        },
+        {
+          "file": "sympy/matrices/expressions/matpow.py",
+          "type": "function",
+          "name": "shape",
+          "class_name": "MatPow",
+          "code": "def shape(self):\n        return self.base.shape"
+        },
+        {
+          "file": "sympy/matrices/expressions/trace.py",
+          "type": "function",
+          "name": "arg",
+          "class_name": "Trace",
+          "code": "def arg(self):\n        return self.args[0]"
+        }
+      ]
+    }
+  ]
+}

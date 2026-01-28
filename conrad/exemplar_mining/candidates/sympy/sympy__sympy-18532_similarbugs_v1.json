@@ -1,0 +1,145 @@
+{
+  "instance_id": "sympy__sympy-18532",
+  "repo": "sympy/sympy",
+  "created_at": "2020-02-01T17:26:30Z",
+  "problem_statement": "expr.atoms() should return objects with no args instead of subclasses of Atom\n`expr.atoms()` with no arguments returns subclasses of `Atom` in `expr`. But the correct definition of a leaf node should be that it has no `.args`. \n\nThis should be easy to fix, but one needs to check that this doesn't affect the performance. \n\n",
+  "patch": "diff --git a/sympy/core/basic.py b/sympy/core/basic.py\n--- a/sympy/core/basic.py\n+++ b/sympy/core/basic.py\n@@ -503,12 +503,11 @@ def atoms(self, *types):\n         if types:\n             types = tuple(\n                 [t if isinstance(t, type) else type(t) for t in types])\n+        nodes = preorder_traversal(self)\n+        if types:\n+            result = {node for node in nodes if isinstance(node, types)}\n         else:\n-            types = (Atom,)\n-        result = set()\n-        for expr in preorder_traversal(self):\n-            if isinstance(expr, types):\n-                result.add(expr)\n+            result = {node for node in nodes if not node.args}\n         return result\n \n     @property\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 16668,
+      "pr_title": "speed up Line/Segment intersections",
+      "pr_body": "<!-- Your title above should be a short description of what\r\nwas changed. Do not include the issue number in the title. -->\r\n\r\n#### References to other Issues or PRs\r\n<!-- If this pull request fixes an issue, write \"Fixes #NNNN\" in that exact\r\nformat, e.g. \"Fixes #1234\". See\r\nhttps://github.com/blog/1506-closing-issues-via-pull-requests . Please also\r\nwrite a comment on that issue linking back to this pull request once it is\r\nopen. -->\r\n\r\ncloses #16628\r\n\r\n#### Brief description of what is fixed or changed\r\n\r\nIntersections will return more quickly for Line/Segment interactions in 2D because a redundant check that the point is in the line has been eliminated.\r\n\r\nPoint containment in a 2D Segment now uses a quick check before using the triangle inequality.\r\n\r\n#### Other comments\r\n\r\nSome tests which were quite fast already were moved out of the slow test.\r\n\r\n#### Release Notes\r\n\r\n<!-- Write the release notes for this release below. See\r\nhttps://github.com/sympy/sympy/wiki/Writing-Release-Notes for more information\r\non how to write release notes. The bot will check your release notes\r\nautomatically to see if they are formatted correctly. -->\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\n- geometry\r\n  * improved response time of 2D Line/Segement interactions and Segment containment of Point\r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 16628,
+      "issue_title": "Geometry: Line-Segment-Intersection can run into memory problems",
+      "issue_body": "Hi,\r\n\r\nwhen determining a line-segment-intersection, depending on the geometry, sympy can take up som much memory that the script will crash.\r\n\r\nI'm on Windows, using CPython 3.7.3 on sympy commit b97cbe99, although the issue exists in version 1.3 too.\r\n\r\nExample code:\r\n<pre>\r\n#!Python -u\r\n\r\nimport sys, os, time, math\r\n\r\nsys.stderr.write(str(os.getpid())+time.strftime(': starting @ %d%b%y, %H:%M\\n'))\r\n\t\r\nfrom sympy.geometry import Point, Point2D, Line, Segment, intersection\r\nfrom sympy import *\r\nimport sympy\r\n\r\nsys.stderr.write('sympy version: '+sympy.__version__+'\\n')\r\n\r\np0=Point2D(249/5, 497999/10000)\r\np1x=3*(-19659028262*sqrt(405639795226) + 676896692394731 + 6704069269*sqrt(630547164901) + 33200*sqrt(255775022850776494562626))/(2000*(sqrt(255775022850776494562626) + 995999*sqrt(405639795226) + 995999*sqrt(630547164901) + 811280586451))\r\np1y=(-498000*sqrt(255775022850776494562626) - 995999*sqrt(630547164901) + 90004251917891999 + 496005510002*sqrt(405639795226))/(10000*(sqrt(255775022850776494562626) + 995999*sqrt(405639795226) + 995999*sqrt(630547164901) + 811280586451))\r\np1=Point2D(p1x, p1y)\r\n\r\n\r\nsys.stderr.write('p1: '+str(p1)+'\\n')\r\n\r\np2=Point2D(497/10, -497/10)\r\np3=Point2D(-497/10, -497/10)\r\n\r\nl=Line(p0,p1)\r\ns=Segment(p2,p3)\r\nints=intersection(l,s)\r\n\r\n\r\nsys.stderr.write(str(os.getpid())+time.strftime(': done @ %d%b%y, %H:%M\\n'))\r\n</pre>",
+      "issue_closed_at": "2019-04-17T22:08:24Z",
+      "base_commit": "96925f549e10ee2d95e592d1fe84cbdd39cec3f4",
+      "changes": [
+        {
+          "file": "sympy/geometry/line.py",
+          "type": "function",
+          "name": "intersect_parallel_segments",
+          "class_name": "LinearEntity",
+          "code": "def intersect_parallel_segments(seg1, seg2):\n            if seg1.contains(seg2):\n                return [seg2]\n            if seg2.contains(seg1):\n                return [seg1]\n\n            # direct the segments so they're oriented the same way\n            if seg1.direction.dot(seg2.direction) < 0:\n                seg2 = Segment(seg2.p2, seg2.p1)\n            # order the segments so seg1 is \"behind\" seg2\n            if seg1._span_test(seg2.p1) < 0:\n                seg1, seg2 = seg2, seg1\n            if seg2._span_test(seg1.p2) < 0:\n                return []\n            return [Segment(seg2.p1, seg1.p2)]"
+        },
+        {
+          "file": "sympy/geometry/line.py",
+          "type": "function",
+          "name": "contains",
+          "class_name": "Segment",
+          "code": "def contains(self, other):\n        \"\"\"\n        Is the other GeometryEntity contained within this Segment?\n\n        Examples\n        ========\n\n        >>> from sympy import Point, Segment\n        >>> p1, p2 = Point(0, 1), Point(3, 4)\n        >>> s = Segment(p1, p2)\n        >>> s2 = Segment(p2, p1)\n        >>> s.contains(s2)\n        True\n        >>> from sympy import Point3D, Segment3D\n        >>> p1, p2 = Point3D(0, 1, 1), Point3D(3, 4, 5)\n        >>> s = Segment3D(p1, p2)\n        >>> s2 = Segment3D(p2, p1)\n        >>> s.contains(s2)\n        True\n        >>> s.contains((p1 + p2) / 2)\n        True\n        \"\"\"\n\n        if not isinstance(other, GeometryEntity):\n            other = Point(other, dim=self.ambient_dimension)\n        if isinstance(other, Point):\n            if Point.is_collinear(other, self.p1, self.p2):\n                d1, d2 = other - self.p1, other - self.p2\n                d = self.p2 - self.p1\n                # without the call to simplify, sympy cannot tell that an expression\n                # like (a+b)*(a/2+b/2) is always non-negative.  If it cannot be\n                # determined, raise an Undecidable error\n                try:\n                    # the triangle inequality says that |d1|+|d2| >= |d| and is strict\n                    # only if other lies in the line segment\n                    return bool(simplify(Eq(abs(d1) + abs(d2) - abs(d), 0)))\n                except TypeError:\n                    raise Undecidable(\"Cannot determine if {} is in {}\".format(other, self))\n        if isinstance(other, Segment):\n            return other.p1 in self and other.p2 in self\n\n        return False"
+        },
+        {
+          "file": "sympy/geometry/polygon.py",
+          "type": "function",
+          "name": "bisectors",
+          "class_name": "Triangle",
+          "code": "def bisectors(self):\n        \"\"\"The angle bisectors of the triangle.\n\n        An angle bisector of a triangle is a straight line through a vertex\n        which cuts the corresponding angle in half.\n\n        Returns\n        =======\n\n        bisectors : dict\n            Each key is a vertex (Point) and each value is the corresponding\n            bisector (Segment).\n\n        See Also\n        ========\n\n        sympy.geometry.point.Point, sympy.geometry.line.Segment\n\n        Examples\n        ========\n\n        >>> from sympy.geometry import Point, Triangle, Segment\n        >>> p1, p2, p3 = Point(0, 0), Point(1, 0), Point(0, 1)\n        >>> t = Triangle(p1, p2, p3)\n        >>> from sympy import sqrt\n        >>> t.bisectors()[p2] == Segment(Point(1, 0), Point(0, sqrt(2) - 1))\n        True\n\n        \"\"\"\n        # use lines containing sides so containment check during\n        # intersection calculation can be avoided\n        # This would reduce the processing time for calculating the bisectors\n        s = [Line(l) for l in self.sides]\n        v = self.vertices\n        c = self.incenter\n        l1 = Segment(v[0], Line(v[0], c).intersection(s[1])[0])\n        l2 = Segment(v[1], Line(v[1], c).intersection(s[2])[0])\n        l3 = Segment(v[2], Line(v[2], c).intersection(s[0])[0])\n        return {v[0]: l1, v[1]: l2, v[2]: l3}"
+        }
+      ]
+    },
+    {
+      "pr_number": 7509,
+      "pr_title": "add free_symbols method to MatrixBase",
+      "pr_body": "This allows Matrix(...).free_symbols to work now.\n\nfixes #7204\n",
+      "issue_id": 7204,
+      "issue_title": "Matrix could use a free_symbols method",
+      "issue_body": "```\n>>> eye(1).free_symbols\nTraceback (most recent call last):\n  File \"<stdin>\", line 1, in <module>\n  File \"sympy\\matrices\\matrices.py\", line 3066, in __getattr__\n    \"%s has no attribute %s.\" % (self.__class__.__name__, attr))\nAttributeError: MutableDenseMatrix has no attribute free_symbols.\n```\n\nOriginal issue for #7204: http://code.google.com/p/sympy/issues/detail?id=4105\nOriginal author: https://code.google.com/u/117933771799683895267/\n",
+      "issue_closed_at": "2014-05-24T03:18:23Z",
+      "base_commit": "b0a5d45f863c545ec7a99dccc9b2f94ae54000f2",
+      "changes": [
+        {
+          "file": "sympy/matrices/matrices.py",
+          "type": "function",
+          "name": "evalf",
+          "class_name": "MatrixBase",
+          "code": "def evalf(self, prec=None, **options):\n        \"\"\"Apply evalf() to each element of self.\"\"\"\n        if prec is None:\n            return self.applyfunc(lambda i: i.evalf(**options))\n        else:\n            return self.applyfunc(lambda i: i.evalf(prec, **options))"
+        },
+        {
+          "file": "sympy/matrices/matrices.py",
+          "type": "function",
+          "name": "atoms",
+          "class_name": "MatrixBase",
+          "code": "def atoms(self, *types):\n        \"\"\"Returns the atoms that form the current object.\n\n        >>> from sympy.abc import x, y\n        >>> from sympy.matrices import Matrix\n        >>> Matrix([[x]])\n        Matrix([[x]])\n        >>> _.atoms()\n        set([x])\n        \"\"\"\n\n        if types:\n            types = tuple(\n                [t if isinstance(t, type) else type(t) for t in types])\n        else:\n            types = (Atom,)\n        result = set()\n        for i in self:\n            result.update( i.atoms(*types) )\n        return result"
+        }
+      ]
+    },
+    {
+      "pr_number": 18325,
+      "pr_title": "Fix Mul.is_irrational",
+      "pr_body": "<!-- Your title above should be a short description of what\r\nwas changed. Do not include the issue number in the title. -->\r\n\r\n#### References to other Issues or PRs\r\n<!-- If this pull request fixes an issue, write \"Fixes #NNNN\" in that exact\r\nformat, e.g. \"Fixes #1234\". See\r\nhttps://github.com/blog/1506-closing-issues-via-pull-requests . Please also\r\nwrite a comment on that issue linking back to this pull request once it is\r\nopen. -->\r\nFixes #17142\r\n\r\n#### Brief description of what is fixed or changed\r\n\r\nI'd get to make the logic to correctly work by adding an additional check if every arguments are real.\r\n\r\n#### Other comments\r\n\r\nI'm not sure how to test out the original issue, unless it's getting run a thousand times.\r\nBut I would just post the original case on the travis and see if it gets failed for some other contributors' build. If it fails again, then the issue should get raised up again, right?\r\n\r\n#### Release Notes\r\n\r\n<!-- Write the release notes for this release below. See\r\nhttps://github.com/sympy/sympy/wiki/Writing-Release-Notes for more information\r\non how to write release notes. The bot will check your release notes\r\nautomatically to see if they are formatted correctly. -->\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\nNO ENTRY\r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 17142,
+      "issue_title": "Nondeterministic exception from (atan(I/(I + I*tan(1)))).as_real_imag() (InconsistentAssumptions)",
+      "issue_body": "Sometimes this works:\r\n\r\n```\r\n>>> from sympy import *\r\n>>> e = atan(I/(I + I*tan(1)))\r\n>>> e.as_real_imag()\r\n(atan(I/(I + I*tan(1))), 0)\r\n```\r\n\r\nSometimes it gives this exception:\r\n\r\n```\r\n>>> e.as_real_imag()\r\nTraceback (most recent call last):\r\n  File \"/home/e/se/sympy/core/assumptions.py\", line 262, in getit\r\n    return self._assumptions[fact]\r\nKeyError: 'extended_real'\r\n\r\nDuring handling of the above exception, another exception occurred:\r\n\r\nTraceback (most recent call last):\r\n  File \"/home/e/se/sympy/core/assumptions.py\", line 262, in getit\r\n    return self._assumptions[fact]\r\nKeyError: 'rational'\r\n\r\nDuring handling of the above exception, another exception occurred:\r\n\r\nTraceback (most recent call last):\r\n  File \"testing.py\", line 114, in <module>\r\n    print(c, e.as_real_imag())\r\n  File \"/home/e/se/sympy/core/expr.py\", line 1921, in as_real_imag\r\n    return (re(self), im(self))\r\n  File \"/home/e/se/sympy/core/cache.py\", line 94, in wrapper\r\n    retval = cfunc(*args, **kwargs)\r\n  File \"/home/e/se/sympy/core/function.py\", line 462, in __new__\r\n    result = super(Function, cls).__new__(cls, *args, **options)\r\n  File \"/home/e/se/sympy/core/cache.py\", line 94, in wrapper\r\n    retval = cfunc(*args, **kwargs)\r\n  File \"/home/e/se/sympy/core/function.py\", line 277, in __new__\r\n    evaluated = cls.eval(*args)\r\n  File \"/home/e/se/sympy/functions/elementary/complexes.py\", line 58, in eval\r\n    elif arg.is_extended_real:\r\n  File \"/home/e/se/sympy/core/assumptions.py\", line 266, in getit\r\n    return _ask(fact, self)\r\n  File \"/home/e/se/sympy/core/assumptions.py\", line 321, in _ask\r\n    _ask(pk, obj)\r\n  File \"/home/e/se/sympy/core/assumptions.py\", line 309, in _ask\r\n    a = evaluate(obj)\r\n  File \"/home/e/se/sympy/functions/elementary/trigonometric.py\", line 2269, in _eval_is_rational\r\n    if s.args[0].is_rational:\r\n  File \"/home/e/se/sympy/core/assumptions.py\", line 266, in getit\r\n    return _ask(fact, self)\r\n  File \"/home/e/se/sympy/core/assumptions.py\", line 321, in _ask\r\n    _ask(pk, obj)\r\n  File \"/home/e/se/sympy/core/assumptions.py\", line 321, in _ask\r\n    _ask(pk, obj)\r\n  File \"/home/e/se/sympy/core/assumptions.py\", line 311, in _ask\r\n    assumptions.deduce_all_facts(((fact, a),))\r\n  File \"/home/e/se/sympy/core/facts.py\", line 522, in deduce_all_facts\r\n    if not self._tell(k, v) or v is None:\r\n  File \"/home/e/se/sympy/core/facts.py\", line 493, in _tell\r\n    raise InconsistentAssumptions(self, k, v)\r\nsympy.core.facts.InconsistentAssumptions: {\r\n\talgebraic: False,\r\n\tcommutative: True,\r\n\tcomplex: True,\r\n\tcomposite: False,\r\n\teven: False,\r\n\textended_negative: None,\r\n\textended_nonzero: True,\r\n\textended_positive: None,\r\n\textended_real: True,\r\n\tfinite: True,\r\n\thermitian: True,\r\n\timaginary: False,\r\n\tinfinite: False,\r\n\tinteger: False,\r\n\tirrational: False,\r\n\tnegative: None,\r\n\tnonzero: True,\r\n\todd: False,\r\n\tpositive: None,\r\n\tprime: False,\r\n\trational: False,\r\n\treal: True,\r\n\ttranscendental: True,\r\n\tzero: False}, irrational=True\r\n```\r\n\r\nAnother example is `log(I + I*pi/2)`.",
+      "issue_closed_at": "2020-01-14T01:45:34Z",
+      "base_commit": "f119ab5d30e8b373dc8956d41b7c11e53c140209",
+      "changes": [
+        {
+          "file": "sympy/core/mul.py",
+          "type": "function",
+          "name": "_eval_is_irrational",
+          "class_name": "Mul",
+          "code": "def _eval_is_irrational(self):\n        for t in self.args:\n            a = t.is_irrational\n            if a:\n                others = list(self.args)\n                others.remove(t)\n                if all((x.is_rational and fuzzy_not(x.is_zero)) is True for x in others):\n                    return True\n                return\n            if a is None:\n                return\n        return False"
+        }
+      ]
+    },
+    {
+      "pr_number": 2707,
+      "pr_title": "remove practice of evaluating factorial as 0 for negative numbers",
+      "pr_body": "it is infinity for negative integers and remains unevaluated for non-integers. fix gosper test, which had a missing term.\nfix string representations\n",
+      "issue_id": 2703,
+      "issue_title": "uncommon convention for factorials of negative numbers",
+      "issue_body": "from the docstring of the factorial function:\n\n\"For the sake of convenience and simplicity of procedures using\nthis function it is defined for negative integers and returns\nzero in this case.\"\n\nBy convention (and by some definitions), n! is usually infinity for n < 0. This is consistent with the Gamma function identity n! = Gamma(n+1) and with the convention that binomial coefficients are 0 outside of Pascal's triangle. In fact, in the same module, we have, in the doc string for binomial coefficients:\n\n\"For the sake of convenience for negative 'k' this function\nwill return zero no matter what valued is the other argument.\"\n\nThis is incompatible with sympy's convention on factorials, given the definition of the binomial coefficients: C(n,k) = n!/(k!(n-k)!)\n\nFor example take \"2 choose -1\", C(2,-1) = 0. However, going to sympy's definition of the factorial, we would have 2!/((-1)! \\* 3!) == 1/0 == oo, which is obviously wrong. Switching over to the Gamma function gives us the correct answer.\n\nDoes anyone know what \"procedures using\" the factorial function rely on the \"convenience and simplicity\" of the incorrect convention n! = 0  for n < 0? It would nice to bring the factorial function to consistency with other parts of sympy (like the binomial coefficients) and the more common convention in the math and cs communities.\n",
+      "issue_closed_at": "2014-01-05T13:28:55Z",
+      "base_commit": "5879fa2318e853807a6cf63981f2bca441cceb9f",
+      "changes": [
+        {
+          "file": "sympy/functions/combinatorial/factorials.py",
+          "type": "function",
+          "name": "_eval_simplify",
+          "class_name": "CombinatorialFunction",
+          "code": "def _eval_simplify(self, ratio, measure):\n        from sympy.simplify.simplify import combsimp\n        expr = combsimp(self)\n        if measure(expr) <= ratio*measure(self):\n            return expr\n        return self"
+        },
+        {
+          "file": "sympy/functions/combinatorial/factorials.py",
+          "type": "class",
+          "name": "factorial",
+          "code": "class factorial(CombinatorialFunction):\n    \"\"\"Implementation of factorial function over nonnegative integers.\n       For the sake of convenience and simplicity of procedures using\n       this function it is defined for negative integers and returns\n       zero in this case.\n\n       The factorial is very important in combinatorics where it gives\n       the number of ways in which 'n' objects can be permuted. It also\n       arises in calculus, probability, number theory etc.\n\n       There is strict relation of factorial with gamma function. In\n       fact n! = gamma(n+1) for nonnegative integers. Rewrite of this\n       kind is very useful in case of combinatorial simplification.\n\n       Computation of the factorial is done using two algorithms. For\n       small arguments naive product is evaluated. However for bigger\n       input algorithm Prime-Swing is used. It is the fastest algorithm\n       known and computes n! via prime factorization of special class\n       of numbers, called here the 'Swing Numbers'.\n\n       Examples\n       ========\n\n       >>> from sympy import Symbol, factorial\n       >>> n = Symbol('n', integer=True)\n\n       >>> factorial(-2)\n       0\n\n       >>> factorial(0)\n       1\n\n       >>> factorial(7)\n       5040\n\n       >>> factorial(n)\n       factorial(n)\n\n       >>> factorial(2*n)\n       factorial(2*n)\n\n       See Also\n       ========\n\n       factorial2, RisingFactorial, FallingFactorial\n    \"\"\"\n\n    nargs = 1\n\n    def fdiff(self, argindex=1):\n        if argindex == 1:\n            return C.gamma(self.args[0] + 1)*C.polygamma(0, self.args[0] + 1)\n        else:\n            raise ArgumentIndexError(self, argindex)\n\n    _small_swing = [\n        1, 1, 1, 3, 3, 15, 5, 35, 35, 315, 63, 693, 231, 3003, 429, 6435, 6435, 109395,\n        12155, 230945, 46189, 969969, 88179, 2028117, 676039, 16900975, 1300075,\n        35102025, 5014575, 145422675, 9694845, 300540195, 300540195\n    ]\n\n    @classmethod\n    def _swing(cls, n):\n        if n < 33:\n            return cls._small_swing[n]\n        else:\n            N, primes = int(_sqrt(n)), []\n\n            for prime in sieve.primerange(3, N + 1):\n                p, q = 1, n\n\n                while True:\n                    q //= prime\n\n                    if q > 0:\n                        if q & 1 == 1:\n                            p *= prime\n                    else:\n                        break\n\n                if p > 1:\n                    primes.append(p)\n\n            for prime in sieve.primerange(N + 1, n//3 + 1):\n                if (n // prime) & 1 == 1:\n                    primes.append(prime)\n\n            L_product = R_product = 1\n\n            for prime in sieve.primerange(n//2 + 1, n + 1):\n                L_product *= prime\n\n            for prime in primes:\n                R_product *= prime\n\n            return L_product*R_product\n\n    @classmethod\n    def _recursive(cls, n):\n        if n < 2:\n            return 1\n        else:\n            return (cls._recursive(n//2)**2)*cls._swing(n)\n\n    @classmethod\n    def eval(cls, n):\n        n = sympify(n)\n\n        if n.is_Number:\n            if n is S.Zero:\n                return S.One\n            elif n is S.Infinity:\n                return S.Infinity\n            elif n.is_Integer:\n                if n.is_negative:\n                    return S.Zero\n                else:\n                    n, result = n.p, 1\n\n                    if n < 20:\n                        for i in range(2, n + 1):\n                            result *= i\n                    else:\n                        N, bits = n, 0\n\n                        while N != 0:\n                            if N & 1 == 1:\n                                bits += 1\n\n                            N = N >> 1\n\n                        result = cls._recursive(n)*2**(n - bits)\n\n                    return C.Integer(result)\n\n        if n.is_negative:\n            return S.Zero\n\n    def _eval_rewrite_as_gamma(self, n):\n        return C.gamma(n + 1)\n\n    def _eval_is_integer(self):\n        return self.args[0].is_integer\n\n    def _eval_is_positive(self):\n        if self.args[0].is_integer and self.args[0].is_positive:\n            return True"
+        },
+        {
+          "file": "sympy/functions/combinatorial/factorials.py",
+          "type": "function",
+          "name": "eval",
+          "class_name": "binomial",
+          "code": "def eval(cls, n, k):\n        n, k = map(sympify, (n, k))\n\n        if k.is_Number:\n            if k.is_Integer:\n                if k < 0:\n                    return S.Zero\n                elif k == 0 or n == k:\n                    return S.One\n                elif n.is_Integer and n >= 0:\n                    n, k = int(n), int(k)\n\n                    if k > n:\n                        return S.Zero\n                    elif k > n // 2:\n                        k = n - k\n\n                    M, result = int(_sqrt(n)), 1\n\n                    for prime in sieve.primerange(2, n + 1):\n                        if prime > n - k:\n                            result *= prime\n                        elif prime > n // 2:\n                            continue\n                        elif prime > M:\n                            if n % prime < k % prime:\n                                result *= prime\n                        else:\n                            N, K = n, k\n                            exp = a = 0\n\n                            while N > 0:\n                                a = int((N % prime) < (K % prime + a))\n                                N, K = N // prime, K // prime\n                                exp = a + exp\n\n                            if exp > 0:\n                                result *= prime**exp\n\n                    return C.Integer(result)\n                elif n.is_Number:\n                    result = n - k + 1\n                    for i in xrange(2, k + 1):\n                        result *= n - k + i\n                        result /= i\n                    return result\n\n        elif k.is_negative:\n            return S.Zero\n        elif (n - k).simplify().is_negative:\n            return S.Zero\n        else:\n            d = n - k\n\n            if d.is_Integer:\n                return cls.eval(n, d)"
+        },
+        {
+          "file": "sympy/functions/combinatorial/factorials.py",
+          "type": "function",
+          "name": "eval",
+          "class_name": "binomial",
+          "code": "def eval(cls, n, k):\n        n, k = map(sympify, (n, k))\n\n        if k.is_Number:\n            if k.is_Integer:\n                if k < 0:\n                    return S.Zero\n                elif k == 0 or n == k:\n                    return S.One\n                elif n.is_Integer and n >= 0:\n                    n, k = int(n), int(k)\n\n                    if k > n:\n                        return S.Zero\n                    elif k > n // 2:\n                        k = n - k\n\n                    M, result = int(_sqrt(n)), 1\n\n                    for prime in sieve.primerange(2, n + 1):\n                        if prime > n - k:\n                            result *= prime\n                        elif prime > n // 2:\n                            continue\n                        elif prime > M:\n                            if n % prime < k % prime:\n                                result *= prime\n                        else:\n                            N, K = n, k\n                            exp = a = 0\n\n                            while N > 0:\n                                a = int((N % prime) < (K % prime + a))\n                                N, K = N // prime, K // prime\n                                exp = a + exp\n\n                            if exp > 0:\n                                result *= prime**exp\n\n                    return C.Integer(result)\n                elif n.is_Number:\n                    result = n - k + 1\n                    for i in xrange(2, k + 1):\n                        result *= n - k + i\n                        result /= i\n                    return result\n\n        elif k.is_negative:\n            return S.Zero\n        elif (n - k).simplify().is_negative:\n            return S.Zero\n        else:\n            d = n - k\n\n            if d.is_Integer:\n                return cls.eval(n, d)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8707,
+      "pr_title": "Fix real assumption for gamma function.",
+      "pr_body": "- [x] Updated code as suggested by Sergey.\n\n@pelegm @skirpichev \n",
+      "issue_id": 8657,
+      "issue_title": "gamma(x) is assumed (wrongly) to be real when x is real",
+      "issue_body": "It may be that `x` is -1, for example, where `gamma` is not defined (or rather is `zoo`). So, unless it is known that `x` is not a nonpositive integer, `gamma(x).is_real` should return `None` (currently it returns `True`).\n",
+      "issue_closed_at": "2014-12-31T11:14:57Z",
+      "base_commit": "ed054cc55f714dab9e809036151f0ca136397604",
+      "changes": [
+        {
+          "file": "sympy/functions/special/gamma_functions.py",
+          "type": "function",
+          "name": "_eval_conjugate",
+          "class_name": "loggamma",
+          "code": "def _eval_conjugate(self):\n        z = self.args[0]\n        if not z in (S.Zero, S.NegativeInfinity):\n            return self.func(z.conjugate())"
+        }
+      ]
+    }
+  ]
+}

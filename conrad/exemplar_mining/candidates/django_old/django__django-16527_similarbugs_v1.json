@@ -1,0 +1,151 @@
+{
+  "instance_id": "django__django-16527",
+  "repo": "django/django",
+  "created_at": "2023-02-05T22:05:00Z",
+  "problem_statement": "\"show_save_as_new\" in admin can add without this permission\nDescription\n\t \n\t\t(last modified by Mariusz Felisiak)\n\t \nAt \"django/contrib/admin/templatetags/admin_modify.py\" file, line 102, I think you must put one more verification for this tag: \"and has_add_permission\", because \"save_as_new\" is a add modification.\nI rewrite this for my project:\n\t\t\t\"show_save_as_new\": not is_popup\n\t\t\tand has_add_permission # This line that I put!!!\n\t\t\tand has_change_permission\n\t\t\tand change\n\t\t\tand save_as,\n",
+  "patch": "diff --git a/django/contrib/admin/templatetags/admin_modify.py b/django/contrib/admin/templatetags/admin_modify.py\n--- a/django/contrib/admin/templatetags/admin_modify.py\n+++ b/django/contrib/admin/templatetags/admin_modify.py\n@@ -100,7 +100,7 @@ def submit_row(context):\n                 and context.get(\"show_delete\", True)\n             ),\n             \"show_save_as_new\": not is_popup\n-            and has_change_permission\n+            and has_add_permission\n             and change\n             and save_as,\n             \"show_save_and_add_another\": can_save_and_add_another,\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10985,
+      "pr_title": "Fixed #30181 -- Made cache.get() with default work correctly on PyLibMCCache if None is cached.",
+      "pr_body": "This PR fixes https://code.djangoproject.com/ticket/30181",
+      "issue_id": 30181,
+      "issue_title": "Fix cache.get() with default on PyLibMCCache if None is cached",
+      "issue_body": "",
+      "issue_closed_at": "2019-02-14T18:58:15",
+      "base_commit": "741ce81a426e4d0cd7581d98d3b8e3290f513f09",
+      "changes": [
+        {
+          "file": "django/core/cache/backends/memcached.py",
+          "type": "function",
+          "name": "add",
+          "class_name": "BaseMemcachedCache",
+          "code": "def add(self, key, value, timeout=DEFAULT_TIMEOUT, version=None):\n        key = self.make_key(key, version=version)\n        return self._cache.add(key, value, self.get_backend_timeout(timeout))"
+        },
+        {
+          "file": "django/core/cache/backends/memcached.py",
+          "type": "function",
+          "name": "touch",
+          "class_name": "PyLibMCCache",
+          "code": "def touch(self, key, timeout=DEFAULT_TIMEOUT, version=None):\n        key = self.make_key(key, version=version)\n        if timeout == 0:\n            return self._cache.delete(key)\n        return self._cache.touch(key, self.get_backend_timeout(timeout))"
+        }
+      ]
+    },
+    {
+      "pr_number": 16250,
+      "pr_title": "Fixed #33701 -- Added fine-grained error locations to the technical 500 debug page.",
+      "pr_body": "Solves Ticket [33701](https://code.djangoproject.com/ticket/33701)\r\n\r\nWith Python 3.11 the technical_500.html debug page now shows, where in the line the error occurred.\r\n\r\n![traceback](https://user-images.githubusercontent.com/39874595/199703281-3f755068-fd41-45bc-961c-957a78d51df5.PNG)\r\n",
+      "issue_id": 33701,
+      "issue_title": "Highlight error location in the technical 500 debug page on Python 3.11+.",
+      "issue_body": "",
+      "issue_closed_at": "2022-11-29T02:25:55",
+      "base_commit": "9d726c7902979d4ad53945ed8f1037266a88010d",
+      "changes": [
+        {
+          "file": "django/views/debug.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import functools\nimport re\nimport sys\nimport types"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "line",
+          "name": "line 15",
+          "code": "from django.utils.encoding import force_str\nfrom django.utils.module_loading import import_string\nfrom django.utils.regex_helper import _lazy_re_compile\nfrom django.utils.version import get_docs_version\n\n# Minimal Django templates engine to render the error templates\n# regardless of the project's TEMPLATES setting. Templates are"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_exception_traceback_frames",
+          "class_name": "ExceptionReporter",
+          "code": "def get_exception_traceback_frames(self, exc_value, tb):\n        exc_cause = self._get_explicit_or_implicit_cause(exc_value)\n        exc_cause_explicit = getattr(exc_value, \"__cause__\", True)\n        if tb is None:\n            yield {\n                \"exc_cause\": exc_cause,\n                \"exc_cause_explicit\": exc_cause_explicit,\n                \"tb\": None,\n                \"type\": \"user\",\n            }\n        while tb is not None:\n            # Support for __traceback_hide__ which is used by a few libraries\n            # to hide internal frames.\n            if tb.tb_frame.f_locals.get(\"__traceback_hide__\"):\n                tb = tb.tb_next\n                continue\n            filename = tb.tb_frame.f_code.co_filename\n            function = tb.tb_frame.f_code.co_name\n            lineno = tb.tb_lineno - 1\n            loader = tb.tb_frame.f_globals.get(\"__loader__\")\n            module_name = tb.tb_frame.f_globals.get(\"__name__\") or \"\"\n            (\n                pre_context_lineno,\n                pre_context,\n                context_line,\n                post_context,\n            ) = self._get_lines_from_file(\n                filename,\n                lineno,\n                7,\n                loader,\n                module_name,\n            )\n            if pre_context_lineno is None:\n                pre_context_lineno = lineno\n                pre_context = []\n                context_line = \"<source code not available>\"\n                post_context = []\n            yield {\n                \"exc_cause\": exc_cause,\n                \"exc_cause_explicit\": exc_cause_explicit,\n                \"tb\": tb,\n                \"type\": \"django\" if module_name.startswith(\"django.\") else \"user\",\n                \"filename\": filename,\n                \"function\": function,\n                \"lineno\": lineno + 1,\n                \"vars\": self.filter.get_traceback_frame_variables(\n                    self.request, tb.tb_frame\n                ),\n                \"id\": id(tb),\n                \"pre_context\": pre_context,\n                \"context_line\": context_line,\n                \"post_context\": post_context,\n                \"pre_context_lineno\": pre_context_lineno + 1,\n            }\n            tb = tb.tb_next"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_exception_traceback_frames",
+          "class_name": "ExceptionReporter",
+          "code": "def get_exception_traceback_frames(self, exc_value, tb):\n        exc_cause = self._get_explicit_or_implicit_cause(exc_value)\n        exc_cause_explicit = getattr(exc_value, \"__cause__\", True)\n        if tb is None:\n            yield {\n                \"exc_cause\": exc_cause,\n                \"exc_cause_explicit\": exc_cause_explicit,\n                \"tb\": None,\n                \"type\": \"user\",\n            }\n        while tb is not None:\n            # Support for __traceback_hide__ which is used by a few libraries\n            # to hide internal frames.\n            if tb.tb_frame.f_locals.get(\"__traceback_hide__\"):\n                tb = tb.tb_next\n                continue\n            filename = tb.tb_frame.f_code.co_filename\n            function = tb.tb_frame.f_code.co_name\n            lineno = tb.tb_lineno - 1\n            loader = tb.tb_frame.f_globals.get(\"__loader__\")\n            module_name = tb.tb_frame.f_globals.get(\"__name__\") or \"\"\n            (\n                pre_context_lineno,\n                pre_context,\n                context_line,\n                post_context,\n            ) = self._get_lines_from_file(\n                filename,\n                lineno,\n                7,\n                loader,\n                module_name,\n            )\n            if pre_context_lineno is None:\n                pre_context_lineno = lineno\n                pre_context = []\n                context_line = \"<source code not available>\"\n                post_context = []\n            yield {\n                \"exc_cause\": exc_cause,\n                \"exc_cause_explicit\": exc_cause_explicit,\n                \"tb\": tb,\n                \"type\": \"django\" if module_name.startswith(\"django.\") else \"user\",\n                \"filename\": filename,\n                \"function\": function,\n                \"lineno\": lineno + 1,\n                \"vars\": self.filter.get_traceback_frame_variables(\n                    self.request, tb.tb_frame\n                ),\n                \"id\": id(tb),\n                \"pre_context\": pre_context,\n                \"context_line\": context_line,\n                \"post_context\": post_context,\n                \"pre_context_lineno\": pre_context_lineno + 1,\n            }\n            tb = tb.tb_next"
+        }
+      ]
+    },
+    {
+      "pr_number": 9966,
+      "pr_title": "Fixed #29417 -- Corrected two admin page titles for view-only users.",
+      "pr_body": "The Changelist and 'View object' views still contained the word 'change'\r\nin their title and header.",
+      "issue_id": 29417,
+      "issue_title": "Admin title still says \"Change [model]\" when user has view-only permission",
+      "issue_body": "",
+      "issue_closed_at": "2018-05-23T10:03:08",
+      "base_commit": "40ff93310f03dc89a6281a846b1a1ec4cb672bd0",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "_changeform_view",
+          "class_name": "ModelAdmin",
+          "code": "def _changeform_view(self, request, object_id, form_url, extra_context):\n        to_field = request.POST.get(TO_FIELD_VAR, request.GET.get(TO_FIELD_VAR))\n        if to_field and not self.to_field_allowed(request, to_field):\n            raise DisallowedModelAdminToField(\"The field %s cannot be referenced.\" % to_field)\n\n        model = self.model\n        opts = model._meta\n\n        if request.method == 'POST' and '_saveasnew' in request.POST:\n            object_id = None\n\n        add = object_id is None\n\n        if add:\n            if not self.has_add_permission(request):\n                raise PermissionDenied\n            obj = None\n\n        else:\n            obj = self.get_object(request, unquote(object_id), to_field)\n\n            if not self.has_view_permission(request, obj) and not self.has_change_permission(request, obj):\n                raise PermissionDenied\n\n            if obj is None:\n                return self._get_obj_does_not_exist_redirect(request, opts, object_id)\n\n        ModelForm = self.get_form(request, obj, change=not add)\n        if request.method == 'POST':\n            form = ModelForm(request.POST, request.FILES, instance=obj)\n            form_validated = form.is_valid()\n            if form_validated:\n                new_object = self.save_form(request, form, change=not add)\n            else:\n                new_object = form.instance\n            formsets, inline_instances = self._create_formsets(request, new_object, change=not add)\n            if all_valid(formsets) and form_validated:\n                self.save_model(request, new_object, form, not add)\n                self.save_related(request, form, formsets, not add)\n                change_message = self.construct_change_message(request, form, formsets, add)\n                if add:\n                    self.log_addition(request, new_object, change_message)\n                    return self.response_add(request, new_object)\n                else:\n                    self.log_change(request, new_object, change_message)\n                    return self.response_change(request, new_object)\n            else:\n                form_validated = False\n        else:\n            if add:\n                initial = self.get_changeform_initial_data(request)\n                form = ModelForm(initial=initial)\n                formsets, inline_instances = self._create_formsets(request, form.instance, change=False)\n            else:\n                form = ModelForm(instance=obj)\n                formsets, inline_instances = self._create_formsets(request, obj, change=True)\n\n        if not add and not self.has_change_permission(request):\n            readonly_fields = flatten_fieldsets(self.get_fieldsets(request, obj))\n        else:\n            readonly_fields = self.get_readonly_fields(request, obj)\n        adminForm = helpers.AdminForm(\n            form,\n            list(self.get_fieldsets(request, obj)),\n            self.get_prepopulated_fields(request, obj),\n            readonly_fields,\n            model_admin=self)\n        media = self.media + adminForm.media\n\n        inline_formsets = self.get_inline_formsets(request, formsets, inline_instances, obj)\n        for inline_formset in inline_formsets:\n            media = media + inline_formset.media\n\n        context = {\n            **self.admin_site.each_context(request),\n            'title': (_('Add %s') if add else _('Change %s')) % opts.verbose_name,\n            'adminform': adminForm,\n            'object_id': object_id,\n            'original': obj,\n            'is_popup': IS_POPUP_VAR in request.POST or IS_POPUP_VAR in request.GET,\n            'to_field': to_field,\n            'media': media,\n            'inline_admin_formsets': inline_formsets,\n            'errors': helpers.AdminErrorList(form, formsets),\n            'preserved_filters': self.get_preserved_filters(request),\n        }\n\n        # Hide the \"Save\" and \"Save and continue\" buttons if \"Save as New\" was\n        # previously chosen to prevent the interface from getting confusing.\n        if request.method == 'POST' and not form_validated and \"_saveasnew\" in request.POST:\n            context['show_save'] = False\n            context['show_save_and_continue'] = False\n            # Use the change template instead of the add template.\n            add = False\n\n        context.update(extra_context or {})\n\n        return self.render_change_form(request, context, add=add, change=not add, obj=obj, form_url=form_url)"
+        },
+        {
+          "file": "django/contrib/admin/views/main.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "ChangeList",
+          "code": "def __init__(self, request, model, list_display, list_display_links,\n                 list_filter, date_hierarchy, search_fields, list_select_related,\n                 list_per_page, list_max_show_all, list_editable, model_admin, sortable_by):\n        self.model = model\n        self.opts = model._meta\n        self.lookup_opts = self.opts\n        self.root_queryset = model_admin.get_queryset(request)\n        self.list_display = list_display\n        self.list_display_links = list_display_links\n        self.list_filter = list_filter\n        self.date_hierarchy = date_hierarchy\n        self.search_fields = search_fields\n        self.list_select_related = list_select_related\n        self.list_per_page = list_per_page\n        self.list_max_show_all = list_max_show_all\n        self.model_admin = model_admin\n        self.preserved_filters = model_admin.get_preserved_filters(request)\n        self.sortable_by = sortable_by\n\n        # Get search parameters from the query string.\n        try:\n            self.page_num = int(request.GET.get(PAGE_VAR, 0))\n        except ValueError:\n            self.page_num = 0\n        self.show_all = ALL_VAR in request.GET\n        self.is_popup = IS_POPUP_VAR in request.GET\n        to_field = request.GET.get(TO_FIELD_VAR)\n        if to_field and not model_admin.to_field_allowed(request, to_field):\n            raise DisallowedModelAdminToField(\"The field %s cannot be referenced.\" % to_field)\n        self.to_field = to_field\n        self.params = dict(request.GET.items())\n        if PAGE_VAR in self.params:\n            del self.params[PAGE_VAR]\n        if ERROR_FLAG in self.params:\n            del self.params[ERROR_FLAG]\n\n        if self.is_popup:\n            self.list_editable = ()\n        else:\n            self.list_editable = list_editable\n        self.query = request.GET.get(SEARCH_VAR, '')\n        self.queryset = self.get_queryset(request)\n        self.get_results(request)\n        if self.is_popup:\n            title = gettext('Select %s')\n        else:\n            title = gettext('Select %s to change')\n        self.title = title % self.opts.verbose_name\n        self.pk_attname = self.lookup_opts.pk.attname"
+        }
+      ]
+    },
+    {
+      "pr_number": 16041,
+      "pr_title": "Fixed #33995 -- Fixed FormSet.empty_form crash when empty_permitted is passed to form_kwargs.",
+      "pr_body": "[Fixed #33995](https://code.djangoproject.com/ticket/33995)\r\n\r\nRendering empty_form was crashing when ```empty_permitted=True``` or ```empty_permitted=False``` was passed to form_kwargs.",
+      "issue_id": 33995,
+      "issue_title": "Rendering empty_form crashes when empty_permitted is passed to form_kwargs",
+      "issue_body": "",
+      "issue_closed_at": "2022-09-09T07:19:23",
+      "base_commit": "6df9398cce063874ae4d59db126d4adacb0fa8d3",
+      "changes": [
+        {
+          "file": "django/forms/formsets.py",
+          "type": "function",
+          "name": "extra_forms",
+          "class_name": "BaseFormSet",
+          "code": "def extra_forms(self):\n        \"\"\"Return a list of all the extra forms in this formset.\"\"\"\n        return self.forms[self.initial_form_count() :]"
+        }
+      ]
+    },
+    {
+      "pr_number": 11886,
+      "pr_title": "Fixed #30405 -- Fixed source code mismatch crash in ExceptionReporter. ",
+      "pr_body": "[ticket 30405](https://code.djangoproject.com/ticket/30405)",
+      "issue_id": 30405,
+      "issue_title": "IndexError in _get_lines_from_file when module does not match file contents (via loader)",
+      "issue_body": "",
+      "issue_closed_at": "2019-11-12T04:53:04",
+      "base_commit": "6e2f05b2e33a6c80c7a411ce76af7b5a08acb835",
+      "changes": [
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_traceback_text",
+          "class_name": "ExceptionReporter",
+          "code": "def get_traceback_text(self):\n        \"\"\"Return plain text version of debug 500 HTTP error page.\"\"\"\n        with Path(CURRENT_DIR, 'templates', 'technical_500.txt').open(encoding='utf-8') as fh:\n            t = DEBUG_ENGINE.from_string(fh.read())\n        c = Context(self.get_traceback_data(), autoescape=False, use_l10n=False)\n        return t.render(c)"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "_get_lines_from_file",
+          "class_name": "ExceptionReporter",
+          "code": "def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):\n        \"\"\"\n        Return context_lines before and after lineno from file.\n        Return (pre_context_lineno, pre_context, context_line, post_context).\n        \"\"\"\n        source = None\n        if hasattr(loader, 'get_source'):\n            try:\n                source = loader.get_source(module_name)\n            except ImportError:\n                pass\n            if source is not None:\n                source = source.splitlines()\n        if source is None:\n            try:\n                with open(filename, 'rb') as fp:\n                    source = fp.read().splitlines()\n            except OSError:\n                pass\n        if source is None:\n            return None, [], None, []\n\n        # If we just read the source from a file, or if the loader did not\n        # apply tokenize.detect_encoding to decode the source into a\n        # string, then we should do that ourselves.\n        if isinstance(source[0], bytes):\n            encoding = 'ascii'\n            for line in source[:2]:\n                # File coding may be specified. Match pattern from PEP-263\n                # (https://www.python.org/dev/peps/pep-0263/)\n                match = re.search(br'coding[:=]\\s*([-\\w.]+)', line)\n                if match:\n                    encoding = match.group(1).decode('ascii')\n                    break\n            source = [str(sline, encoding, 'replace') for sline in source]\n\n        lower_bound = max(0, lineno - context_lines)\n        upper_bound = lineno + context_lines\n\n        pre_context = source[lower_bound:lineno]\n        context_line = source[lineno]\n        post_context = source[lineno + 1:upper_bound]\n\n        return lower_bound, pre_context, context_line, post_context"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "_get_lines_from_file",
+          "class_name": "ExceptionReporter",
+          "code": "def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):\n        \"\"\"\n        Return context_lines before and after lineno from file.\n        Return (pre_context_lineno, pre_context, context_line, post_context).\n        \"\"\"\n        source = None\n        if hasattr(loader, 'get_source'):\n            try:\n                source = loader.get_source(module_name)\n            except ImportError:\n                pass\n            if source is not None:\n                source = source.splitlines()\n        if source is None:\n            try:\n                with open(filename, 'rb') as fp:\n                    source = fp.read().splitlines()\n            except OSError:\n                pass\n        if source is None:\n            return None, [], None, []\n\n        # If we just read the source from a file, or if the loader did not\n        # apply tokenize.detect_encoding to decode the source into a\n        # string, then we should do that ourselves.\n        if isinstance(source[0], bytes):\n            encoding = 'ascii'\n            for line in source[:2]:\n                # File coding may be specified. Match pattern from PEP-263\n                # (https://www.python.org/dev/peps/pep-0263/)\n                match = re.search(br'coding[:=]\\s*([-\\w.]+)', line)\n                if match:\n                    encoding = match.group(1).decode('ascii')\n                    break\n            source = [str(sline, encoding, 'replace') for sline in source]\n\n        lower_bound = max(0, lineno - context_lines)\n        upper_bound = lineno + context_lines\n\n        pre_context = source[lower_bound:lineno]\n        context_line = source[lineno]\n        post_context = source[lineno + 1:upper_bound]\n\n        return lower_bound, pre_context, context_line, post_context"
+        }
+      ]
+    }
+  ]
+}

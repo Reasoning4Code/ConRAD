@@ -1,0 +1,124 @@
+{
+  "instance_id": "django__django-13321",
+  "repo": "django/django",
+  "created_at": "2020-08-18T10:43:52Z",
+  "problem_statement": "Decoding an invalid session data crashes.\nDescription\n\t \n\t\t(last modified by Matt Hegarty)\n\t \nHi\nI recently upgraded my staging server to 3.1. I think that there was an old session which was still active.\nOn browsing to any URL, I get the crash below. It looks similar to ​this issue.\nI cannot login at all with Chrome - each attempt to access the site results in a crash. Login with Firefox works fine.\nThis is only happening on my Staging site, which is running Gunicorn behind nginx proxy.\nInternal Server Error: /overview/\nTraceback (most recent call last):\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/sessions/backends/base.py\", line 215, in _get_session\nreturn self._session_cache\nAttributeError: 'SessionStore' object has no attribute '_session_cache'\nDuring handling of the above exception, another exception occurred:\nTraceback (most recent call last):\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/sessions/backends/base.py\", line 118, in decode\nreturn signing.loads(session_data, salt=self.key_salt, serializer=self.serializer)\nFile \"/usr/local/lib/python3.8/site-packages/django/core/signing.py\", line 135, in loads\nbase64d = TimestampSigner(key, salt=salt).unsign(s, max_age=max_age).encode()\nFile \"/usr/local/lib/python3.8/site-packages/django/core/signing.py\", line 201, in unsign\nresult = super().unsign(value)\nFile \"/usr/local/lib/python3.8/site-packages/django/core/signing.py\", line 184, in unsign\nraise BadSignature('Signature \"%s\" does not match' % sig)\ndjango.core.signing.BadSignature: Signature \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" does not match\nDuring handling of the above exception, another exception occurred:\nTraceback (most recent call last):\nFile \"/usr/local/lib/python3.8/site-packages/django/core/handlers/exception.py\", line 47, in inner\nresponse = get_response(request)\nFile \"/usr/local/lib/python3.8/site-packages/django/core/handlers/base.py\", line 179, in _get_response\nresponse = wrapped_callback(request, *callback_args, **callback_kwargs)\nFile \"/usr/local/lib/python3.8/site-packages/django/views/generic/base.py\", line 73, in view\nreturn self.dispatch(request, *args, **kwargs)\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/auth/mixins.py\", line 50, in dispatch\nif not request.user.is_authenticated:\nFile \"/usr/local/lib/python3.8/site-packages/django/utils/functional.py\", line 240, in inner\nself._setup()\nFile \"/usr/local/lib/python3.8/site-packages/django/utils/functional.py\", line 376, in _setup\nself._wrapped = self._setupfunc()\nFile \"/usr/local/lib/python3.8/site-packages/django_otp/middleware.py\", line 38, in _verify_user\nuser.otp_device = None\nFile \"/usr/local/lib/python3.8/site-packages/django/utils/functional.py\", line 270, in __setattr__\nself._setup()\nFile \"/usr/local/lib/python3.8/site-packages/django/utils/functional.py\", line 376, in _setup\nself._wrapped = self._setupfunc()\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/auth/middleware.py\", line 23, in <lambda>\nrequest.user = SimpleLazyObject(lambda: get_user(request))\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/auth/middleware.py\", line 11, in get_user\nrequest._cached_user = auth.get_user(request)\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/auth/__init__.py\", line 174, in get_user\nuser_id = _get_user_session_key(request)\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/auth/__init__.py\", line 58, in _get_user_session_key\nreturn get_user_model()._meta.pk.to_python(request.session[SESSION_KEY])\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/sessions/backends/base.py\", line 65, in __getitem__\nreturn self._session[key]\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/sessions/backends/base.py\", line 220, in _get_session\nself._session_cache = self.load()\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/sessions/backends/db.py\", line 44, in load\nreturn self.decode(s.session_data) if s else {}\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/sessions/backends/base.py\", line 122, in decode\nreturn self._legacy_decode(session_data)\nFile \"/usr/local/lib/python3.8/site-packages/django/contrib/sessions/backends/base.py\", line 126, in _legacy_decode\nencoded_data = base64.b64decode(session_data.encode('ascii'))\nFile \"/usr/local/lib/python3.8/base64.py\", line 87, in b64decode\nreturn binascii.a2b_base64(s)\nbinascii.Error: Incorrect padding\n",
+  "patch": "diff --git a/django/contrib/sessions/backends/base.py b/django/contrib/sessions/backends/base.py\n--- a/django/contrib/sessions/backends/base.py\n+++ b/django/contrib/sessions/backends/base.py\n@@ -121,6 +121,15 @@ def decode(self, session_data):\n             return signing.loads(session_data, salt=self.key_salt, serializer=self.serializer)\n         # RemovedInDjango40Warning: when the deprecation ends, handle here\n         # exceptions similar to what _legacy_decode() does now.\n+        except signing.BadSignature:\n+            try:\n+                # Return an empty session if data is not in the pre-Django 3.1\n+                # format.\n+                return self._legacy_decode(session_data)\n+            except Exception:\n+                logger = logging.getLogger('django.security.SuspiciousSession')\n+                logger.warning('Session data corrupted')\n+                return {}\n         except Exception:\n             return self._legacy_decode(session_data)\n \n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10416,
+      "pr_title": "Fixed #29673 -- Reset URLconf at the end of request processing",
+      "pr_body": "Fixes [ticket 29673](https://code.djangoproject.com/ticket/29673)\r\n\r\nWe attach a signal handler to request_finished, and reset the URLconf. Before this change, the URLconf is not reset until the start of the next request.",
+      "issue_id": 29673,
+      "issue_title": "Thread urlconf isn't reset after response complete",
+      "issue_body": "When setting the urlconf on a request (e.g. in middleware for handling multiple domains pointing to the same Django app), it's not reset until the start of the next request. Since urlconf is threadlocal, this causes problems when running a suite of tests, even if the tests pass when ran individually. For example:\nDjango test client makes a request that triggers a middleware to change the urlconf\nreverse\nis called with no\nurlconf\nkwarg, expecting to be given the urlconf specified by\nROOT_URLCONF\ntest throws\nNoReverseMatch\nI took this problem to the IRC and found that another person recently messaged about the same thing:\n​\nhttps://botbot.me/freenode/django/2018-08-07/?msg=103000008&page=3",
+      "issue_closed_at": "2018-09-26T14:35:46",
+      "base_commit": "e40e7026cad400d720963aea0ba156a19f83b058",
+      "changes": [
+        {
+          "file": "django/core/handlers/base.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "\nfrom django.conf import settings\nfrom django.core.exceptions import ImproperlyConfigured, MiddlewareNotUsed\nfrom django.db import connections, transaction\nfrom django.urls import get_resolver, set_urlconf\nfrom django.utils.log import log_response"
+        },
+        {
+          "file": "django/core/handlers/base.py",
+          "type": "function",
+          "name": "process_exception_by_middleware",
+          "class_name": "BaseHandler",
+          "code": "def process_exception_by_middleware(self, exception, request):\n        \"\"\"\n        Pass the exception to the exception middleware. If no middleware\n        return a response for this exception, raise it.\n        \"\"\"\n        for middleware_method in self._exception_middleware:\n            response = middleware_method(request, exception)\n            if response:\n                return response\n        raise"
+        }
+      ]
+    },
+    {
+      "pr_number": 9112,
+      "pr_title": "Fixed #27846 -- clear all cached reverse relationships on refresh_from_db()",
+      "pr_body": "https://code.djangoproject.com/ticket/27846",
+      "issue_id": 27846,
+      "issue_title": "refresh_from_db() doesn't clear reverse OneToOneFields",
+      "issue_body": "Sorry for the poor summary, it is difficult to explain in words. I have a project to demo this bug attached to this ticket, but I will try to explain the bug anyway in steps and the setup.\nSetup:\n2 models (A and B)\nB has a OneToOne to A\nBoth A and B have a field (ie TextField)\nSetup either a signal or override save() for A to update B's TextField to equal that of A's on save() or post_save for signals\nSteps:\nCreate instance of A\nGet another copy of the instance of A via A.objects.get()\nCreate instance of B using the copy of the instance of A\nDo refresh_from_db() on original instance of A\nTry to access B from A\nThe project I have provided is a slim version of this problem that demonstrates it with signals, overriden save(), and basic set and save inside the test. The basic set and save works, but the other two fail when using the above steps. Run the test suite to see.",
+      "issue_closed_at": "2017-10-12T16:25:22",
+      "base_commit": "df0aebc893973c78d7d2cda712ba4133dbe29b6e",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "refresh_from_db",
+          "class_name": "Model",
+          "code": "def refresh_from_db(self, using=None, fields=None):\n        \"\"\"\n        Reload field values from the database.\n\n        By default, the reloading happens from the database this instance was\n        loaded from, or by the read router if this instance wasn't loaded from\n        any database. The using parameter will override the default.\n\n        Fields can be used to specify which fields to reload. The fields\n        should be an iterable of field attnames. If fields is None, then\n        all non-deferred fields are reloaded.\n\n        When accessing deferred fields of an instance, the deferred loading\n        of the field will call this method.\n        \"\"\"\n        if fields is not None:\n            if len(fields) == 0:\n                return\n            if any(LOOKUP_SEP in f for f in fields):\n                raise ValueError(\n                    'Found \"%s\" in fields argument. Relations and transforms '\n                    'are not allowed in fields.' % LOOKUP_SEP)\n\n        db = using if using is not None else self._state.db\n        db_instance_qs = self.__class__._default_manager.using(db).filter(pk=self.pk)\n\n        # Use provided fields, if not set then reload all non-deferred fields.\n        deferred_fields = self.get_deferred_fields()\n        if fields is not None:\n            fields = list(fields)\n            db_instance_qs = db_instance_qs.only(*fields)\n        elif deferred_fields:\n            fields = [f.attname for f in self._meta.concrete_fields\n                      if f.attname not in deferred_fields]\n            db_instance_qs = db_instance_qs.only(*fields)\n\n        db_instance = db_instance_qs.get()\n        non_loaded_fields = db_instance.get_deferred_fields()\n        for field in self._meta.concrete_fields:\n            if field.attname in non_loaded_fields:\n                # This field wasn't refreshed - skip ahead.\n                continue\n            setattr(self, field.attname, getattr(db_instance, field.attname))\n            # Throw away stale foreign key references.\n            if field.is_relation and field.is_cached(self):\n                rel_instance = field.get_cached_value(self)\n                local_val = getattr(db_instance, field.attname)\n                related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)\n                if local_val != related_val or (local_val is None and related_val is None):\n                    field.delete_cached_value(self)\n        self._state.db = db_instance._state.db"
+        }
+      ]
+    },
+    {
+      "pr_number": 11886,
+      "pr_title": "Fixed #30405 -- Fixed source code mismatch crash in ExceptionReporter. ",
+      "pr_body": "[ticket 30405](https://code.djangoproject.com/ticket/30405)",
+      "issue_id": 30405,
+      "issue_title": "IndexError in _get_lines_from_file when module does not match file contents (via loader)",
+      "issue_body": "self = <django.views.debug.ExceptionReporter object at 0x7f2a7908ac18>\nfilename = '…/project/.venv/lib/python3.7/site-packages/pdb.py'\nlineno = 230\ncontext_lines = 7\nloader = <_frozen_importlib_external.SourceFileLoader object at 0x7f2a73609278>\nmodule_name = 'pdb'\n\n[23]   …/Vcs/django/django/core/handlers/exception.py(90)response_for_exception()\n-> response = handle_uncaught_exception(request, get_resolver(get_urlconf()), sys.exc_info())\n[24]   …/Vcs/django/django/core/handlers/exception.py(125)handle_uncaught_exception()\n-> return debug.technical_500_response(request, *exc_info)\n[25]   …/Vcs/django/django/views/debug.py(94)technical_500_response()\n-> html = reporter.get_traceback_html()\n[26]   …/Vcs/django/django/views/debug.py(333)get_traceback_html()\n-> c = Context(self.get_traceback_data(), use_l10n=False)\n[27]   …/Vcs/django/django/views/debug.py(264)get_traceback_data()\n-> frames = self.get_traceback_frames()\n[28]   …/Vcs/django/django/views/debug.py(427)get_traceback_frames()\n-> filename, lineno, 7, loader, module_name,\n\n 385             try:\n 386                 context_line = source[lineno]\n 387             except:\n 388                 __import__('pdb').set_trace()\n 389  ->         post_context = source[lineno + 1:upper_bound]\n 390\n 391             return lower_bound, pre_context, context_line, post_context\n(Pdb++) source\n['# this file is needed to hijack pdb without eggs', 'import os.path', \"pdb_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pdb.py')\", 'with open(pdb_path) as f:', \"    exec(compile(f.read(), pdb_path, 'exec'))\"]\nIt uses the loader (\n​\nhttps://github.com/django/django/blob/47885278c669dd7a13a4c3ff7e58e1cbe88af385/django/views/debug.py#L351\n), which picks up the\npth\n, and then the contents does not match the expected line number.\nI think it should maybe always use the given filename?!",
+      "issue_closed_at": "2019-11-12T04:53:04",
+      "base_commit": "6e2f05b2e33a6c80c7a411ce76af7b5a08acb835",
+      "changes": [
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_traceback_text",
+          "class_name": "ExceptionReporter",
+          "code": "def get_traceback_text(self):\n        \"\"\"Return plain text version of debug 500 HTTP error page.\"\"\"\n        with Path(CURRENT_DIR, 'templates', 'technical_500.txt').open(encoding='utf-8') as fh:\n            t = DEBUG_ENGINE.from_string(fh.read())\n        c = Context(self.get_traceback_data(), autoescape=False, use_l10n=False)\n        return t.render(c)"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "_get_lines_from_file",
+          "class_name": "ExceptionReporter",
+          "code": "def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):\n        \"\"\"\n        Return context_lines before and after lineno from file.\n        Return (pre_context_lineno, pre_context, context_line, post_context).\n        \"\"\"\n        source = None\n        if hasattr(loader, 'get_source'):\n            try:\n                source = loader.get_source(module_name)\n            except ImportError:\n                pass\n            if source is not None:\n                source = source.splitlines()\n        if source is None:\n            try:\n                with open(filename, 'rb') as fp:\n                    source = fp.read().splitlines()\n            except OSError:\n                pass\n        if source is None:\n            return None, [], None, []\n\n        # If we just read the source from a file, or if the loader did not\n        # apply tokenize.detect_encoding to decode the source into a\n        # string, then we should do that ourselves.\n        if isinstance(source[0], bytes):\n            encoding = 'ascii'\n            for line in source[:2]:\n                # File coding may be specified. Match pattern from PEP-263\n                # (https://www.python.org/dev/peps/pep-0263/)\n                match = re.search(br'coding[:=]\\s*([-\\w.]+)', line)\n                if match:\n                    encoding = match.group(1).decode('ascii')\n                    break\n            source = [str(sline, encoding, 'replace') for sline in source]\n\n        lower_bound = max(0, lineno - context_lines)\n        upper_bound = lineno + context_lines\n\n        pre_context = source[lower_bound:lineno]\n        context_line = source[lineno]\n        post_context = source[lineno + 1:upper_bound]\n\n        return lower_bound, pre_context, context_line, post_context"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "_get_lines_from_file",
+          "class_name": "ExceptionReporter",
+          "code": "def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):\n        \"\"\"\n        Return context_lines before and after lineno from file.\n        Return (pre_context_lineno, pre_context, context_line, post_context).\n        \"\"\"\n        source = None\n        if hasattr(loader, 'get_source'):\n            try:\n                source = loader.get_source(module_name)\n            except ImportError:\n                pass\n            if source is not None:\n                source = source.splitlines()\n        if source is None:\n            try:\n                with open(filename, 'rb') as fp:\n                    source = fp.read().splitlines()\n            except OSError:\n                pass\n        if source is None:\n            return None, [], None, []\n\n        # If we just read the source from a file, or if the loader did not\n        # apply tokenize.detect_encoding to decode the source into a\n        # string, then we should do that ourselves.\n        if isinstance(source[0], bytes):\n            encoding = 'ascii'\n            for line in source[:2]:\n                # File coding may be specified. Match pattern from PEP-263\n                # (https://www.python.org/dev/peps/pep-0263/)\n                match = re.search(br'coding[:=]\\s*([-\\w.]+)', line)\n                if match:\n                    encoding = match.group(1).decode('ascii')\n                    break\n            source = [str(sline, encoding, 'replace') for sline in source]\n\n        lower_bound = max(0, lineno - context_lines)\n        upper_bound = lineno + context_lines\n\n        pre_context = source[lower_bound:lineno]\n        context_line = source[lineno]\n        post_context = source[lineno + 1:upper_bound]\n\n        return lower_bound, pre_context, context_line, post_context"
+        }
+      ]
+    },
+    {
+      "pr_number": 6540,
+      "pr_title": "Fixed #26341 (again) -- Addressed multiple occurrences per line use case",
+      "pr_body": "",
+      "issue_id": 26341,
+      "issue_title": "Weird comments in PO files (.html.py filenames)",
+      "issue_body": "I just upgraded Django to 1.9.4 from 1.8.10, and sometimes, the filenames in PO files comments contain \".html.py\" extensions.\nThis is visible on django's main repository :\n​\nhttps://github.com/django/django/blob/ae4d932b1ac12651a7c57d89742c25483ee8c9f9/django/contrib/admin/locale/en/LC_MESSAGES/django.po#L282\n​\nhttps://github.com/django/django/blob/4323676ea5ab6994feb1385522665069d84f397b/django/contrib/admin/locale/en/LC_MESSAGES/django.po#L302\nIn this example, the \"contrib/admin/templates/admin/base_site.html\" file is now named \"contrib/admin/templates/admin/base_site.html.py\" (with a trailing \".py\") in the po file.\nThis seems to appear only on lines with a python file before the template html file.\nclaudep found that this could be the faulty commit :\n​\nhttps://github.com/django/django/commit/e75882332c",
+      "issue_closed_at": "2016-04-30T05:07:43",
+      "base_commit": "4e2ee8662753ca6a2619039b903f11c60709f398",
+      "changes": [
+        {
+          "file": "django/core/management/commands/makemessages.py",
+          "type": "function",
+          "name": "postprocess_messages",
+          "class_name": "BuildFile",
+          "code": "def postprocess_messages(self, msgs):\n        \"\"\"\n        Postprocess messages generated by xgettext GNU gettext utility.\n\n        Transform paths as if these messages were generated from original\n        translatable files rather than from preprocessed versions.\n        \"\"\"\n        if not self.is_templatized:\n            return msgs\n\n        # Remove '.py' suffix\n        if os.name == 'nt':\n            # Preserve '.\\' prefix on Windows to respect gettext behavior\n            old_path = self.work_path\n            new_path = self.path\n        else:\n            old_path = self.work_path[2:]\n            new_path = self.path[2:]\n\n        return re.sub(\n            r'^(#: .*)(' + re.escape(old_path) + r')',\n            r'\\1' + new_path,\n            msgs,\n            flags=re.MULTILINE\n        )"
+        }
+      ]
+    },
+    {
+      "pr_number": 8228,
+      "pr_title": "Fixed #27966 -- Bumped required psycopg2 version to 2.5.4.",
+      "pr_body": "",
+      "issue_id": 27966,
+      "issue_title": "Bump required version of pyscopg2 to 2.5.4",
+      "issue_body": "​\nthis commit\nuses the cursor as context manager (line in question is marked), which were added in psycopg2 2.5 (\n​\nrelease notes\n) (see third item)\nbut\n​\nhere\ndjango checks only for 2.4.5.\n​\nthis commit here\nmade 2.4.5 a requirement and documented that in a few places.",
+      "issue_closed_at": "2017-03-21T11:23:31",
+      "base_commit": "7063a85579f40585f2601ba6e6887b0982e7ce43",
+      "changes": [
+        {
+          "file": "django/db/backends/postgresql/base.py",
+          "type": "function",
+          "name": "psycopg2_version",
+          "class_name": "DatabaseWrapper",
+          "code": "def psycopg2_version(self):\n        return PSYCOPG2_VERSION"
+        }
+      ]
+    }
+  ]
+}

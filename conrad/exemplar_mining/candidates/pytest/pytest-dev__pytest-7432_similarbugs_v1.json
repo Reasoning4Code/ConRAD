@@ -1,0 +1,173 @@
+{
+  "instance_id": "pytest-dev__pytest-7432",
+  "repo": "pytest-dev/pytest",
+  "created_at": "2020-06-29T21:51:15Z",
+  "problem_statement": "skipping: --runxfail breaks pytest.mark.skip location reporting\npytest versions: 5.4.x, current master\r\n\r\nWhen `@pytest.mark.skip`/`skipif` marks are used to skip a test, for example\r\n\r\n```py\r\nimport pytest\r\n@pytest.mark.skip\r\ndef test_skip_location() -> None:\r\n    assert 0\r\n```\r\n\r\nthe expected skip location reported should point to the item itself, and this is indeed what happens when running with `pytest -rs`:\r\n\r\n```\r\nSKIPPED [1] test_it.py:3: unconditional skip\r\n```\r\n\r\nHowever, adding `pytest -rs --runxfail` breaks this:\r\n\r\n```\r\nSKIPPED [1] src/_pytest/skipping.py:238: unconditional skip\r\n```\r\n\r\nThe `--runxfail` is only about xfail and should not affect this at all.\r\n\r\n---\r\n\r\nHint: the bug is in `src/_pytest/skipping.py`, the `pytest_runtest_makereport` hook.\n",
+  "patch": "diff --git a/src/_pytest/skipping.py b/src/_pytest/skipping.py\n--- a/src/_pytest/skipping.py\n+++ b/src/_pytest/skipping.py\n@@ -291,7 +291,8 @@ def pytest_runtest_makereport(item: Item, call: CallInfo[None]):\n             else:\n                 rep.outcome = \"passed\"\n                 rep.wasxfail = xfailed.reason\n-    elif (\n+\n+    if (\n         item._store.get(skipped_by_mark_key, True)\n         and rep.skipped\n         and type(rep.longrepr) is tuple\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 3885,
+      "pr_title": "Fix bad console output when using console_output_style=classic",
+      "pr_body": "Fix #3883\r\n\r\n",
+      "issue_id": 3883,
+      "issue_title": "console_output_style=classic missing tests and seems broken since 3.4.0",
+      "issue_body": "Thanks for submitting an issue!\r\n\r\nHere's a quick checklist in what to include:\r\n\r\n- [x] Include a detailed description of the bug or suggestion\r\nconsole_output_style=classic seems to leave the progress indicator in place, but just leave it at 0%.\r\nThis worked in pytest 3.3 versions.\r\n\r\nI couldn't find any tests for this feature. Which may be why it wasn't caught earlier.\r\n\r\n- [x] `pip list` of the virtual environment you are using\r\n```\r\n(venv) $ pip list\r\nPackage        Version\r\n-------------- -------\r\natomicwrites   1.2.0  \r\nattrs          18.1.0 \r\nclick          6.7    \r\nmore-itertools 4.3.0  \r\npip            18.0   \r\npluggy         0.7.1  \r\npy             1.5.4  \r\npytest         3.7.2  \r\nsetuptools     39.0.1 \r\nsix            1.11.0 \r\ntinydb         3.11.0 \r\n```\r\n- [x] pytest and operating system versions\r\n\r\nplatform darwin -- Python 3.7.0, pytest-3.7.2, py-1.5.4, pluggy-0.7.1\r\nbut seems broken starting with pytest 3.4.0\r\n\r\n- [x] Minimal example if possible\r\n```\r\n(venv) $ pip install pytest==3.7.2\r\n...\r\nSuccessfully installed pluggy-0.7.1 pytest-3.7.2\r\n(venv) $ pytest --tb=no -o console_output_style=classic\r\n===================== test session starts ======================\r\nplatform darwin -- Python 3.7.0, pytest-3.7.2, py-1.5.4, pluggy-0.7.1\r\nrootdir: /Users/okken/projects/book/pytest_update/Book/code/ch1, inifile: pytest.ini\r\ncollected 6 items                                              \r\n\r\ntest_one.py .                                            [  0%]\r\ntest_two.py F                                            [  0%]\r\ntasks/test_four.py ..                                    [  0%]\r\ntasks/test_three.py ..\r\n\r\n============== 1 failed, 5 passed in 0.10 seconds ==============\r\n(venv) $ pip install pytest==3.3.2\r\n...\r\nSuccessfully installed pluggy-0.6.0 pytest-3.3.2\r\n(venv) $ pytest --tb=no -o console_output_style=classic\r\n===================== test session starts ======================\r\nplatform darwin -- Python 3.7.0, pytest-3.3.2, py-1.5.4, pluggy-0.6.0\r\nrootdir: /Users/okken/projects/book/pytest_update/Book/code/ch1, inifile: pytest.ini\r\ncollected 6 items                                              \r\n\r\ntest_one.py .\r\ntest_two.py F\r\ntasks/test_four.py ..\r\ntasks/test_three.py ..\r\n\r\n============== 1 failed, 5 passed in 0.09 seconds ==============\r\n```",
+      "issue_closed_at": "2018-08-27T22:07:03Z",
+      "base_commit": "a31967431f3d112da547ddbd05c4efdb90cb8ad6",
+      "changes": [
+        {
+          "file": "src/_pytest/terminal.py",
+          "type": "function",
+          "name": "hasopt",
+          "class_name": "TerminalReporter",
+          "code": "def hasopt(self, char):\n        char = {\"xfailed\": \"x\", \"skipped\": \"s\"}.get(char, char)\n        return char in self.reportchars"
+        },
+        {
+          "file": "src/_pytest/terminal.py",
+          "type": "function",
+          "name": "pytest_runtest_logstart",
+          "class_name": "TerminalReporter",
+          "code": "def pytest_runtest_logstart(self, nodeid, location):\n        # ensure that the path is printed before the\n        # 1st test of a module starts running\n        if self.showlongtestinfo:\n            line = self._locationline(nodeid, *location)\n            self.write_ensure_prefix(line, \"\")\n        elif self.showfspath:\n            fsid = nodeid.split(\"::\")[0]\n            self.write_fspath_result(fsid, \"\")"
+        }
+      ]
+    },
+    {
+      "pr_number": 1405,
+      "pr_title": "Display collect progress only when in a terminal",
+      "pr_body": "Fix #1397\n",
+      "issue_id": 1397,
+      "issue_title": "\"collecting\" output with --color=yes in Continuous Integration output",
+      "issue_body": "Hi,\n\nWe like to use `--color=yes` when running py.test in continuous integration services like Jenkins (with the [Ansi Color Plugin](https://wiki.jenkins-ci.org/display/JENKINS/AnsiColor+Plugin)). This enables us to see the same nice colors in Jenkins that we see on the terminal.\n\nThe only problem is that the \"collecting\" display progress actually piles up in the terminal because py.test output is being redirected and captured by the server. This can easily be reproduced by redirecting to a file instead:\n\n``` python\nimport pytest\n@pytest.mark.parametrize('i', range(10))\ndef test_foo(i):\n    if i == 5:\n        assert 0\n```\n\n```\npy.test --color=yes test_foo.py > out\n```\n\nContents of `out`:\n\n```\n\u001b[1m============================= test session starts =============================\u001b[0m\nplatform win32 -- Python 2.7.11, pytest-2.8.5, py-1.4.31, pluggy-0.3.1\nrootdir: x:\\jobs_done10, inifile: \n\u001b[1m\ncollecting 0 items\u001b[0m\u001b[1m\ncollecting 10 items\u001b[0m\u001b[1m\ncollected 10 items \n\u001b[0m\nfoo.py .....F....\n\n================================== FAILURES ===================================\n\u001b[1m\u001b[31m_________________________________ test_foo[5] _________________________________\u001b[0m\n\ni = 5\n\n\u001b[1m    @pytest.mark.parametrize('i', range(10))\u001b[0m\n\u001b[1m    def test_foo(i):\u001b[0m\n\u001b[1m        if i == 5:\u001b[0m\n\u001b[1m>           assert 0\u001b[0m\n\u001b[1m\u001b[31mE           assert 0\u001b[0m\n\nfoo.py:6: AssertionError\n\u001b[1m\u001b[31m===================== 1 failed, 9 passed in 0.02 seconds ======================\u001b[0m\n```\n\nThe color codes are correct, but the \"collecting\" messages are a problem because they occupy many lines of output in test suites with hundreds of tests.\n\nIs there any way to prevent those \"collecting\" messages from appearing? `-q` gets rid of them, but I want the header to appear, specially in CI.\n",
+      "issue_closed_at": "2016-02-21T07:17:35Z",
+      "base_commit": "3874d53ee121415c5a964a3f706b97c8010796aa",
+      "changes": [
+        {
+          "file": "_pytest/terminal.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "TerminalReporter",
+          "code": "def __init__(self, config, file=None):\n        import _pytest.config\n        self.config = config\n        self.verbosity = self.config.option.verbose\n        self.showheader = self.verbosity >= 0\n        self.showfspath = self.verbosity >= 0\n        self.showlongtestinfo = self.verbosity > 0\n        self._numcollected = 0\n\n        self.stats = {}\n        self.startdir = py.path.local()\n        if file is None:\n            file = sys.stdout\n        self._tw = self.writer = _pytest.config.create_terminal_writer(config,\n                                                                       file)\n        self.currentfspath = None\n        self.reportchars = getreportopt(config)\n        self.hasmarkup = self._tw.hasmarkup"
+        },
+        {
+          "file": "_pytest/terminal.py",
+          "type": "function",
+          "name": "pytest_runtest_logreport",
+          "class_name": "TerminalReporter",
+          "code": "def pytest_runtest_logreport(self, report):\n        rep = report\n        res = self.config.hook.pytest_report_teststatus(report=rep)\n        cat, letter, word = res\n        self.stats.setdefault(cat, []).append(rep)\n        self._tests_ran = True\n        if not letter and not word:\n            # probably passed setup/teardown\n            return\n        if self.verbosity <= 0:\n            if not hasattr(rep, 'node') and self.showfspath:\n                self.write_fspath_result(rep.nodeid, letter)\n            else:\n                self._tw.write(letter)\n        else:\n            if isinstance(word, tuple):\n                word, markup = word\n            else:\n                if rep.passed:\n                    markup = {'green':True}\n                elif rep.failed:\n                    markup = {'red':True}\n                elif rep.skipped:\n                    markup = {'yellow':True}\n            line = self._locationline(rep.nodeid, *rep.location)\n            if not hasattr(rep, 'node'):\n                self.write_ensure_prefix(line, word, **markup)\n                #self._tw.write(word, **markup)\n            else:\n                self.ensure_newline()\n                if hasattr(rep, 'node'):\n                    self._tw.write(\"[%s] \" % rep.node.gateway.id)\n                self._tw.write(word, **markup)\n                self._tw.write(\" \" + line)\n                self.currentfspath = -2"
+        },
+        {
+          "file": "_pytest/terminal.py",
+          "type": "function",
+          "name": "pytest_collectreport",
+          "class_name": "TerminalReporter",
+          "code": "def pytest_collectreport(self, report):\n        if report.failed:\n            self.stats.setdefault(\"error\", []).append(report)\n        elif report.skipped:\n            self.stats.setdefault(\"skipped\", []).append(report)\n        items = [x for x in report.result if isinstance(x, pytest.Item)]\n        self._numcollected += len(items)\n        if self.hasmarkup:\n            #self.write_fspath_result(report.nodeid, 'E')\n            self.report_collect()"
+        },
+        {
+          "file": "_pytest/terminal.py",
+          "type": "function",
+          "name": "report_collect",
+          "class_name": "TerminalReporter",
+          "code": "def report_collect(self, final=False):\n        if self.config.option.verbose < 0:\n            return\n\n        errors = len(self.stats.get('error', []))\n        skipped = len(self.stats.get('skipped', []))\n        if final:\n            line = \"collected \"\n        else:\n            line = \"collecting \"\n        line += str(self._numcollected) + \" items\"\n        if errors:\n            line += \" / %d errors\" % errors\n        if skipped:\n            line += \" / %d skipped\" % skipped\n        if self.hasmarkup:\n            if final:\n                line += \" \\n\"\n            self.rewrite(line, bold=True)\n        else:\n            self.write_line(line)"
+        }
+      ]
+    },
+    {
+      "pr_number": 3110,
+      "pr_title": "Fix progress report when tests fail during teardown",
+      "pr_body": "Fix #3088\r\n",
+      "issue_id": 3088,
+      "issue_title": "Invalid percentages of Test Suite progress",
+      "issue_body": "Progress of Test Suite shows more than 100% if Teardown fails:\r\n```\r\n$ python3 -m pytest -v ./test.py &> res.txt; cat res.txt                                                                                                                                        \r\n============================= test session starts ==============================                                                                                                                                   \r\nplatform linux -- Python 3.6.4, pytest-3.3.1, py-1.5.0, pluggy-0.6.0 -- /usr/bin/python3\r\ncachedir: .cache\r\nrootdir: /home/pavel, inifile:\r\nplugins: allure-adaptor-1.7.8\r\ncollecting ... collected 1 item\r\n\r\ntest.py::test_foo1 PASSED                                                [100%]\r\ntest.py::test_foo1 ERROR                                                 [200%]\r\n\r\n==================================== ERRORS ====================================\r\n```\r\ntest.py:\r\n```\r\nimport pytest                                                                                                                                                                                                      \r\n\r\n@pytest.fixture\r\ndef fail_teardown():\r\n    print(\"SETUP\")\r\n    yield fail_teardown\r\n    print(\"TEARDOWN\")\r\n    assert 1 == 2\r\n\r\ndef test_foo1(fail_teardown):\r\n    print(\"TEST\")\r\n```\r\nSystem:\r\n```\r\n$ pip list 2>/dev/null                                                                                                                                                                          \r\nappdirs (1.4.3)                                                                                                                                                                                                    \r\nasn1crypto (0.24.0)                                                                                                                                                                                                \r\nattrs (17.4.0)\r\nbcrypt (3.1.4)\r\ncffi (1.11.2)\r\ncryptography (2.1.4)\r\nidna (2.6)\r\nisc (2.0)\r\njson2html (1.1.1)\r\nlxml (4.1.1)                                                                                                                                                                                                       \r\nmsgpack-python (0.4.8)                                                                                                                                                                                             \r\nnamedlist (1.7)                                                                                                                                                                                                    \r\nnetifaces (0.10.6)                                                                                                                                                                                                 \r\npackaging (16.8)                                                                                                                                                                                                   \r\nparamiko (2.4.0)                                                                                                                                                                                                   \r\npip (9.0.1)                                                                                                                                                                                                        \r\npluggy (0.6.0)                                                                                                                                                                                                     \r\nply (3.10)                                                                                                                                                                                                         \r\npy (1.5.0)                                                                                                                                                                                                         \r\npyasn1 (0.4.2)                                                                                                                                                                                                     \r\npycparser (2.18)                                                                                                                                                                                                   \r\nPyNaCl (1.2.0)                                                                                                                                                                                                     \r\npyparsing (2.2.0)                                                                                                                                                                                                  \r\npyserial (3.4)                                                                                                                                                                                                     \r\npytest (3.3.1)                                                                                                                                                                                                     \r\npytest-allure-adaptor (1.7.8)                                                                                                                                                                                      \r\nscp (0.10.2)                                                                                                                                                                                                       \r\nsetuptools (38.2.5)                                                                                                                                                                                                \r\nsix (1.11.0)                                                                                                                                                                                                       \r\nspeedtest-cli (1.0.7)                                                                                                                                                                                              \r\nws4py (0.3.4)                                                                                                                                                                                            \r\n$ uname -a                                                                                                                                                                                      \r\nLinux afitester 4.14.10-1-ARCH #1 SMP PREEMPT Fri Dec 29 20:17:35 UTC 2017 x86_64 GNU/Linux\r\n```",
+      "issue_closed_at": "2018-01-12T10:27:27Z",
+      "base_commit": "b0032ba2b3258ada67bb1fa705c18af1741778fd",
+      "changes": [
+        {
+          "file": "_pytest/terminal.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "TerminalReporter",
+          "code": "def __init__(self, config, file=None):\n        import _pytest.config\n        self.config = config\n        self.verbosity = self.config.option.verbose\n        self.showheader = self.verbosity >= 0\n        self.showfspath = self.verbosity >= 0\n        self.showlongtestinfo = self.verbosity > 0\n        self._numcollected = 0\n        self._session = None\n\n        self.stats = {}\n        self.startdir = py.path.local()\n        if file is None:\n            file = sys.stdout\n        self._tw = _pytest.config.create_terminal_writer(config, file)\n        # self.writer will be deprecated in pytest-3.4\n        self.writer = self._tw\n        self._screen_width = self._tw.fullwidth\n        self.currentfspath = None\n        self.reportchars = getreportopt(config)\n        self.hasmarkup = self._tw.hasmarkup\n        self.isatty = file.isatty()\n        self._progress_items_reported = 0\n        self._show_progress_info = (self.config.getoption('capture') != 'no' and\n                                    self.config.getini('console_output_style') == 'progress')"
+        },
+        {
+          "file": "_pytest/terminal.py",
+          "type": "function",
+          "name": "write_ensure_prefix",
+          "class_name": "TerminalReporter",
+          "code": "def write_ensure_prefix(self, prefix, extra=\"\", **kwargs):\n        if self.currentfspath != prefix:\n            self._tw.line()\n            self.currentfspath = prefix\n            self._tw.write(prefix)\n        if extra:\n            self._tw.write(extra, **kwargs)\n            self.currentfspath = -2\n            self._write_progress_information_filling_space()"
+        },
+        {
+          "file": "_pytest/terminal.py",
+          "type": "function",
+          "name": "pytest_runtest_logreport",
+          "class_name": "TerminalReporter",
+          "code": "def pytest_runtest_logreport(self, report):\n        rep = report\n        res = self.config.hook.pytest_report_teststatus(report=rep)\n        cat, letter, word = res\n        if isinstance(word, tuple):\n            word, markup = word\n        else:\n            markup = None\n        self.stats.setdefault(cat, []).append(rep)\n        self._tests_ran = True\n        if not letter and not word:\n            # probably passed setup/teardown\n            return\n        running_xdist = hasattr(rep, 'node')\n        self._progress_items_reported += 1\n        if self.verbosity <= 0:\n            if not running_xdist and self.showfspath:\n                self.write_fspath_result(rep.nodeid, letter)\n            else:\n                self._tw.write(letter)\n            self._write_progress_if_past_edge()\n        else:\n            if markup is None:\n                if rep.passed:\n                    markup = {'green': True}\n                elif rep.failed:\n                    markup = {'red': True}\n                elif rep.skipped:\n                    markup = {'yellow': True}\n                else:\n                    markup = {}\n            line = self._locationline(rep.nodeid, *rep.location)\n            if not running_xdist:\n                self.write_ensure_prefix(line, word, **markup)\n            else:\n                self.ensure_newline()\n                self._tw.write(\"[%s]\" % rep.node.gateway.id)\n                if self._show_progress_info:\n                    self._tw.write(self._get_progress_information_message() + \" \", cyan=True)\n                else:\n                    self._tw.write(' ')\n                self._tw.write(word, **markup)\n                self._tw.write(\" \" + line)\n                self.currentfspath = -2"
+        },
+        {
+          "file": "_pytest/terminal.py",
+          "type": "function",
+          "name": "pytest_runtest_logreport",
+          "class_name": "TerminalReporter",
+          "code": "def pytest_runtest_logreport(self, report):\n        rep = report\n        res = self.config.hook.pytest_report_teststatus(report=rep)\n        cat, letter, word = res\n        if isinstance(word, tuple):\n            word, markup = word\n        else:\n            markup = None\n        self.stats.setdefault(cat, []).append(rep)\n        self._tests_ran = True\n        if not letter and not word:\n            # probably passed setup/teardown\n            return\n        running_xdist = hasattr(rep, 'node')\n        self._progress_items_reported += 1\n        if self.verbosity <= 0:\n            if not running_xdist and self.showfspath:\n                self.write_fspath_result(rep.nodeid, letter)\n            else:\n                self._tw.write(letter)\n            self._write_progress_if_past_edge()\n        else:\n            if markup is None:\n                if rep.passed:\n                    markup = {'green': True}\n                elif rep.failed:\n                    markup = {'red': True}\n                elif rep.skipped:\n                    markup = {'yellow': True}\n                else:\n                    markup = {}\n            line = self._locationline(rep.nodeid, *rep.location)\n            if not running_xdist:\n                self.write_ensure_prefix(line, word, **markup)\n            else:\n                self.ensure_newline()\n                self._tw.write(\"[%s]\" % rep.node.gateway.id)\n                if self._show_progress_info:\n                    self._tw.write(self._get_progress_information_message() + \" \", cyan=True)\n                else:\n                    self._tw.write(' ')\n                self._tw.write(word, **markup)\n                self._tw.write(\" \" + line)\n                self.currentfspath = -2"
+        },
+        {
+          "file": "_pytest/terminal.py",
+          "type": "function",
+          "name": "pytest_runtest_logreport",
+          "class_name": "TerminalReporter",
+          "code": "def pytest_runtest_logreport(self, report):\n        rep = report\n        res = self.config.hook.pytest_report_teststatus(report=rep)\n        cat, letter, word = res\n        if isinstance(word, tuple):\n            word, markup = word\n        else:\n            markup = None\n        self.stats.setdefault(cat, []).append(rep)\n        self._tests_ran = True\n        if not letter and not word:\n            # probably passed setup/teardown\n            return\n        running_xdist = hasattr(rep, 'node')\n        self._progress_items_reported += 1\n        if self.verbosity <= 0:\n            if not running_xdist and self.showfspath:\n                self.write_fspath_result(rep.nodeid, letter)\n            else:\n                self._tw.write(letter)\n            self._write_progress_if_past_edge()\n        else:\n            if markup is None:\n                if rep.passed:\n                    markup = {'green': True}\n                elif rep.failed:\n                    markup = {'red': True}\n                elif rep.skipped:\n                    markup = {'yellow': True}\n                else:\n                    markup = {}\n            line = self._locationline(rep.nodeid, *rep.location)\n            if not running_xdist:\n                self.write_ensure_prefix(line, word, **markup)\n            else:\n                self.ensure_newline()\n                self._tw.write(\"[%s]\" % rep.node.gateway.id)\n                if self._show_progress_info:\n                    self._tw.write(self._get_progress_information_message() + \" \", cyan=True)\n                else:\n                    self._tw.write(' ')\n                self._tw.write(word, **markup)\n                self._tw.write(\" \" + line)\n                self.currentfspath = -2"
+        }
+      ]
+    },
+    {
+      "pr_number": 926,
+      "pr_title": "Don't skip fixtures that are substrings of params",
+      "pr_body": "Fix #736\n",
+      "issue_id": 736,
+      "issue_title": "Parametrized argument named similarly to fixture (contains it) breaks that fixture's parametrization",
+      "issue_body": "Originally reported by: **Jacobo Giralt (BitBucket: [jgiralt](http://bitbucket.org/jgiralt), GitHub: [jgiralt](http://github.com/jgiralt))**\n\n---\n\n```\n#!python\n\nimport pytest\n\n@pytest.fixture(params=[1,2,3])\ndef foo(request):\n    return request.param\n\n@pytest.mark.parametrize('foobar', [4,5,6])\ndef test_issue(foo, foobar):\n    assert True\n```\n\n```\n#!python\n\nrequest = <SubRequest 'foo' for <Function 'test_issue[4]'>>\n\n    @pytest.fixture(params=[1,2,3])\n    def foo(request):\n>       return request.param\nAttributeError: SubRequest instance has no attribute 'param'\n```\n\nThe issue seems reproducible as long as the parametrized test argument contains the fixture name as a substring, e.g. foobar, barfoo, foox, xfoo, disappears as soon as I modify the fixture name to anything else.\n\nThis same code works in pytest-2.6.4 and fails for 2.7.\n\n---\n- Bitbucket: https://bitbucket.org/pytest-dev/pytest/issue/736\n",
+      "issue_closed_at": "2015-08-11T00:12:52Z",
+      "base_commit": "681e502c12f5baa3f2da9c9de4a848813a872945",
+      "changes": [
+        {
+          "file": "_pytest/python.py",
+          "type": "function",
+          "name": "pytest_generate_tests",
+          "class_name": "FixtureManager",
+          "code": "def pytest_generate_tests(self, metafunc):\n        for argname in metafunc.fixturenames:\n            faclist = metafunc._arg2fixturedefs.get(argname)\n            if faclist:\n                fixturedef = faclist[-1]\n                if fixturedef.params is not None:\n                    func_params = getattr(getattr(metafunc.function, 'parametrize', None), 'args', [[None]])\n                    # skip directly parametrized arguments\n                    if argname not in func_params and argname not in func_params[0]:\n                        metafunc.parametrize(argname, fixturedef.params,\n                                             indirect=True, scope=fixturedef.scope,\n                                             ids=fixturedef.ids)\n            else:\n                continue"
+        }
+      ]
+    },
+    {
+      "pr_number": 5559,
+      "pr_title": "Merge master into features",
+      "pr_body": "",
+      "issue_id": 5547,
+      "issue_title": "pytest stepwise doesn't work with xfail strict failures",
+      "issue_body": "```\r\ngraingert@onomastic:~/projects/foo$ cat tests/test_foo.py \r\nimport pytest\r\n\r\n\r\n@pytest.mark.xfail(reason=\"pass\")\r\ndef test_a():\r\n    pass\r\n\r\n\r\n@pytest.mark.xfail(reason=\"pass\")\r\ndef test_b():\r\n    pass\r\ngraingert@onomastic:~/projects/foo$ cat tests/pytest.ini \r\n[pytest]\r\naddopts = --strict\r\nxfail_strict=true\r\ngraingert@onomastic:~/projects/foo$ pytest --sw tests/\r\n================================ test session starts ================================\r\nplatform linux -- Python 3.7.3, pytest-5.0.0, py-1.8.0, pluggy-0.12.0\r\nrootdir: /home/graingert/projects/foo/tests, inifile: pytest.ini\r\ncollected 2 items                                                                   \r\nstepwise: no previously failed tests, not skipping.\r\n\r\ntests/test_foo.py FF                                                          [100%]\r\n\r\n===================================== FAILURES ======================================\r\n______________________________________ test_a _______________________________________\r\n[XPASS(strict)] pass\r\n______________________________________ test_b _______________________________________\r\n[XPASS(strict)] pass\r\n============================= 2 failed in 0.01 seconds ==============================\r\n```",
+      "issue_closed_at": "2019-07-04T23:50:34Z",
+      "base_commit": "60a358fa2dc82a571c68d1be2d25703b51351538",
+      "changes": [
+        {
+          "file": "doc/en/example/nonpython/conftest.py",
+          "type": "line",
+          "name": "line 3",
+          "code": "\n\ndef pytest_collect_file(parent, path):\n    if path.ext == \".yml\" and path.basename.startswith(\"test\"):\n        return YamlFile(path, parent)\n\n"
+        },
+        {
+          "file": "src/_pytest/_code/code.py",
+          "type": "function",
+          "name": "match",
+          "class_name": "ExceptionInfo",
+          "code": "def match(self, regexp):\n        \"\"\"\n        Check whether the regular expression 'regexp' is found in the string\n        representation of the exception using ``re.search``. If it matches\n        then True is returned (so that it is possible to write\n        ``assert excinfo.match()``). If it doesn't match an AssertionError is\n        raised.\n        \"\"\"\n        __tracebackhide__ = True\n        if not re.search(regexp, str(self.value)):\n            assert 0, \"Pattern '{!s}' not found in '{!s}'\".format(regexp, self.value)\n        return True"
+        },
+        {
+          "file": "src/_pytest/stepwise.py",
+          "type": "function",
+          "name": "pytest_collection_modifyitems",
+          "class_name": "StepwisePlugin",
+          "code": "def pytest_collection_modifyitems(self, session, config, items):\n        if not self.active:\n            return\n        if not self.lastfailed:\n            self.report_status = \"no previously failed tests, not skipping.\"\n            return\n\n        already_passed = []\n        found = False\n\n        # Make a list of all tests that have been run before the last failing one.\n        for item in items:\n            if item.nodeid == self.lastfailed:\n                found = True\n                break\n            else:\n                already_passed.append(item)\n\n        # If the previously failed test was not found among the test items,\n        # do not skip any tests.\n        if not found:\n            self.report_status = \"previously failed test not found, not skipping.\"\n            already_passed = []\n        else:\n            self.report_status = \"skipping {} already passed items.\".format(\n                len(already_passed)\n            )\n\n        for item in already_passed:\n            items.remove(item)\n\n        config.hook.pytest_deselected(items=already_passed)"
+        }
+      ]
+    }
+  ]
+}

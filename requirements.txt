@@ -1,0 +1,5 @@
+openai
+tqdm
+datasets
+tiktoken
+python-dotenv

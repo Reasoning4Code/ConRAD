@@ -1,0 +1,117 @@
+{
+  "instance_id": "django__django-11001",
+  "repo": "django/django",
+  "created_at": "2019-02-17T13:02:09Z",
+  "problem_statement": "Incorrect removal of order_by clause created as multiline RawSQL\nDescription\n\t\nHi.\nThe SQLCompiler is ripping off one of my \"order by\" clause, because he \"thinks\" the clause was already \"seen\" (in SQLCompiler.get_order_by()). I'm using expressions written as multiline RawSQLs, which are similar but not the same. \nThe bug is located in SQLCompiler.get_order_by(), somewhere around line computing part of SQL query without ordering:\nwithout_ordering = self.ordering_parts.search(sql).group(1)\nThe sql variable contains multiline sql. As a result, the self.ordering_parts regular expression is returning just a line containing ASC or DESC words. This line is added to seen set, and because my raw queries have identical last lines, only the first clasue is returing from SQLCompiler.get_order_by().\nAs a quick/temporal fix I can suggest making sql variable clean of newline characters, like this:\nsql_oneline = ' '.join(sql.split('\\n'))\nwithout_ordering = self.ordering_parts.search(sql_oneline).group(1)\nNote: beware of unicode (Py2.x u'') and EOL dragons (\\r).\nExample of my query:\n\treturn MyModel.objects.all().order_by(\n\t\tRawSQL('''\n\t\t\tcase when status in ('accepted', 'verification')\n\t\t\t\t then 2 else 1 end''', []).desc(),\n\t\tRawSQL('''\n\t\t\tcase when status in ('accepted', 'verification')\n\t\t\t\t then (accepted_datetime, preferred_datetime)\n\t\t\t\t else null end''', []).asc(),\n\t\tRawSQL('''\n\t\t\tcase when status not in ('accepted', 'verification')\n\t\t\t\t then (accepted_datetime, preferred_datetime, created_at)\n\t\t\t\t else null end''', []).desc())\nThe ordering_parts.search is returing accordingly:\n'\t\t\t\t then 2 else 1 end)'\n'\t\t\t\t else null end'\n'\t\t\t\t else null end'\nSecond RawSQL with a\t\t\t\t else null end part is removed from query.\nThe fun thing is that the issue can be solved by workaround by adding a space or any other char to the last line. \nSo in case of RawSQL I can just say, that current implementation of avoiding duplicates in order by clause works only for special/rare cases (or does not work in all cases). \nThe bug filed here is about wrong identification of duplicates (because it compares only last line of SQL passed to order by clause).\nHope my notes will help you fixing the issue. Sorry for my english.\n",
+  "patch": "diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py\n--- a/django/db/models/sql/compiler.py\n+++ b/django/db/models/sql/compiler.py\n@@ -32,7 +32,8 @@ def __init__(self, query, connection, using):\n         self.select = None\n         self.annotation_col_map = None\n         self.klass_info = None\n-        self.ordering_parts = re.compile(r'(.*)\\s(ASC|DESC)(.*)')\n+        # Multiline ordering SQL clause may appear from RawSQL.\n+        self.ordering_parts = re.compile(r'^(.*)\\s(ASC|DESC)(.*)', re.MULTILINE | re.DOTALL)\n         self._meta_ordering = None\n \n     def setup_query(self):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 4462,
+      "pr_title": "Fixed #24578 -- Fixed crash with QuerySet.update() on FK to O2O fields.",
+      "pr_body": "",
+      "issue_id": 24578,
+      "issue_title": "prepare_database_save breaks some OneToOneField's in 1.8",
+      "issue_body": "",
+      "issue_closed_at": "2015-04-09T07:21:57",
+      "base_commit": "20a98d863f00fc48f9c7fd783d8d0539c6be41f5",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "_get_next_or_previous_in_order",
+          "class_name": "Model",
+          "code": "def _get_next_or_previous_in_order(self, is_next):\n        cachename = \"__%s_order_cache\" % is_next\n        if not hasattr(self, cachename):\n            op = 'gt' if is_next else 'lt'\n            order = '_order' if is_next else '-_order'\n            order_field = self._meta.order_with_respect_to\n            obj = self._default_manager.filter(**{\n                order_field.name: getattr(self, order_field.attname)\n            }).filter(**{\n                '_order__%s' % op: self._default_manager.values('_order').filter(**{\n                    self._meta.pk.name: self.pk\n                })\n            }).order_by(order)[:1].get()\n            setattr(self, cachename, obj)\n        return getattr(self, cachename)"
+        }
+      ]
+    },
+    {
+      "pr_number": 5826,
+      "pr_title": "Fixed #25882 -- Prevented fast deletes matching no rows from crashing on MySQL.",
+      "pr_body": "",
+      "issue_id": 25882,
+      "issue_title": "Deletion on ForeignKey raises TypeError",
+      "issue_body": "",
+      "issue_closed_at": "2015-12-14T12:12:22",
+      "base_commit": "5233b70070f8979f41ca1da2c1b1d78c8e30944e",
+      "changes": [
+        {
+          "file": "django/db/models/sql/subqueries.py",
+          "type": "function",
+          "name": "delete_qs",
+          "class_name": "DeleteQuery",
+          "code": "def delete_qs(self, query, using):\n        \"\"\"\n        Delete the queryset in one SQL query (if possible). For simple queries\n        this is done by copying the query.query.where to self.query, for\n        complex queries by using subquery.\n        \"\"\"\n        innerq = query.query\n        # Make sure the inner query has at least one table in use.\n        innerq.get_initial_alias()\n        # The same for our new query.\n        self.get_initial_alias()\n        innerq_used_tables = [t for t in innerq.tables\n                              if innerq.alias_refcount[t]]\n        if not innerq_used_tables or innerq_used_tables == self.tables:\n            # There is only the base table in use in the query.\n            self.where = innerq.where\n        else:\n            pk = query.model._meta.pk\n            if not connections[using].features.update_can_self_select:\n                # We can't do the delete using subquery.\n                values = list(query.values_list('pk', flat=True))\n                if not values:\n                    return\n                return self.delete_batch(values, using)\n            else:\n                innerq.clear_select_clause()\n                innerq.select = [\n                    pk.get_col(self.get_initial_alias())\n                ]\n                values = innerq\n            self.where = self.where_class()\n            self.add_q(Q(pk__in=values))\n        cursor = self.get_compiler(using).execute_sql(CURSOR)\n        return cursor.rowcount if cursor else 0"
+        }
+      ]
+    },
+    {
+      "pr_number": 7787,
+      "pr_title": "Fixed #27681 -- Fixed binary &/| operators for negative values on MySQL.",
+      "pr_body": " This is a follow up of the discussion in #7770.",
+      "issue_id": 27681,
+      "issue_title": "Binary &/| operators work incorrectly for negative values on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2017-01-03T12:17:55",
+      "base_commit": "27267afc4137142e4f0b36c83cec861ee6924186",
+      "changes": [
+        {
+          "file": "django/db/backends/mysql/operations.py",
+          "type": "function",
+          "name": "bulk_insert_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def bulk_insert_sql(self, fields, placeholder_rows):\n        placeholder_rows_sql = (\", \".join(row) for row in placeholder_rows)\n        values_sql = \", \".join(\"(%s)\" % sql for sql in placeholder_rows_sql)\n        return \"VALUES \" + values_sql"
+        }
+      ]
+    },
+    {
+      "pr_number": 8629,
+      "pr_title": "Fixed #28293 -- Fixed union(), intersection(), and difference() when combining with an EmptyQuerySet.",
+      "pr_body": "https://code.djangoproject.com/ticket/28293",
+      "issue_id": 28293,
+      "issue_title": "QuerySet.union(QuerySet.none()) results in an empty queryset, should be the original queryset",
+      "issue_body": "",
+      "issue_closed_at": "2017-06-13T01:16:29",
+      "base_commit": "9dc83c356d363c090f3351c908cad6f823aeb7bf",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_combinator_query",
+          "class_name": "QuerySet",
+          "code": "def _combinator_query(self, combinator, *other_qs, all=False):\n        # Clone the query to inherit the select list and everything\n        clone = self._clone()\n        # Clear limits and ordering so they can be reapplied\n        clone.query.clear_ordering(True)\n        clone.query.clear_limits()\n        clone.query.combined_queries = (self.query,) + tuple(qs.query for qs in other_qs)\n        clone.query.combinator = combinator\n        clone.query.combinator_all = all\n        return clone"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = (compiler.as_sql() for compiler in compilers)\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 10715,
+      "pr_title": "Fixed #29932 -- Fixed combining compound queries with sub compound queries on SQLite and Oracle.",
+      "pr_body": "Ticket [29932](https://code.djangoproject.com/ticket/29932).",
+      "issue_id": 29932,
+      "issue_title": "QuerySet.difference() after intersection() returns incorrect results on SQLite and Oracle",
+      "issue_body": "",
+      "issue_closed_at": "2018-12-06T14:51:03",
+      "base_commit": "ae180fa4b7f927a4aeae772975927c9888bb0cb0",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite can read from a cursor since SQLite 3.6.5, subject to the caveat\n    # that statements within a connection aren't isolated from each other. See\n    # https://sqlite.org/isolation.html.\n    can_use_chunked_reads = True\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    autocommits_when_autocommit_is_off = sys.version_info < (3, 6)\n    can_introspect_decimal_field = False\n    can_introspect_duration_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_atomic_references_rename = False\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n    supports_cast_with_precision = False\n    time_cast_precision = 3\n    can_release_savepoints = True\n    supports_partial_indexes = Database.version_info >= (3, 8, 0)\n    # Is \"ALTER TABLE ... RENAME COLUMN\" supported?\n    can_alter_table_rename_column = Database.sqlite_version_info >= (3, 25, 0)\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/sql/compiler.py",
+          "type": "function",
+          "name": "get_combinator_sql",
+          "class_name": "SQLCompiler",
+          "code": "def get_combinator_sql(self, combinator, all):\n        features = self.connection.features\n        compilers = [\n            query.get_compiler(self.using, self.connection)\n            for query in self.query.combined_queries if not query.is_empty()\n        ]\n        if not features.supports_slicing_ordering_in_compound:\n            for query, compiler in zip(self.query.combined_queries, compilers):\n                if query.low_mark or query.high_mark:\n                    raise DatabaseError('LIMIT/OFFSET not allowed in subqueries of compound statements.')\n                if compiler.get_order_by():\n                    raise DatabaseError('ORDER BY not allowed in subqueries of compound statements.')\n        parts = ()\n        for compiler in compilers:\n            try:\n                # If the columns list is limited, then all combined queries\n                # must have the same columns list. Set the selects defined on\n                # the query on all combined queries, if not already set.\n                if not compiler.query.values_select and self.query.values_select:\n                    compiler.query.set_values((\n                        *self.query.extra_select,\n                        *self.query.values_select,\n                        *self.query.annotation_select,\n                    ))\n                parts += (compiler.as_sql(),)\n            except EmptyResultSet:\n                # Omit the empty queryset with UNION and with DIFFERENCE if the\n                # first queryset is nonempty.\n                if combinator == 'union' or (combinator == 'difference' and parts):\n                    continue\n                raise\n        if not parts:\n            raise EmptyResultSet\n        combinator_sql = self.connection.ops.set_operators[combinator]\n        if all and combinator == 'union':\n            combinator_sql += ' ALL'\n        braces = '({})' if features.supports_slicing_ordering_in_compound else '{}'\n        sql_parts, args_parts = zip(*((braces.format(sql), args) for sql, args in parts))\n        result = [' {} '.format(combinator_sql).join(sql_parts)]\n        params = []\n        for part in args_parts:\n            params.extend(part)\n        return result, params"
+        }
+      ]
+    }
+  ]
+}

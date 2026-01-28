@@ -1,0 +1,144 @@
+{
+  "instance_id": "pallets__flask-4045",
+  "repo": "pallets/flask",
+  "created_at": "2021-05-13T21:32:41Z",
+  "problem_statement": "Raise error when blueprint name contains a dot\nThis is required since every dot is now significant since blueprints can be nested. An error was already added for endpoint names in 1.0, but should have been added for this as well.\n",
+  "patch": "diff --git a/src/flask/blueprints.py b/src/flask/blueprints.py\n--- a/src/flask/blueprints.py\n+++ b/src/flask/blueprints.py\n@@ -188,6 +188,10 @@ def __init__(\n             template_folder=template_folder,\n             root_path=root_path,\n         )\n+\n+        if \".\" in name:\n+            raise ValueError(\"'name' may not contain a dot '.' character.\")\n+\n         self.name = name\n         self.url_prefix = url_prefix\n         self.subdomain = subdomain\n@@ -360,12 +364,12 @@ def add_url_rule(\n         \"\"\"Like :meth:`Flask.add_url_rule` but for a blueprint.  The endpoint for\n         the :func:`url_for` function is prefixed with the name of the blueprint.\n         \"\"\"\n-        if endpoint:\n-            assert \".\" not in endpoint, \"Blueprint endpoints should not contain dots\"\n-        if view_func and hasattr(view_func, \"__name__\"):\n-            assert (\n-                \".\" not in view_func.__name__\n-            ), \"Blueprint view function name should not contain dots\"\n+        if endpoint and \".\" in endpoint:\n+            raise ValueError(\"'endpoint' may not contain a dot '.' character.\")\n+\n+        if view_func and hasattr(view_func, \"__name__\") and \".\" in view_func.__name__:\n+            raise ValueError(\"'view_func' name may not contain a dot '.' character.\")\n+\n         self.record(lambda s: s.add_url_rule(rule, endpoint, view_func, **options))\n \n     def app_template_filter(self, name: t.Optional[str] = None) -> t.Callable:\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 2746,
+      "pr_title": "allow empty prefix and no lead slash in bp route",
+      "pr_body": "closes #2742\r\n\r\nFix `url_prefx=''` or `url_prefix='/'` when Blueprint routes don't begin with a leading slash. Technically, routes should start with a leading slash, so don't rely on this behavior.",
+      "issue_id": 2742,
+      "issue_title": "Flask 1.0 backwards incompatible root url_prefix",
+      "issue_body": "Some of the recent PRs in blueprint.py seem to make Flask 1.0 not backwards compatible with 0.x versions.  When `url_prefix=''`, `url_prefix='/'`, or `url_prefix` is not specified, a `ValueError('urls must start with a leading slash')` is now raised. \r\n\r\n### Expected Behavior\r\n\r\nI would have assumed, given the discussion in #2629, that `''` and maybe `/` would be acceptable url_prefixes to indicate the blueprint is meant for the root.\r\n\r\nAn example of a broken library is `flask-sitemap` (https://github.com/inveniosoftware/flask-sitemap/blob/master/flask_sitemap/__init__.py#L120) which uses\r\n\r\n```\r\n            app.register_blueprint(\r\n                self.blueprint,\r\n                url_prefix=app.config.get('SITEMAP_BLUEPRINT_URL_PREFIX') # default is '/'\r\n            )\r\n```\r\n\r\n\r\n### Actual Behavior\r\n\r\n In my testing, I continually get \r\n\r\n```  File \"/home/albertyw/.virtualenvs/baseflask/local/lib/python2.7/site-packages/flask_sitemap/__init__.py\", line 79, in __init__\r\n    self.init_app(app)\r\n  File \"/home/albertyw/.virtualenvs/baseflask/local/lib/python2.7/site-packages/flask_sitemap/__init__.py\", line 120, in init_app\r\n    url_prefix='' # app.config.get('SITEMAP_BLUEPRINT_URL_PREFIX')\r\n  File \"/home/albertyw/.virtualenvs/baseflask/local/lib/python2.7/site-packages/flask/app.py\", line 64, in wrapper_func\r\n    return f(self, *args, **kwargs)\r\n  File \"/home/albertyw/.virtualenvs/baseflask/local/lib/python2.7/site-packages/flask/app.py\", line 1113, in register_blueprint\r\n    blueprint.register(self, options, first_registration)\r\n  File \"/home/albertyw/.virtualenvs/baseflask/local/lib/python2.7/site-packages/flask/blueprints.py\", line 186, in register\r\n    deferred(state)\r\n  File \"/home/albertyw/.virtualenvs/baseflask/local/lib/python2.7/site-packages/flask/blueprints.py\", line 207, in <lambda>\r\n    s.add_url_rule(rule, endpoint, view_func, **options))\r\n  File \"/home/albertyw/.virtualenvs/baseflask/local/lib/python2.7/site-packages/flask/blueprints.py\", line 79, in add_url_rule\r\n    view_func, defaults=defaults, **options)\r\n  File \"/home/albertyw/.virtualenvs/baseflask/local/lib/python2.7/site-packages/flask/app.py\", line 64, in wrapper_func\r\n    return f(self, *args, **kwargs)\r\n  File \"/home/albertyw/.virtualenvs/baseflask/local/lib/python2.7/site-packages/flask/app.py\", line 1211, in add_url_rule\r\n    rule = self.url_rule_class(rule, methods=methods, **options)\r\n  File \"/home/albertyw/.virtualenvs/baseflask/local/lib/python2.7/site-packages/werkzeug/routing.py\", line 603, in __init__\r\n    raise ValueError('urls must start with a leading slash')\r\nValueError: urls must start with a leading slash\r\n```\r\n\r\nunless I set `url_prefix='//'`, in which case the url_prefix is the root.\r\n\r\n### Environment\r\n\r\n* Python version: python 2.7 and 3.6\r\n* Flask version: 1.0\r\n* Werkzeug version: 0.14.1\r\n",
+      "issue_closed_at": "2018-04-29T22:47:15Z",
+      "base_commit": "6b2127b1e0ef474aed91a25492e18a361ad7f364",
+      "changes": [
+        {
+          "file": "flask/blueprints.py",
+          "type": "function",
+          "name": "add_url_rule",
+          "class_name": "Blueprint",
+          "code": "def add_url_rule(self, rule, endpoint=None, view_func=None, **options):\n        \"\"\"Like :meth:`Flask.add_url_rule` but for a blueprint.  The endpoint for\n        the :func:`url_for` function is prefixed with the name of the blueprint.\n        \"\"\"\n        if endpoint:\n            assert '.' not in endpoint, \"Blueprint endpoints should not contain dots\"\n        if view_func and hasattr(view_func, '__name__'):\n            assert '.' not in view_func.__name__, \"Blueprint view function name should not contain dots\"\n        self.record(lambda s:\n            s.add_url_rule(rule, endpoint, view_func, **options))"
+        }
+      ]
+    },
+    {
+      "pr_number": 2738,
+      "pr_title": "merge slashes between blueprint prefix and rule",
+      "pr_body": "closes #2731 \r\n\r\nWhen registering a blueprint, strip `/` from the right side of the prefix and the left side of each rule, then join to ensure there's only one slash. #2629 only considered the prefix, and only stripped one slash.",
+      "issue_id": 2731,
+      "issue_title": "Flask 1.0 backwards-incompat with double-slash/no-slash re. #2629",
+      "issue_body": "This is a major backwards-compat breaking change, but I suspect not the intended design and hopefully easy to fix.\r\n\r\nThe issue is related to PR #2629, and this example follows from that:\r\n\r\nGiven blueprint `bp` and app `app`:\r\n\r\n```python\r\n@bp.route('b/')\r\ndef tmp():\r\n    return \"URI should be '/a/b/\"\r\n\r\napp.register_blueprint(bp, url_prefix='/a/')\r\n```\r\n\r\nIn Flask 0.12 the URL is correctly `/a/b`, but in Flask 1.0 it's `/ab`.\r\n\r\nSince issue #2629 relates to resolve double-slashes, I imagine this is a bug (and not a design decision) - and the correct solution would be to remove a slash only when there are two.\r\n",
+      "issue_closed_at": "2018-04-27T19:47:01Z",
+      "base_commit": "5239458f28c5e3057f9987ceb2e6d33b9d9532d3",
+      "changes": [
+        {
+          "file": "flask/blueprints.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "Blueprint",
+          "code": "def __init__(self, name, import_name, static_folder=None,\n                 static_url_path=None, template_folder=None,\n                 url_prefix=None, subdomain=None, url_defaults=None,\n                 root_path=None):\n        _PackageBoundObject.__init__(self, import_name, template_folder,\n                                     root_path=root_path)\n        self.name = name\n        self.url_prefix = url_prefix\n        self.subdomain = subdomain\n        self.static_folder = static_folder\n        self.static_url_path = static_url_path\n        self.deferred_functions = []\n        if url_defaults is None:\n            url_defaults = {}\n        self.url_values_defaults = url_defaults"
+        },
+        {
+          "file": "flask/blueprints.py",
+          "type": "function",
+          "name": "add_url_rule",
+          "class_name": "Blueprint",
+          "code": "def add_url_rule(self, rule, endpoint=None, view_func=None, **options):\n        \"\"\"Like :meth:`Flask.add_url_rule` but for a blueprint.  The endpoint for\n        the :func:`url_for` function is prefixed with the name of the blueprint.\n        \"\"\"\n        if endpoint:\n            assert '.' not in endpoint, \"Blueprint endpoints should not contain dots\"\n        if view_func and hasattr(view_func, '__name__'):\n            assert '.' not in view_func.__name__, \"Blueprint view function name should not contain dots\"\n        self.record(lambda s:\n            s.add_url_rule(rule, endpoint, view_func, **options))"
+        }
+      ]
+    },
+    {
+      "pr_number": 2348,
+      "pr_title": "make debugging bad key errors easier",
+      "pr_body": "* `TRAP_BAD_REQUEST_ERRORS` is enabled by default in debug mode\r\n* `BadRequestKeyError` has the key in the description in debug mode\r\n\r\nIf `app.debug` is true but we're not running in the interactive debugger, this now raises a 500 error (the traceback in the console has the key error though). Can get the old behavior by setting `TRAP_BAD_REQUEST_ERRORS = False`.\r\n\r\nThis error is one of the most recurring questions about Flask on Stack Overflow. Making the error visible will hopefully answer a lot of questions before they're asked.\r\n\r\ncloses #382",
+      "issue_id": 382,
+      "issue_title": "Set TRAP_BAD_REQUEST_ERRORS to True as the default when debugging is enabled",
+      "issue_body": "When debugging an application, it's surprising to get a simple \"400 Bad Request\" when accessing a form parameter that doesn't exist instead of a full traceback. I always forget that I also need to set TRAP_BAD_REQUEST_ERRORS.\n\nIs there a reason why this isn't set by default when debugging is enabled?\n",
+      "issue_closed_at": "2017-05-30T02:53:19Z",
+      "base_commit": "fb90c310b9c9099118c06a95183e38157727fa92",
+      "changes": [
+        {
+          "file": "flask/app.py",
+          "type": "line",
+          "name": "line 18",
+          "code": "\nfrom werkzeug.datastructures import ImmutableDict, Headers\nfrom werkzeug.exceptions import BadRequest, HTTPException, \\\n    InternalServerError, MethodNotAllowed, default_exceptions\nfrom werkzeug.routing import BuildError, Map, RequestRedirect, Rule\n\nfrom . import cli, json"
+        },
+        {
+          "file": "flask/app.py",
+          "type": "function",
+          "name": "_set_request_globals_class",
+          "class_name": "Flask",
+          "code": "def _set_request_globals_class(self, value):\n        from warnings import warn\n        warn(DeprecationWarning('request_globals_class attribute is now '\n                                'called app_ctx_globals_class'))\n        self.app_ctx_globals_class = value"
+        },
+        {
+          "file": "flask/app.py",
+          "type": "function",
+          "name": "trap_http_exception",
+          "class_name": "Flask",
+          "code": "def trap_http_exception(self, e):\n        \"\"\"Checks if an HTTP exception should be trapped or not.  By default\n        this will return ``False`` for all exceptions except for a bad request\n        key error if ``TRAP_BAD_REQUEST_ERRORS`` is set to ``True``.  It\n        also returns ``True`` if ``TRAP_HTTP_EXCEPTIONS`` is set to ``True``.\n\n        This is called for all HTTP exceptions raised by a view function.\n        If it returns ``True`` for any exception the error handler for this\n        exception is not called and it shows up as regular exception in the\n        traceback.  This is helpful for debugging implicitly raised HTTP\n        exceptions.\n\n        .. versionadded:: 0.8\n        \"\"\"\n        if self.config['TRAP_HTTP_EXCEPTIONS']:\n            return True\n        if self.config['TRAP_BAD_REQUEST_ERRORS']:\n            return isinstance(e, BadRequest)\n        return False"
+        },
+        {
+          "file": "flask/app.py",
+          "type": "function",
+          "name": "handle_user_exception",
+          "class_name": "Flask",
+          "code": "def handle_user_exception(self, e):\n        \"\"\"This method is called whenever an exception occurs that should be\n        handled.  A special case are\n        :class:`~werkzeug.exception.HTTPException`\\s which are forwarded by\n        this function to the :meth:`handle_http_exception` method.  This\n        function will either return a response value or reraise the\n        exception with the same traceback.\n\n        .. versionadded:: 0.7\n        \"\"\"\n        exc_type, exc_value, tb = sys.exc_info()\n        assert exc_value is e\n\n        # ensure not to trash sys.exc_info() at that point in case someone\n        # wants the traceback preserved in handle_http_exception.  Of course\n        # we cannot prevent users from trashing it themselves in a custom\n        # trap_http_exception method so that's their fault then.\n\n        if isinstance(e, HTTPException) and not self.trap_http_exception(e):\n            return self.handle_http_exception(e)\n\n        handler = self._find_error_handler(e)\n\n        if handler is None:\n            reraise(exc_type, exc_value, tb)\n        return handler(e)"
+        }
+      ]
+    },
+    {
+      "pr_number": 3711,
+      "pr_title": "cleaner message when CLI can't load app",
+      "pr_body": "When loading the app fails for the `--help` command, only the error message is shown, then the help text. The full traceback is still shown for other exceptions. Also show the message when loading fails while getting a command, instead of only \"command not found\". The error message goes to `stderr` to match other error behavior, and is in red with an extra newline to make it more obvious next to the help text.\r\n\r\nAlso fixes an issue with the `test_apps` fixture that caused an imported app to still be importable after the test was over and the path was reset. Now the module cache is reset as well. This was causing an issue with the new tests, because previous tests had imported `test_apps/helloworld/wsgi`, one of the default imports that is tried if `FLASK_APP` isn't set, which caused the test to import an app successfully even though it should have failed and shown an error. This also revealed an issue with an existing test relying on the cached behavior.\r\n\r\nfixes #2741 ",
+      "issue_id": 2741,
+      "issue_title": "Better exception handling when env vars are missing for flask CLI",
+      "issue_body": "### Expected Behavior\r\n\r\nAs there is the support for `lazy loading` the app, when running `flask` CLI without providing the proper environment variables we must see a better warning instead of raw exception.\r\n\r\nTell us what should happen.\r\n\r\n**we should see a better warning or message pointing to the problem**\r\n\r\n```pytb\r\n# there is no FLASK_APP env var\r\n$ flask --help\r\nWARNING: You need to define the app e.g: `export FLASK_APP=app.py`\r\n```\r\n### Actual Behavior\r\n\r\nTell us what happens instead.\r\n\r\n**we see traceback before the help message**\r\n\r\n```pytb\r\n# there is no FLASK_APP env var\r\n$ flask --help                                                               Sat 28 Apr 2018 01:25:50 PM -03\r\nTraceback (most recent call last):\r\n  File \"~Projects/personal/flasgger/venv/lib/python3.6/site-packages/flask/cli.py\", line 235, in locate_app\r\n    __import__(module_name)\r\nModuleNotFoundError: No module named 'app'\r\n\r\nDuring handling of the above exception, another exception occurred:\r\n\r\nTraceback (most recent call last):\r\n  File \"~/Projects/personal/flasgger/venv/lib/python3.6/site-packages/flask/cli.py\", line 529, in list_commands\r\n    rv.update(info.load_app().cli.list_commands(ctx))\r\n  File \"~/Projects/personal/flasgger/venv/lib/python3.6/site-packages/flask/cli.py\", line 372, in load_app\r\n    app = locate_app(self, import_name, name)\r\n  File \"~/Projects/personal/flasgger/venv/lib/python3.6/site-packages/flask/cli.py\", line 246, in locate_app\r\n    'Could not import \"{name}\".'.format(name=module_name)\r\nflask.cli.NoAppException: Could not import \"app\".\r\nUsage: flask [OPTIONS] COMMAND [ARGS]...\r\n\r\n  A general utility script for Flask applications.\r\n\r\n  Provides commands from Flask, extensions, and the application. Loads the\r\n  application defined in the FLASK_APP environment variable, or from a\r\n  wsgi.py file. Setting the FLASK_ENV environment variable to 'development'\r\n  will enable debug mode.\r\n\r\n    $ export FLASK_APP=hello.py\r\n    $ export FLASK_ENV=development\r\n    $ flask run\r\n\r\nOptions:\r\n  --version  Show the flask version\r\n  --help     Show this message and exit.\r\n\r\nCommands:\r\n  routes  Show the routes for the app.\r\n  run     Runs a development server.\r\n  shell   Runs a shell in the app context.\r\n\r\n```\r\n\r\nThe same happens to `run`\r\n\r\n```pytb\r\n$ flask run                                                          429ms \ue0b3 Sat 28 Apr 2018 01:32:48 PM -03\r\n * Serving Flask app \"app.py\"\r\n * Environment: production\r\n   WARNING: Do not use the development server in a production environment.\r\n   Use a production WSGI server instead.\r\n * Debug mode: off\r\nUsage: flask run [OPTIONS]\r\n\r\nError: Could not import \"app\".\r\n```\r\n\r\nThe `Error: Could not import \"app\".` could include `WARNING: You need to define the app e.g: export FLASK_APP=app.py`\r\n\r\n\r\n### Suggestion\r\n\r\nWe could check the existence of `FLASK_APP` envvar before running any of the commands in the Group Cli, if FLASK_APP does not exist the dispatch of commands never happens.\r\n\r\n\r\n### Environment\r\n\r\n* Python version: 3.6.0\r\n* Flask version: Flask==1.0\r\n* Werkzeug version: Werkzeug==0.14.1\r\n* Click: click==6.7 \r\n",
+      "issue_closed_at": "2020-07-31T01:48:46Z",
+      "base_commit": "fd0a6084498e9d1990ddcf96366e8ac27b63428a",
+      "changes": [
+        {
+          "file": "src/flask/cli.py",
+          "type": "function",
+          "name": "_load_plugin_commands",
+          "class_name": "FlaskGroup",
+          "code": "def _load_plugin_commands(self):\n        if self._loaded_plugin_commands:\n            return\n        try:\n            import pkg_resources\n        except ImportError:\n            self._loaded_plugin_commands = True\n            return\n\n        for ep in pkg_resources.iter_entry_points(\"flask.commands\"):\n            self.add_command(ep.load(), ep.name)\n        self._loaded_plugin_commands = True"
+        }
+      ]
+    },
+    {
+      "pr_number": 3895,
+      "pr_title": "use Jinja's tojson filter",
+      "pr_body": "Set `app.jinja_env.policies[\"json.dumps_function\"]` to have Jinja's `|tojson` filter use Flask's `dumps` function, instead of overriding the filter.\r\n\r\nAlso have `htmlsafe_dumps` use `jinja2.utils.htmlsafe_json_dumps`. I debated deprecating Flask's implementation, especially since it's not documented as part of the public API. Figured it was still good enough to keep in for now, given that it's not entirely obvious that you would have to pass `dumps=flask.json.dumps` in order to get Flask's behavior.\r\n\r\ncloses #3881",
+      "issue_id": 3881,
+      "issue_title": "Flask silently overrides Jinja2 tojson filter",
+      "issue_body": "### Expected Behavior\r\nThe `tojson` filter from Jinja2 will be used.\r\n\r\n```jinja2\r\n{{ some_object | tojson }}\r\n```\r\n\r\n### Actual Behavior\r\nThe Flask `tojson` filter overwrites the Jinja2 `tojson` filter. The Flask's filter is not as configurable as the Jinja2 one and when one configures the Jinja2 one and tries to use it in a template this behavior and silent override is hard to debug.\r\n\r\n### Environment\r\n\r\n* Python version: 3.9.1\r\n* Flask version: 1.1.2\r\n* Werkzeug version: 1.0.1\r\n\r\n### Suggested changes\r\nAdd a configuration option to choose between overriding the Jinja2 `tojson` filter or not. Make the default to override to keep current behavior. Will make a PR for this if it seems reasonable.\r\n",
+      "issue_closed_at": "2021-02-02T06:57:43Z",
+      "base_commit": "fdf5d11b515aa2d0937ccc31ef7f20b94d3a8794",
+      "changes": [
+        {
+          "file": "src/flask/app.py",
+          "type": "function",
+          "name": "create_jinja_environment",
+          "class_name": "Flask",
+          "code": "def create_jinja_environment(self):\n        \"\"\"Create the Jinja environment based on :attr:`jinja_options`\n        and the various Jinja-related methods of the app. Changing\n        :attr:`jinja_options` after this will have no effect. Also adds\n        Flask-related globals and filters to the environment.\n\n        .. versionchanged:: 0.11\n           ``Environment.auto_reload`` set in accordance with\n           ``TEMPLATES_AUTO_RELOAD`` configuration option.\n\n        .. versionadded:: 0.5\n        \"\"\"\n        options = dict(self.jinja_options)\n\n        if \"autoescape\" not in options:\n            options[\"autoescape\"] = self.select_jinja_autoescape\n\n        if \"auto_reload\" not in options:\n            options[\"auto_reload\"] = self.templates_auto_reload\n\n        rv = self.jinja_environment(self, **options)\n        rv.globals.update(\n            url_for=url_for,\n            get_flashed_messages=get_flashed_messages,\n            config=self.config,\n            # request, session and g are normally added with the\n            # context processor for efficiency reasons but for imported\n            # templates we also want the proxies in there.\n            request=request,\n            session=session,\n            g=g,\n        )\n        rv.filters[\"tojson\"] = json.tojson_filter\n        return rv"
+        },
+        {
+          "file": "src/flask/json/__init__.py",
+          "type": "line",
+          "name": "line 5",
+          "code": "from datetime import date\nfrom datetime import datetime\n\nfrom markupsafe import Markup\nfrom werkzeug.http import http_date\n\nfrom ..globals import current_app"
+        },
+        {
+          "file": "src/flask/json/__init__.py",
+          "type": "function",
+          "name": "load",
+          "class_name": null,
+          "code": "def load(fp, app=None, **kwargs):\n    \"\"\"Deserialize an object from JSON read from a file object.\n\n    Takes the same arguments as the built-in :func:`json.load`, with\n    some defaults from application configuration.\n\n    :param fp: File object to read JSON from.\n    :param app: Use this app's config instead of the active app context\n        or defaults.\n    :param kwargs: Extra arguments passed to :func:`json.load`.\n\n    .. versionchanged:: 2.0\n        ``encoding`` is deprecated and will be removed in 2.1. The file\n        must be text mode, or binary mode with UTF-8 bytes.\n    \"\"\"\n    _load_arg_defaults(kwargs, app=app)\n    encoding = kwargs.pop(\"encoding\", None)\n\n    if encoding is not None:\n        warnings.warn(\n            \"'encoding' is deprecated and will be removed in 2.1. The\"\n            \" file must be text mode, or binary mode with UTF-8 bytes.\",\n            DeprecationWarning,\n            stacklevel=2,\n        )\n\n        if isinstance(fp.read(0), bytes):\n            fp = io.TextIOWrapper(fp, encoding)\n\n    return _json.load(fp, **kwargs)"
+        }
+      ]
+    }
+  ]
+}

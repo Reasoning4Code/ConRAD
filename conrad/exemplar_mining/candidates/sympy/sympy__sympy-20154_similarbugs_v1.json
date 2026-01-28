@@ -1,0 +1,145 @@
+{
+  "instance_id": "sympy__sympy-20154",
+  "repo": "sympy/sympy",
+  "created_at": "2020-09-26T22:49:04Z",
+  "problem_statement": "partitions() reusing the output dictionaries\nThe partitions() iterator in sympy.utilities.iterables reuses the output dictionaries. There is a caveat about it in the docstring. \r\n\r\nI'm wondering if it's really that important for it to do this. It shouldn't be that much of a performance loss to copy the dictionary before yielding it. This behavior is very confusing. It means that something as simple as list(partitions()) will give an apparently wrong result. And it can lead to much more subtle bugs if the partitions are used in a nontrivial way. \n",
+  "patch": "diff --git a/sympy/utilities/iterables.py b/sympy/utilities/iterables.py\n--- a/sympy/utilities/iterables.py\n+++ b/sympy/utilities/iterables.py\n@@ -1738,21 +1738,6 @@ def partitions(n, m=None, k=None, size=False):\n     {2: 1, 4: 1}\n     {3: 2}\n \n-    Note that the _same_ dictionary object is returned each time.\n-    This is for speed:  generating each partition goes quickly,\n-    taking constant time, independent of n.\n-\n-    >>> [p for p in partitions(6, k=2)]\n-    [{1: 6}, {1: 6}, {1: 6}, {1: 6}]\n-\n-    If you want to build a list of the returned dictionaries then\n-    make a copy of them:\n-\n-    >>> [p.copy() for p in partitions(6, k=2)]  # doctest: +SKIP\n-    [{2: 3}, {1: 2, 2: 2}, {1: 4, 2: 1}, {1: 6}]\n-    >>> [(M, p.copy()) for M, p in partitions(6, k=2, size=True)]  # doctest: +SKIP\n-    [(3, {2: 3}), (4, {1: 2, 2: 2}), (5, {1: 4, 2: 1}), (6, {1: 6})]\n-\n     References\n     ==========\n \n@@ -1802,9 +1787,9 @@ def partitions(n, m=None, k=None, size=False):\n         keys.append(r)\n     room = m - q - bool(r)\n     if size:\n-        yield sum(ms.values()), ms\n+        yield sum(ms.values()), ms.copy()\n     else:\n-        yield ms\n+        yield ms.copy()\n \n     while keys != [1]:\n         # Reuse any 1's.\n@@ -1842,9 +1827,9 @@ def partitions(n, m=None, k=None, size=False):\n             break\n         room -= need\n         if size:\n-            yield sum(ms.values()), ms\n+            yield sum(ms.values()), ms.copy()\n         else:\n-            yield ms\n+            yield ms.copy()\n \n \n def ordered_partitions(n, m=None, sort=True):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 19705,
+      "pr_title": "Fix handling of addition and multiplication of Dimensions for get_dimensional_dependencies",
+      "pr_body": "#### References to other Issues or PRs\r\nFixes #18738\r\n\r\n#### Brief description of what is fixed or changed\r\nFixes some cases where the method get_dimensional_dependencies of DimensionSystem raises exceptions when handling adding and multiplying dimensions. This addresses issue #18738 (at least the first half dealing with Dimensions, the second comment dealing with Quantities still doesn't work).\r\n\r\nThe following example previously raised an exception and now works properly:\r\n```\r\nIn [3]: from sympy.physics.units import length, mass, acceleration, time, pressure, force\r\nIn [4]: from sympy.physics.units.systems.si import dimsys_SI\r\nIn [5]: dimsys_SI.get_dimensional_dependencies(mass * length / time**2 + force - pressure * length**2)\r\nOut[5]: {'mass': 1, 'length': 1, 'time': -2}\r\n```\r\n\r\n#### Other comments\r\nAs part of the fix, the following two lines needed to be moved from the beginning of get_dimensional_dependencies to the beginning of _get_dimensional_dependencies_from_name:\r\n```\r\n        if isinstance(name, Dimension):\r\n            name = name.name\r\n\r\n        if isinstance(name, str):\r\n            name = Symbol(name)\r\n```\r\n\r\nThis had to be done to allow the recursion of the multiplication and addition operators to work properly. This is what fixed #18738 even though I was just trying to get the addition case above to work.  Additionally, an exception now gets raised if _def_dimensional_dependencies_for_name does not handle the input so that more useful error messages are provided then what is shown in #18738.\r\n\r\nIf the user attempts to add incompatible dimensions and then calls get_dimensional_dependencies, an exception is raised.  For example the following will raise an exception:\r\n\r\n`In [4]: dimsys_SI.get_dimensional_dependencies(mass * length / time**2 + pressure)`\r\n\r\nTests have been added for issue #18738 and for the addition cases listed above.\r\n\r\n#### Release Notes\r\n<!-- BEGIN RELEASE NOTES -->\r\n* physics.units\r\n  * Fixed some dimensional analysis bugs with the addition and multiplication operators.\r\n<!-- END RELEASE NOTES -->",
+      "issue_id": 18738,
+      "issue_title": "Dimensional analysis: AttributeError in get_dimensional_dependencies with simple example",
+      "issue_body": "Hi all, \r\n\r\nI am trying to get a simple example of a dimensional analysis (as described in [this tutorial](https://docs.sympy.org/latest/modules/physics/units/examples.html#dimensional-analysis) ) to work. Unfortunately, an AttributeError is raised inside the method `get_dimensional_dependencies`.\r\n\r\nHere is a minimal example:\r\n```\r\nfrom sympy import init_printing, symbols, sqrt\r\nfrom sympy.physics.units.systems.si import dimsys_SI\r\nfrom sympy.physics.units import length\r\ninit_printing()\r\n\r\na, b = symbols(\"a b\")\r\nc = sqrt(a**2 + b**2)\r\nc_dim = c.subs({a: length, b: length})\r\n\r\nprint(c_dim) \r\n# >> sqrt(2)*Dimension(sqrt(length**2))\r\n\r\ndimsys_SI.equivalent_dims(c_dim, length) \r\n# >> AttributeError: 'NoneType' object has no attribute 'items' \r\n```\r\n\r\nIt seems that `get_dimensional_dependencies` has problems handling non-dimensional terms (i.e. the `sqrt(2)` term in `c_dim` in the above example). Oddly, when I try to do the substitution 'manually', this term is eliminated:\r\n```\r\nc_dim = sqrt(length**2 + length**2)\r\nprint(c_dim) \r\n# >> Dimension(sqrt(length**2))\r\n```\r\n\r\nIs this intended behavior? It does make sense that multiplying a dimension with a dimensionless value should just give back the dimension as result. However, how come the `sqrt(2)`-term is not eliminated when substituting symbols for dimensions using `subs`?\r\n\r\nI hope I haven't just misunderstood the tutorial/docs. Happy for any help or hints. Also, I would be willing to dive into the code if someone would point me into the right direction.\r\n\r\nThis may be related to the bug discussed [here](https://gitter.im/sympy/sympy?at=5dc0c052fb4dab784a65dfb1).\r\n\r\nThe above example was tested with Python 2.7 and 3.7 and sympy 1.5.1.",
+      "issue_closed_at": "2020-07-17T11:37:09Z",
+      "base_commit": "f46f4488c7cb7aff9666e26ce1bfb980f98e97a7",
+      "changes": [
+        {
+          "file": "sympy/physics/units/dimensions.py",
+          "type": "function",
+          "name": "dimensional_dependencies",
+          "class_name": "DimensionSystem",
+          "code": "def dimensional_dependencies(self):\n        return self.args[2]"
+        },
+        {
+          "file": "sympy/physics/units/dimensions.py",
+          "type": "function",
+          "name": "_get_dimensional_dependencies_for_name",
+          "class_name": "DimensionSystem",
+          "code": "def _get_dimensional_dependencies_for_name(self, name):\n\n        if name.is_Symbol:\n            # Dimensions not included in the dependencies are considered\n            # as base dimensions:\n            return dict(self.dimensional_dependencies.get(name, {name: 1}))\n\n        if name.is_Number:\n            return {}\n\n        get_for_name = self._get_dimensional_dependencies_for_name\n\n        if name.is_Mul:\n            ret = collections.defaultdict(int)\n            dicts = [get_for_name(i) for i in name.args]\n            for d in dicts:\n                for k, v in d.items():\n                    ret[k] += v\n            return {k: v for (k, v) in ret.items() if v != 0}\n\n        if name.is_Pow:\n            dim = get_for_name(name.base)\n            return {k: v*name.exp for (k, v) in dim.items()}\n\n        if name.is_Function:\n            args = (Dimension._from_dimensional_dependencies(\n                get_for_name(arg)) for arg in name.args)\n            result = name.func(*args)\n\n            if isinstance(result, Dimension):\n                return self.get_dimensional_dependencies(result)\n            elif result.func == name.func:\n                return {}\n            else:\n                return get_for_name(result)"
+        },
+        {
+          "file": "sympy/physics/units/dimensions.py",
+          "type": "function",
+          "name": "_get_dimensional_dependencies_for_name",
+          "class_name": "DimensionSystem",
+          "code": "def _get_dimensional_dependencies_for_name(self, name):\n\n        if name.is_Symbol:\n            # Dimensions not included in the dependencies are considered\n            # as base dimensions:\n            return dict(self.dimensional_dependencies.get(name, {name: 1}))\n\n        if name.is_Number:\n            return {}\n\n        get_for_name = self._get_dimensional_dependencies_for_name\n\n        if name.is_Mul:\n            ret = collections.defaultdict(int)\n            dicts = [get_for_name(i) for i in name.args]\n            for d in dicts:\n                for k, v in d.items():\n                    ret[k] += v\n            return {k: v for (k, v) in ret.items() if v != 0}\n\n        if name.is_Pow:\n            dim = get_for_name(name.base)\n            return {k: v*name.exp for (k, v) in dim.items()}\n\n        if name.is_Function:\n            args = (Dimension._from_dimensional_dependencies(\n                get_for_name(arg)) for arg in name.args)\n            result = name.func(*args)\n\n            if isinstance(result, Dimension):\n                return self.get_dimensional_dependencies(result)\n            elif result.func == name.func:\n                return {}\n            else:\n                return get_for_name(result)"
+        }
+      ]
+    },
+    {
+      "pr_number": 16668,
+      "pr_title": "speed up Line/Segment intersections",
+      "pr_body": "<!-- Your title above should be a short description of what\r\nwas changed. Do not include the issue number in the title. -->\r\n\r\n#### References to other Issues or PRs\r\n<!-- If this pull request fixes an issue, write \"Fixes #NNNN\" in that exact\r\nformat, e.g. \"Fixes #1234\". See\r\nhttps://github.com/blog/1506-closing-issues-via-pull-requests . Please also\r\nwrite a comment on that issue linking back to this pull request once it is\r\nopen. -->\r\n\r\ncloses #16628\r\n\r\n#### Brief description of what is fixed or changed\r\n\r\nIntersections will return more quickly for Line/Segment interactions in 2D because a redundant check that the point is in the line has been eliminated.\r\n\r\nPoint containment in a 2D Segment now uses a quick check before using the triangle inequality.\r\n\r\n#### Other comments\r\n\r\nSome tests which were quite fast already were moved out of the slow test.\r\n\r\n#### Release Notes\r\n\r\n<!-- Write the release notes for this release below. See\r\nhttps://github.com/sympy/sympy/wiki/Writing-Release-Notes for more information\r\non how to write release notes. The bot will check your release notes\r\nautomatically to see if they are formatted correctly. -->\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\n- geometry\r\n  * improved response time of 2D Line/Segement interactions and Segment containment of Point\r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 16628,
+      "issue_title": "Geometry: Line-Segment-Intersection can run into memory problems",
+      "issue_body": "Hi,\r\n\r\nwhen determining a line-segment-intersection, depending on the geometry, sympy can take up som much memory that the script will crash.\r\n\r\nI'm on Windows, using CPython 3.7.3 on sympy commit b97cbe99, although the issue exists in version 1.3 too.\r\n\r\nExample code:\r\n<pre>\r\n#!Python -u\r\n\r\nimport sys, os, time, math\r\n\r\nsys.stderr.write(str(os.getpid())+time.strftime(': starting @ %d%b%y, %H:%M\\n'))\r\n\t\r\nfrom sympy.geometry import Point, Point2D, Line, Segment, intersection\r\nfrom sympy import *\r\nimport sympy\r\n\r\nsys.stderr.write('sympy version: '+sympy.__version__+'\\n')\r\n\r\np0=Point2D(249/5, 497999/10000)\r\np1x=3*(-19659028262*sqrt(405639795226) + 676896692394731 + 6704069269*sqrt(630547164901) + 33200*sqrt(255775022850776494562626))/(2000*(sqrt(255775022850776494562626) + 995999*sqrt(405639795226) + 995999*sqrt(630547164901) + 811280586451))\r\np1y=(-498000*sqrt(255775022850776494562626) - 995999*sqrt(630547164901) + 90004251917891999 + 496005510002*sqrt(405639795226))/(10000*(sqrt(255775022850776494562626) + 995999*sqrt(405639795226) + 995999*sqrt(630547164901) + 811280586451))\r\np1=Point2D(p1x, p1y)\r\n\r\n\r\nsys.stderr.write('p1: '+str(p1)+'\\n')\r\n\r\np2=Point2D(497/10, -497/10)\r\np3=Point2D(-497/10, -497/10)\r\n\r\nl=Line(p0,p1)\r\ns=Segment(p2,p3)\r\nints=intersection(l,s)\r\n\r\n\r\nsys.stderr.write(str(os.getpid())+time.strftime(': done @ %d%b%y, %H:%M\\n'))\r\n</pre>",
+      "issue_closed_at": "2019-04-17T22:08:24Z",
+      "base_commit": "96925f549e10ee2d95e592d1fe84cbdd39cec3f4",
+      "changes": [
+        {
+          "file": "sympy/geometry/line.py",
+          "type": "function",
+          "name": "intersect_parallel_segments",
+          "class_name": "LinearEntity",
+          "code": "def intersect_parallel_segments(seg1, seg2):\n            if seg1.contains(seg2):\n                return [seg2]\n            if seg2.contains(seg1):\n                return [seg1]\n\n            # direct the segments so they're oriented the same way\n            if seg1.direction.dot(seg2.direction) < 0:\n                seg2 = Segment(seg2.p2, seg2.p1)\n            # order the segments so seg1 is \"behind\" seg2\n            if seg1._span_test(seg2.p1) < 0:\n                seg1, seg2 = seg2, seg1\n            if seg2._span_test(seg1.p2) < 0:\n                return []\n            return [Segment(seg2.p1, seg1.p2)]"
+        },
+        {
+          "file": "sympy/geometry/line.py",
+          "type": "function",
+          "name": "contains",
+          "class_name": "Segment",
+          "code": "def contains(self, other):\n        \"\"\"\n        Is the other GeometryEntity contained within this Segment?\n\n        Examples\n        ========\n\n        >>> from sympy import Point, Segment\n        >>> p1, p2 = Point(0, 1), Point(3, 4)\n        >>> s = Segment(p1, p2)\n        >>> s2 = Segment(p2, p1)\n        >>> s.contains(s2)\n        True\n        >>> from sympy import Point3D, Segment3D\n        >>> p1, p2 = Point3D(0, 1, 1), Point3D(3, 4, 5)\n        >>> s = Segment3D(p1, p2)\n        >>> s2 = Segment3D(p2, p1)\n        >>> s.contains(s2)\n        True\n        >>> s.contains((p1 + p2) / 2)\n        True\n        \"\"\"\n\n        if not isinstance(other, GeometryEntity):\n            other = Point(other, dim=self.ambient_dimension)\n        if isinstance(other, Point):\n            if Point.is_collinear(other, self.p1, self.p2):\n                d1, d2 = other - self.p1, other - self.p2\n                d = self.p2 - self.p1\n                # without the call to simplify, sympy cannot tell that an expression\n                # like (a+b)*(a/2+b/2) is always non-negative.  If it cannot be\n                # determined, raise an Undecidable error\n                try:\n                    # the triangle inequality says that |d1|+|d2| >= |d| and is strict\n                    # only if other lies in the line segment\n                    return bool(simplify(Eq(abs(d1) + abs(d2) - abs(d), 0)))\n                except TypeError:\n                    raise Undecidable(\"Cannot determine if {} is in {}\".format(other, self))\n        if isinstance(other, Segment):\n            return other.p1 in self and other.p2 in self\n\n        return False"
+        },
+        {
+          "file": "sympy/geometry/polygon.py",
+          "type": "function",
+          "name": "bisectors",
+          "class_name": "Triangle",
+          "code": "def bisectors(self):\n        \"\"\"The angle bisectors of the triangle.\n\n        An angle bisector of a triangle is a straight line through a vertex\n        which cuts the corresponding angle in half.\n\n        Returns\n        =======\n\n        bisectors : dict\n            Each key is a vertex (Point) and each value is the corresponding\n            bisector (Segment).\n\n        See Also\n        ========\n\n        sympy.geometry.point.Point, sympy.geometry.line.Segment\n\n        Examples\n        ========\n\n        >>> from sympy.geometry import Point, Triangle, Segment\n        >>> p1, p2, p3 = Point(0, 0), Point(1, 0), Point(0, 1)\n        >>> t = Triangle(p1, p2, p3)\n        >>> from sympy import sqrt\n        >>> t.bisectors()[p2] == Segment(Point(1, 0), Point(0, sqrt(2) - 1))\n        True\n\n        \"\"\"\n        # use lines containing sides so containment check during\n        # intersection calculation can be avoided\n        # This would reduce the processing time for calculating the bisectors\n        s = [Line(l) for l in self.sides]\n        v = self.vertices\n        c = self.incenter\n        l1 = Segment(v[0], Line(v[0], c).intersection(s[1])[0])\n        l2 = Segment(v[1], Line(v[1], c).intersection(s[2])[0])\n        l3 = Segment(v[2], Line(v[2], c).intersection(s[0])[0])\n        return {v[0]: l1, v[1]: l2, v[2]: l3}"
+        }
+      ]
+    },
+    {
+      "pr_number": 18067,
+      "pr_title": "Bump version on 1.5 branch to 1.5.1",
+      "pr_body": "<!-- Your title above should be a short description of what\r\nwas changed. Do not include the issue number in the title. -->\r\n\r\n#### References to other Issues or PRs\r\n<!-- If this pull request fixes an issue, write \"Fixes #NNNN\" in that exact\r\nformat, e.g. \"Fixes #1234\". See\r\nhttps://github.com/blog/1506-closing-issues-via-pull-requests . Please also\r\nwrite a comment on that issue linking back to this pull request once it is\r\nopen. -->\r\n\r\nThis is due to #18063 which fixes #18056 \r\n\r\n#### Brief description of what is fixed or changed\r\n\r\nBump the version to 1.5.1\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\nNO ENTRY\r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 18056,
+      "issue_title": "Sympy incorrectly attempts to eval reprs in its __eq__ method",
+      "issue_body": "Passing strings produced by unknown objects into eval is **very bad**. It is especially surprising for an equality check to trigger that kind of behavior. This should be fixed ASAP.\r\n\r\nRepro code:\r\n\r\n```\r\nimport sympy\r\nclass C:\r\n    def __repr__(self):\r\n        return 'x.y'\r\n_ = sympy.Symbol('x') == C()\r\n```\r\n\r\nResults in:\r\n\r\n```\r\nE   AttributeError: 'Symbol' object has no attribute 'y'\r\n```\r\n\r\nOn the line:\r\n\r\n```\r\n    expr = eval(\r\n        code, global_dict, local_dict)  # take local objects in preference\r\n```\r\n\r\nWhere code is:\r\n\r\n```\r\nSymbol ('x' ).y\r\n```\r\n\r\nFull trace:\r\n\r\n```\r\nFAILED                   [100%]\r\n        class C:\r\n            def __repr__(self):\r\n                return 'x.y'\r\n    \r\n>       _ = sympy.Symbol('x') == C()\r\n\r\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \r\nsympy/core/expr.py:124: in __eq__\r\n    other = sympify(other)\r\nsympy/core/sympify.py:385: in sympify\r\n    expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)\r\nsympy/parsing/sympy_parser.py:1011: in parse_expr\r\n    return eval_expr(code, local_dict, global_dict)\r\nsympy/parsing/sympy_parser.py:906: in eval_expr\r\n    code, global_dict, local_dict)  # take local objects in preference\r\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \r\n\r\n>   ???\r\nE   AttributeError: 'Symbol' object has no attribute 'y'\r\n\r\n<string>:1: AttributeError\r\n```\r\n\r\nRelated issue: an unknown object whose repr is `x` will incorrectly compare as equal to a sympy symbol x:\r\n\r\n```\r\n    class C:\r\n        def __repr__(self):\r\n            return 'x'\r\n\r\n    assert sympy.Symbol('x') != C()  # fails\r\n```",
+      "issue_closed_at": "2019-12-18T00:18:29Z",
+      "base_commit": "e8f3ded02ec7a92ae7931d2fbd379853d483e143",
+      "changes": [
+        {
+          "file": "sympy/release.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "__version__ = \"1.5\""
+        }
+      ]
+    },
+    {
+      "pr_number": 12952,
+      "pr_title": "Fix addition of a quantity and a number",
+      "pr_body": "closes #12918\r\n\r\ncc @schymans ",
+      "issue_id": 12918,
+      "issue_title": "Addition of a quantity and a number does not raise an error",
+      "issue_body": "If I add two quantities with inconsistent units, sympy rightly returns an error:\r\n```\r\n>>> from sympy.physics.units import kilogram, kelvin\r\n>>> try: print kilogram + kelvin\r\n>>> except Exception, error: print error\r\nsummation of quantities of incompatible dimensions\r\n```\r\nHowever, if one of the terms is a number, no error is raised:\r\n```\r\n>>> try: print kilogram + 1.1\r\n>>> except Exception, error: print error\r\nkilogram + 1.1\r\n```\r\n\r\nIf I add two quantities, one of which does not have a dimension, an error is raised:\r\n```\r\n>>> from sympy.physics.units import Quantity, mass\r\n>>> try: print Quantity('x', mass, kilogram) + Quantity('y', S.One, 1.1)\r\n>>> except Exception, error: print error\r\nsummation of quantities of incompatible dimensions\r\n```\r\n\r\nIf I add a quantity and a number, no error is raised:\r\n```\r\n>>> try: print Quantity('x', mass, kilogram) + Number(1.1)\r\n>>> except Exception, error: print error\r\nx + 1.1\r\n```\r\nI believe that this is a bug, as numbers should be treated like dimensionless quantities whenever they are used alongside with quantities.\r\n",
+      "issue_closed_at": "2017-07-12T20:13:26Z",
+      "base_commit": "195061bd91f2e888e6449ec05f2caca140067fb2",
+      "changes": [
+        {
+          "file": "sympy/core/power.py",
+          "type": "function",
+          "name": "_eval_is_rational",
+          "class_name": "Pow",
+          "code": "def _eval_is_rational(self):\n        p = self.func(*self.as_base_exp())  # in case it's unevaluated\n        if not p.is_Pow:\n            return p.is_rational\n        b, e = p.as_base_exp()\n        if e.is_Rational and b.is_Rational:\n            # we didn't check that e is not an Integer\n            # because Rational**Integer autosimplifies\n            return False\n        if e.is_integer:\n            if b.is_rational:\n                if fuzzy_not(b.is_zero) or e.is_nonnegative:\n                    return True\n                if b == e:  # always rational, even for 0**0\n                    return True\n            elif b.is_irrational:\n                return e.is_zero"
+        },
+        {
+          "file": "sympy/core/power.py",
+          "type": "function",
+          "name": "_eval_is_algebraic",
+          "class_name": "Pow",
+          "code": "def _eval_is_algebraic(self):\n        if self.base.is_zero or (self.base - 1).is_zero:\n            return True\n        elif self.exp.is_rational:\n            if self.base.is_algebraic is False:\n                return self.exp.is_nonzero\n            return self.base.is_algebraic\n        elif self.base.is_algebraic and self.exp.is_algebraic:\n            if ((fuzzy_not(self.base.is_zero)\n                and fuzzy_not((self.base - 1).is_zero))\n                or self.base.is_integer is False\n                or self.base.is_irrational):\n                return self.exp.is_rational"
+        },
+        {
+          "file": "sympy/physics/units/quantities.py",
+          "type": "function",
+          "name": "_Quantity_constructor_postprocessor_Add",
+          "class_name": null,
+          "code": "def _Quantity_constructor_postprocessor_Add(expr):\n    # Construction postprocessor for the addition,\n    # checks for dimension mismatches of the addends, thus preventing\n    # expressions like `meter + second` to be created.\n\n    deset = {\n        tuple(sorted(Dimension(\n            Quantity.get_dimensional_expr(i)\n        ).get_dimensional_dependencies().items()))\n        for i in expr.args\n        if i.free_symbols == set()  # do not raise if there are symbols\n                    # (free symbols could contain the units corrections)\n        and not i.is_number\n    }\n    # If `deset` has more than one element, then some dimensions do not\n    # match in the sum:\n    if len(deset) > 1:\n        raise ValueError(\"summation of quantities of incompatible dimensions\")\n    return expr"
+        }
+      ]
+    },
+    {
+      "pr_number": 16482,
+      "pr_title": "Change return type of sort_key function",
+      "pr_body": "<!-- Your title above should be a short description of what\r\nwas changed. Do not include the issue number in the title. -->\r\n\r\n#### References to other Issues or PRs\r\n<!-- If this pull request fixes an issue, write \"Fixes #NNNN\" in that exact\r\nformat, e.g. \"Fixes #1234\". See\r\nhttps://github.com/blog/1506-closing-issues-via-pull-requests . Please also\r\nwrite a comment on that issue linking back to this pull request once it is\r\nopen. -->\r\nFixes #9608\r\n\r\n#### Brief description of what is fixed or changed\r\nThis function defined in `partitions.py` was returning a list which is not hashable.\r\nSo I changed the return value into a tuple (since they are immutable).\r\nI wrote a test in `test_partitions.py` and it passed when I ran it with `bin/test`.\r\n\r\n#### Other comments\r\n\r\n\r\n#### Release Notes\r\n\r\n<!-- Write the release notes for this release below. See\r\nhttps://github.com/sympy/sympy/wiki/Writing-Release-Notes for more information\r\non how to write release notes. The bot will check your release notes\r\nautomatically to see if they are formatted correctly. -->\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\nNO ENTRY\r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 9608,
+      "issue_title": "Partition can't be ordered",
+      "issue_body": "``` python\nIn [13]: from sympy.combinatorics.partitions import Partition\n\nIn [14]: a = Partition([1, 2, 3], [4])\n\nIn [15]: b = Partition([1, 2], [3, 4])\n\nIn [16]: args = [a, b]\n```\n\nBelow is the Traceback:\n\n```\nIn [17]: args = list(ordered(args, Set._infimum_key))\n---------------------------------------------------------------------------\nTypeError                                 Traceback (most recent call last)\n<ipython-input-17-092459052e8d> in <module>()\n----> 1 args = list(ordered(args, Set._infimum_key))\n\n/home/amit/Desktop/myrepo/sympy/sympy/core/compatibility.pyc in ordered(seq, keys, default, warn)\n    676                     raise ValueError(\n    677                         'not enough keys to break ties: %s' % u)\n--> 678         for v in d[k]:\n    679             yield v\n    680         d.pop(k)\n\n/home/amit/Desktop/myrepo/sympy/sympy/core/compatibility.pyc in ordered(seq, keys, default, warn)\n    676                     raise ValueError(\n    677                         'not enough keys to break ties: %s' % u)\n--> 678         for v in d[k]:\n    679             yield v\n    680         d.pop(k)\n\n/home/amit/Desktop/myrepo/sympy/sympy/core/compatibility.pyc in ordered(seq, keys, default, warn)\n    657         f = keys.pop(0)\n    658         for a in seq:\n--> 659             d[f(a)].append(a)\n    660     else:\n    661         if not default:\n\nTypeError: unhashable type: 'list'\n```\n",
+      "issue_closed_at": "2019-03-29T10:43:25Z",
+      "base_commit": "4cdcbd914d66733eee1de77d592bbad3d693b049",
+      "changes": [
+        {
+          "file": "sympy/combinatorics/partitions.py",
+          "type": "function",
+          "name": "sort_key",
+          "class_name": "Partition",
+          "code": "def sort_key(self, order=None):\n        \"\"\"Return a canonical key that can be used for sorting.\n\n        Ordering is based on the size and sorted elements of the partition\n        and ties are broken with the rank.\n\n        Examples\n        ========\n\n        >>> from sympy.utilities.iterables import default_sort_key\n        >>> from sympy.combinatorics.partitions import Partition\n        >>> from sympy.abc import x\n        >>> a = Partition([1, 2])\n        >>> b = Partition([3, 4])\n        >>> c = Partition([1, x])\n        >>> d = Partition(list(range(4)))\n        >>> l = [d, b, a + 1, a, c]\n        >>> l.sort(key=default_sort_key); l\n        [{{1, 2}}, {{1}, {2}}, {{1, x}}, {{3, 4}}, {{0, 1, 2, 3}}]\n        \"\"\"\n        if order is None:\n            members = self.members\n        else:\n            members = tuple(sorted(self.members,\n                             key=lambda w: default_sort_key(w, order)))\n        return list(map(default_sort_key, (self.size, members, self.rank)))"
+        }
+      ]
+    }
+  ]
+}

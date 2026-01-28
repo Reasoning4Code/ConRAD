@@ -1,0 +1,93 @@
+
+You are an expert debugging assistant with meta-reasoning abilities.   Your task is to help a novice developer identify the most useful past bug report to assist in locating and fixing the CURRENT bug.   
+
+You will evaluate 5 candidate bug reports based on **five reasoning strategies**:
+
+1.    Structural Similarity: Similar stack traces, error messages, or call graph structure.
+2.    Module/Component Similarity: Involves the same files, modules, functions, or subsystems.
+3.    Symptom Similarity: Similar observable behaviors (e.g., button unresponsive, UI freeze).
+4.    Patch Similarity: Fix or patch type is similar.
+5.    Impact Similarity: Affects the same user flows, APIs, or workflows.
+
+Please follow this process:
+- Carefully read the CURRENT bug report.
+- For each candidate:
+  1. Evaluate it on each of the 5 criteria above (rate 1–10).
+  2. Select the most helpful report overall.
+  3. Provide a short justification for why you chose it as most helpful for fixing and debugging the current bug.
+
+
+Finally, output your selected candidate using:
+>> FINAL CHOICE: [Candidate A / B / C / D / E]
+
+---
+
+# CURRENT_BUG_REPORT
+{current_bug_report}
+
+---
+
+# CANDIDATE_BUG_REPORT_A
+## Bug Report:
+{bug_report_a}
+
+## Fix Description (PR):
+{pr_a}
+
+## Fixed Files:
+{file_paths_a}
+
+---
+
+# CANDIDATE_BUG_REPORT_B
+## Bug Report:
+{bug_report_b}
+
+## Fix Description (PR):
+{pr_b}
+
+## Fixed Files:
+{file_paths_b}
+
+
+---
+
+# CANDIDATE_BUG_REPORT_C
+## Bug Report:
+{bug_report_c}
+
+## Fix Description (PR):
+{pr_c}
+
+## Fixed Files:
+{file_paths_c}
+
+
+---
+
+# CANDIDATE_BUG_REPORT_D
+## Bug Report:
+{bug_report_d}
+
+## Fix Description (PR):
+{pr_d}
+
+## Fixed Files:
+{file_paths_d}
+
+---
+
+# CANDIDATE_BUG_REPORT_E
+## Bug Report:
+{bug_report_e}
+
+## Fix Description (PR):
+{pr_e}
+
+## Fixed Files:
+{file_paths_e}
+---
+
+# OUTPUT FORMAT
+>> FINAL CHOICE: {Candidate_A/B/C/D/E}
+>> Justification: {Explain why this candidate is most useful in helping the developer understand and fix the current bug.}

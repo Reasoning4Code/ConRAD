@@ -1,0 +1,144 @@
+{
+  "instance_id": "django__django-14238",
+  "repo": "django/django",
+  "created_at": "2021-04-08T10:41:31Z",
+  "problem_statement": "DEFAULT_AUTO_FIELD subclass check fails for subclasses of BigAutoField and SmallAutoField.\nDescription\n\t\nSet DEFAULT_AUTO_FIELD = \"example.core.models.MyBigAutoField\" , with contents of example.core.models:\nfrom django.db import models\nclass MyBigAutoField(models.BigAutoField):\n\tpass\nclass MyModel(models.Model):\n\tpass\nDjango then crashes with:\nTraceback (most recent call last):\n File \"/..././manage.py\", line 21, in <module>\n\tmain()\n File \"/..././manage.py\", line 17, in main\n\texecute_from_command_line(sys.argv)\n File \"/.../venv/lib/python3.9/site-packages/django/core/management/__init__.py\", line 419, in execute_from_command_line\n\tutility.execute()\n File \"/.../venv/lib/python3.9/site-packages/django/core/management/__init__.py\", line 395, in execute\n\tdjango.setup()\n File \"/.../venv/lib/python3.9/site-packages/django/__init__.py\", line 24, in setup\n\tapps.populate(settings.INSTALLED_APPS)\n File \"/.../venv/lib/python3.9/site-packages/django/apps/registry.py\", line 114, in populate\n\tapp_config.import_models()\n File \"/.../venv/lib/python3.9/site-packages/django/apps/config.py\", line 301, in import_models\n\tself.models_module = import_module(models_module_name)\n File \"/Users/chainz/.pyenv/versions/3.9.1/lib/python3.9/importlib/__init__.py\", line 127, in import_module\n\treturn _bootstrap._gcd_import(name[level:], package, level)\n File \"<frozen importlib._bootstrap>\", line 1030, in _gcd_import\n File \"<frozen importlib._bootstrap>\", line 1007, in _find_and_load\n File \"<frozen importlib._bootstrap>\", line 986, in _find_and_load_unlocked\n File \"<frozen importlib._bootstrap>\", line 680, in _load_unlocked\n File \"<frozen importlib._bootstrap_external>\", line 790, in exec_module\n File \"<frozen importlib._bootstrap>\", line 228, in _call_with_frames_removed\n File \"/.../example/core/models.py\", line 8, in <module>\n\tclass MyModel(models.Model):\n File \"/.../venv/lib/python3.9/site-packages/django/db/models/base.py\", line 320, in __new__\n\tnew_class._prepare()\n File \"/.../venv/lib/python3.9/site-packages/django/db/models/base.py\", line 333, in _prepare\n\topts._prepare(cls)\n File \"/.../venv/lib/python3.9/site-packages/django/db/models/options.py\", line 285, in _prepare\n\tpk_class = self._get_default_pk_class()\n File \"/.../venv/lib/python3.9/site-packages/django/db/models/options.py\", line 246, in _get_default_pk_class\n\traise ValueError(\nValueError: Primary key 'example.core.models.MyBigAutoField' referred by DEFAULT_AUTO_FIELD must subclass AutoField.\nThis can be fixed in AutoFieldMeta.__subclasscheck__ by allowing subclasses of those classes in the _subclasses property.\n",
+  "patch": "diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py\n--- a/django/db/models/fields/__init__.py\n+++ b/django/db/models/fields/__init__.py\n@@ -2524,7 +2524,7 @@ def __instancecheck__(self, instance):\n         return isinstance(instance, self._subclasses) or super().__instancecheck__(instance)\n \n     def __subclasscheck__(self, subclass):\n-        return subclass in self._subclasses or super().__subclasscheck__(subclass)\n+        return issubclass(subclass, self._subclasses) or super().__subclasscheck__(subclass)\n \n \n class AutoField(AutoFieldMixin, IntegerField, metaclass=AutoFieldMeta):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 11886,
+      "pr_title": "Fixed #30405 -- Fixed source code mismatch crash in ExceptionReporter. ",
+      "pr_body": "[ticket 30405](https://code.djangoproject.com/ticket/30405)",
+      "issue_id": 30405,
+      "issue_title": "IndexError in _get_lines_from_file when module does not match file contents (via loader)",
+      "issue_body": "self = <django.views.debug.ExceptionReporter object at 0x7f2a7908ac18>\nfilename = '…/project/.venv/lib/python3.7/site-packages/pdb.py'\nlineno = 230\ncontext_lines = 7\nloader = <_frozen_importlib_external.SourceFileLoader object at 0x7f2a73609278>\nmodule_name = 'pdb'\n\n[23]   …/Vcs/django/django/core/handlers/exception.py(90)response_for_exception()\n-> response = handle_uncaught_exception(request, get_resolver(get_urlconf()), sys.exc_info())\n[24]   …/Vcs/django/django/core/handlers/exception.py(125)handle_uncaught_exception()\n-> return debug.technical_500_response(request, *exc_info)\n[25]   …/Vcs/django/django/views/debug.py(94)technical_500_response()\n-> html = reporter.get_traceback_html()\n[26]   …/Vcs/django/django/views/debug.py(333)get_traceback_html()\n-> c = Context(self.get_traceback_data(), use_l10n=False)\n[27]   …/Vcs/django/django/views/debug.py(264)get_traceback_data()\n-> frames = self.get_traceback_frames()\n[28]   …/Vcs/django/django/views/debug.py(427)get_traceback_frames()\n-> filename, lineno, 7, loader, module_name,\n\n 385             try:\n 386                 context_line = source[lineno]\n 387             except:\n 388                 __import__('pdb').set_trace()\n 389  ->         post_context = source[lineno + 1:upper_bound]\n 390\n 391             return lower_bound, pre_context, context_line, post_context\n(Pdb++) source\n['# this file is needed to hijack pdb without eggs', 'import os.path', \"pdb_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pdb.py')\", 'with open(pdb_path) as f:', \"    exec(compile(f.read(), pdb_path, 'exec'))\"]\nIt uses the loader (\n​\nhttps://github.com/django/django/blob/47885278c669dd7a13a4c3ff7e58e1cbe88af385/django/views/debug.py#L351\n), which picks up the\npth\n, and then the contents does not match the expected line number.\nI think it should maybe always use the given filename?!",
+      "issue_closed_at": "2019-11-12T04:53:04",
+      "base_commit": "6e2f05b2e33a6c80c7a411ce76af7b5a08acb835",
+      "changes": [
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_traceback_text",
+          "class_name": "ExceptionReporter",
+          "code": "def get_traceback_text(self):\n        \"\"\"Return plain text version of debug 500 HTTP error page.\"\"\"\n        with Path(CURRENT_DIR, 'templates', 'technical_500.txt').open(encoding='utf-8') as fh:\n            t = DEBUG_ENGINE.from_string(fh.read())\n        c = Context(self.get_traceback_data(), autoescape=False, use_l10n=False)\n        return t.render(c)"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "_get_lines_from_file",
+          "class_name": "ExceptionReporter",
+          "code": "def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):\n        \"\"\"\n        Return context_lines before and after lineno from file.\n        Return (pre_context_lineno, pre_context, context_line, post_context).\n        \"\"\"\n        source = None\n        if hasattr(loader, 'get_source'):\n            try:\n                source = loader.get_source(module_name)\n            except ImportError:\n                pass\n            if source is not None:\n                source = source.splitlines()\n        if source is None:\n            try:\n                with open(filename, 'rb') as fp:\n                    source = fp.read().splitlines()\n            except OSError:\n                pass\n        if source is None:\n            return None, [], None, []\n\n        # If we just read the source from a file, or if the loader did not\n        # apply tokenize.detect_encoding to decode the source into a\n        # string, then we should do that ourselves.\n        if isinstance(source[0], bytes):\n            encoding = 'ascii'\n            for line in source[:2]:\n                # File coding may be specified. Match pattern from PEP-263\n                # (https://www.python.org/dev/peps/pep-0263/)\n                match = re.search(br'coding[:=]\\s*([-\\w.]+)', line)\n                if match:\n                    encoding = match.group(1).decode('ascii')\n                    break\n            source = [str(sline, encoding, 'replace') for sline in source]\n\n        lower_bound = max(0, lineno - context_lines)\n        upper_bound = lineno + context_lines\n\n        pre_context = source[lower_bound:lineno]\n        context_line = source[lineno]\n        post_context = source[lineno + 1:upper_bound]\n\n        return lower_bound, pre_context, context_line, post_context"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "_get_lines_from_file",
+          "class_name": "ExceptionReporter",
+          "code": "def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):\n        \"\"\"\n        Return context_lines before and after lineno from file.\n        Return (pre_context_lineno, pre_context, context_line, post_context).\n        \"\"\"\n        source = None\n        if hasattr(loader, 'get_source'):\n            try:\n                source = loader.get_source(module_name)\n            except ImportError:\n                pass\n            if source is not None:\n                source = source.splitlines()\n        if source is None:\n            try:\n                with open(filename, 'rb') as fp:\n                    source = fp.read().splitlines()\n            except OSError:\n                pass\n        if source is None:\n            return None, [], None, []\n\n        # If we just read the source from a file, or if the loader did not\n        # apply tokenize.detect_encoding to decode the source into a\n        # string, then we should do that ourselves.\n        if isinstance(source[0], bytes):\n            encoding = 'ascii'\n            for line in source[:2]:\n                # File coding may be specified. Match pattern from PEP-263\n                # (https://www.python.org/dev/peps/pep-0263/)\n                match = re.search(br'coding[:=]\\s*([-\\w.]+)', line)\n                if match:\n                    encoding = match.group(1).decode('ascii')\n                    break\n            source = [str(sline, encoding, 'replace') for sline in source]\n\n        lower_bound = max(0, lineno - context_lines)\n        upper_bound = lineno + context_lines\n\n        pre_context = source[lower_bound:lineno]\n        context_line = source[lineno]\n        post_context = source[lineno + 1:upper_bound]\n\n        return lower_bound, pre_context, context_line, post_context"
+        }
+      ]
+    },
+    {
+      "pr_number": 8228,
+      "pr_title": "Fixed #27966 -- Bumped required psycopg2 version to 2.5.4.",
+      "pr_body": "",
+      "issue_id": 27966,
+      "issue_title": "Bump required version of pyscopg2 to 2.5.4",
+      "issue_body": "​\nthis commit\nuses the cursor as context manager (line in question is marked), which were added in psycopg2 2.5 (\n​\nrelease notes\n) (see third item)\nbut\n​\nhere\ndjango checks only for 2.4.5.\n​\nthis commit here\nmade 2.4.5 a requirement and documented that in a few places.",
+      "issue_closed_at": "2017-03-21T11:23:31",
+      "base_commit": "7063a85579f40585f2601ba6e6887b0982e7ce43",
+      "changes": [
+        {
+          "file": "django/db/backends/postgresql/base.py",
+          "type": "function",
+          "name": "psycopg2_version",
+          "class_name": "DatabaseWrapper",
+          "code": "def psycopg2_version(self):\n        return PSYCOPG2_VERSION"
+        }
+      ]
+    },
+    {
+      "pr_number": 6178,
+      "pr_title": "Fixed #26186 -- Documented how app relative relationships of abstract models behave.",
+      "pr_body": "This partially reverts commit bc7d201bdbaeac14a49f51a9ef292d6312b4c45e.\n\nRefs #25858.\n",
+      "issue_id": 26186,
+      "issue_title": "When extending from abstract model, ForeignKey points to wrong application",
+      "issue_body": "This might be related to\nhttps://code.djangoproject.com/ticket/25858\nI have following code:\napp_A/abstract.py:\nclass AbstractModel1(Model):\n    class Meta:\n        abstract = True\n\n\nclass AbstractModel2(Model):\n    model1 = ForeignKey('Model1')\n\n    class Meta:\n          abstract = True\napp_A/models.py:\nfrom .abstract import AbstractModel1, AbstractModel12\n\nclass Model1(AbstractModel1):\n    pass\n\nclass Model2(AbstractModel12):\n    pass\napp_B/models.py:\nfrom app_A.abstract import AbstractModel1, AbstractModel2\n\nclass Model1(AbstractModel1):\n    pass\n\nclass Model2(AbstractModel12):\n    pass\nin Django 1.8, the\napp_B.Model2.model1\nwould point to\napp_B.Model1\n, but in Django 1.9.2 it points to\napp_A.Model1\nso my code no longer works.\nTest case can be found:\n​\nhttps://github.com/skyjur/django-ticketing/tree/master/ticket_26186",
+      "issue_closed_at": "2016-02-29T21:07:53",
+      "base_commit": "eac1423f9ebcf432dc5be95d605d124a05ab2686",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "line",
+          "name": "line 35",
+          "code": "RECURSIVE_RELATIONSHIP_CONSTANT = 'self'\n\n\ndef resolve_relation(scope_model, relation, resolve_recursive_relationship=True):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model."
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_relation",
+          "class_name": null,
+          "code": "def resolve_relation(scope_model, relation, resolve_recursive_relationship=True):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model.\n\n    The relation argument can be:\n      * RECURSIVE_RELATIONSHIP_CONSTANT, i.e. the string \"self\", in which case\n        the model argument will be returned.\n      * A bare model name without an app_label, in which case scope_model's\n        app_label will be prepended.\n      * An \"app_label.ModelName\" string.\n      * A model class, which will be returned unchanged.\n    \"\"\"\n    # Check for recursive relations\n    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:\n        if resolve_recursive_relationship:\n            relation = scope_model\n    # Look for an \"app.Model\" relation\n    elif isinstance(relation, six.string_types) and '.' not in relation:\n        relation = \"%s.%s\" % (scope_model._meta.app_label, relation)\n\n    return relation"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_related_class",
+          "class_name": "RelatedField",
+          "code": "def resolve_related_class(model, related, field):\n                field.remote_field.model = related\n                field.do_related_class(related, model)"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_through_model",
+          "class_name": "ManyToManyField",
+          "code": "def resolve_through_model(_, model, field):\n                    field.remote_field.through = model"
+        }
+      ]
+    },
+    {
+      "pr_number": 3792,
+      "pr_title": "Fixed #24054 -- Enabled sqlsequencereset for apps with migrations.",
+      "pr_body": "https://code.djangoproject.com/ticket/24054\n",
+      "issue_id": 24054,
+      "issue_title": "Enable sqlsequencereset for apps with migrations",
+      "issue_body": "The command doesn't depend on the\nDatabaseCreation\nclass and it doesn't seem that the problem the command aims to solve is obsoleted by migrations.",
+      "issue_closed_at": "2014-12-26T14:56:14",
+      "base_commit": "1729a5250b052832540cd696df3ff0a0a77baddf",
+      "changes": [
+        {
+          "file": "django/core/management/commands/sqlsequencereset.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from __future__ import unicode_literals\n\nfrom django.core.management.base import AppCommand\nfrom django.core.management.sql import check_for_migrations\nfrom django.db import connections, DEFAULT_DB_ALIAS\n\n"
+        },
+        {
+          "file": "django/core/management/commands/sqlsequencereset.py",
+          "type": "function",
+          "name": "handle_app_config",
+          "class_name": "Command",
+          "code": "def handle_app_config(self, app_config, **options):\n        if app_config.models_module is None:\n            return\n        connection = connections[options.get('database')]\n        check_for_migrations(app_config, connection)\n        models = app_config.get_models(include_auto_created=True)\n        statements = connection.ops.sequence_reset_sql(self.style, models)\n        return '\\n'.join(statements)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8741,
+      "pr_title": "Fixed #28379 -- AccessMixin will not redirect authenticated user to login page, but raise Permissiondenied instead",
+      "pr_body": "`AccessMixin` has been changed so that authenticated users will not be redirected to the login url. Instead, `Permissiondenied` will be raised. This means that the value of `AccessMixin.raise_exception` is only relevant for the workflow of unauthenticated users.\r\n\r\nTicket: https://code.djangoproject.com/ticket/28379",
+      "issue_id": 28379,
+      "issue_title": "Fix redirect loop in AccessMixin if a user lack permissions",
+      "issue_body": "AccessMixin\nand derived classes offer a great way to handle permission testing for class based views. However, the current default workflow for handling failed permissions can lead to an endless loop of redirects, and is hard to fix without resorting to writing a custom\nAccessMixin\nfor each project.\nWhy is the current workflow wrong?\nThe default way of handling \"no permission\" is to check for\nAccessMixin.raise_exception\n(default:\nFalse\n). If\nAccessMixin.raise_exception\nis\nTrue\n, then the\nPermissionDenied\nexception is raised. Else (the default behavior), the user is redirected to the\nlogin_url\n.\nThe\nPermissionDenied\nexception can be customized in Django by providing a\n403.html\n. In this template, it is easy to explain to the user that access was denied, and to check for possible solutions, such as loggin in an authorized user. In my opinion, this should always be the default. Lack of permissions in a Python application calls for an exception to be raised.\nHowever, the default behavior is to redirect to the\nlogin_url\n. What happens to a\nuser that has not yet logged in\nthis scenario?\nThe anonymous user visits a URL, let's call it\nshow_me_something\nPermission is denied\nThe user is redirected to a login page, without any explanation\nUpon successful login, the user will probably be redirected to the original intent\nshow_me_something\nThis isn't pretty, the user doesn't know what is going on. In my apps I would always go for the exception to be raised and to show a 403 page that explains that the uses has insufficient rights to view\nshow_me_something\n, offer the user a link to login and signup, and carry over the url to\nshow_me_something\nas a redirect upon succesful login.\nWhat's worse is what happens to a user that is already logged in.\nThe authenticated user visits a URL, let's call it\nshow_me_something\nPermission is denied\nThe user is redirected to a login page, without any explanation, but already logged in. Some login pages may even refuse access to a logged in user and redirect them. More confusion!\nThe only logical thing for the user to do is to provide login credentials again.\nUpon successful login, the user will probably be redirected to the original intent\nshow_me_something\n, where permission will be denied again, goto 1.\nWhat should be improved\nMy suggestions are:\nAll in all I'd say always raise the\nPermissionDenied\nexception and have one way to handle missing permissions (DRY). That would mean at least changing the default value for\nAccessMixin.raise_exception\nto\nTrue\n, and possible even deprecate it. Currently, setting\nraise_exception\nto False is a recipe for writing views that confuse users and even make them end up in endless loops.\nIf raising the exception is not the behavior in the AccessMixin, never redirect a logged in user to the\nlogin_url\n, but raise\nPermissionDenied\ninstead. So change\nhandle_no_permission\nto:\ndef handle_no_permission(self):\n        if self.raise_exception or self.request.user.is_authenticated:\n            raise PermissionDenied(self.get_permission_denied_message())\n        return redirect_to_login(self.request.get_full_path(), self.get_login_url(), self.get_redirect_field_name())",
+      "issue_closed_at": "2018-02-16T13:20:02",
+      "base_commit": "e307ff29d28737d5a764ce2fa7db010231d6fc8e",
+      "changes": [
+        {
+          "file": "django/contrib/auth/mixins.py",
+          "type": "function",
+          "name": "get_redirect_field_name",
+          "class_name": "AccessMixin",
+          "code": "def get_redirect_field_name(self):\n        \"\"\"\n        Override this method to override the redirect_field_name attribute.\n        \"\"\"\n        return self.redirect_field_name"
+        }
+      ]
+    }
+  ]
+}

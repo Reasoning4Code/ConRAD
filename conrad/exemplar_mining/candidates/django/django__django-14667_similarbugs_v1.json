@@ -1,0 +1,164 @@
+{
+  "instance_id": "django__django-14667",
+  "repo": "django/django",
+  "created_at": "2021-07-19T21:08:03Z",
+  "problem_statement": "QuerySet.defer() doesn't clear deferred field when chaining with only().\nDescription\n\t\nConsidering a simple Company model with four fields: id, name, trade_number and country. If we evaluate a queryset containing a .defer() following a .only(), the generated sql query selects unexpected fields. For example: \nCompany.objects.only(\"name\").defer(\"name\")\nloads all the fields with the following query:\nSELECT \"company\".\"id\", \"company\".\"name\", \"company\".\"trade_number\", \"company\".\"country\" FROM \"company\"\nand \nCompany.objects.only(\"name\").defer(\"name\").defer(\"country\")\nalso loads all the fields with the same query:\nSELECT \"company\".\"id\", \"company\".\"name\", \"company\".\"trade_number\", \"company\".\"country\" FROM \"company\"\nIn those two cases, i would expect the sql query to be:\nSELECT \"company\".\"id\" FROM \"company\"\nIn the following example, we get the expected behavior:\nCompany.objects.only(\"name\", \"country\").defer(\"name\")\nonly loads \"id\" and \"country\" fields with the following query:\nSELECT \"company\".\"id\", \"company\".\"country\" FROM \"company\"\n",
+  "patch": "diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py\n--- a/django/db/models/sql/query.py\n+++ b/django/db/models/sql/query.py\n@@ -2086,7 +2086,12 @@ def add_deferred_loading(self, field_names):\n             self.deferred_loading = existing.union(field_names), True\n         else:\n             # Remove names from the set of any existing \"immediate load\" names.\n-            self.deferred_loading = existing.difference(field_names), False\n+            if new_existing := existing.difference(field_names):\n+                self.deferred_loading = new_existing, False\n+            else:\n+                self.clear_deferred_loading()\n+                if new_only := set(field_names).difference(existing):\n+                    self.deferred_loading = new_only, True\n \n     def add_immediate_loading(self, field_names):\n         \"\"\"\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8754,
+      "pr_title": "Fixed #28391 -- Fixed Cast() with CharField and max_length on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/28391",
+      "issue_id": 28391,
+      "issue_title": "Cast doesn't take into account CharField's max_length on MySQL.",
+      "issue_body": "Correct behavior, e.g. (based on\ndb_functions/test_cast.py\n):\n>>> Author.objects.create(name='Bob', age=1111)\n>>> numbers = Author.objects.annotate(cast_string=Cast('age', models.CharField(max_length=3)))\n>>> numbers.get().cast_string\n111\non MySQL it returns\n1111\n(related with\n#28371\n).",
+      "issue_closed_at": "2017-07-17T14:12:39",
+      "base_commit": "feeafdad02e2874e2e2f879a825d3527f6b193ad",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/features.py",
+          "type": "class",
+          "name": "DatabaseFeatures",
+          "code": "class DatabaseFeatures(BaseDatabaseFeatures):\n    # SQLite cannot handle us only partially reading from a cursor's result set\n    # and then writing the same rows to the database in another cursor. This\n    # setting ensures we always read result sets fully into memory all in one\n    # go.\n    can_use_chunked_reads = False\n    test_db_allows_multiple_connections = False\n    supports_unspecified_pk = True\n    supports_timezones = False\n    max_query_params = 999\n    supports_mixed_date_datetime_comparisons = False\n    has_bulk_insert = True\n    supports_column_check_constraints = False\n    autocommits_when_autocommit_is_off = True\n    can_introspect_decimal_field = False\n    can_introspect_positive_integer_field = True\n    can_introspect_small_integer_field = True\n    supports_transactions = True\n    atomic_transactions = False\n    can_rollback_ddl = True\n    supports_paramstyle_pyformat = False\n    supports_sequence_reset = False\n    can_clone_databases = True\n    supports_temporal_subtraction = True\n    ignores_table_name_case = True\n\n    @cached_property\n    def uses_savepoints(self):\n        return Database.sqlite_version_info >= (3, 6, 8)\n\n    @cached_property\n    def supports_index_column_ordering(self):\n        return Database.sqlite_version_info >= (3, 3, 0)\n\n    @cached_property\n    def can_release_savepoints(self):\n        return self.uses_savepoints\n\n    @cached_property\n    def can_share_in_memory_db(self):\n        return (\n            Database.__name__ == 'sqlite3.dbapi2' and\n            Database.sqlite_version_info >= (3, 7, 13)\n        )\n\n    @cached_property\n    def supports_stddev(self):\n        \"\"\"\n        Confirm support for STDDEV and related stats functions.\n\n        SQLite supports STDDEV as an extension package; so\n        connection.ops.check_expression_support() can't unilaterally\n        rule out support for STDDEV. Manually check whether the call works.\n        \"\"\"\n        with self.connection.cursor() as cursor:\n            cursor.execute('CREATE TABLE STDDEV_TEST (X INT)')\n            try:\n                cursor.execute('SELECT STDDEV(*) FROM STDDEV_TEST')\n                has_support = True\n            except utils.DatabaseError:\n                has_support = False\n            cursor.execute('DROP TABLE STDDEV_TEST')\n        return has_support"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "clean",
+          "class_name": "Field",
+          "code": "def clean(self, value, model_instance):\n        \"\"\"\n        Convert the value's type and run validation. Validation errors\n        from to_python() and validate() are propagated. Return the correct\n        value if no error is raised.\n        \"\"\"\n        value = self.to_python(value)\n        self.validate(value, model_instance)\n        self.run_validators(value)\n        return value"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "db_type",
+          "class_name": "Field",
+          "code": "def db_type(self, connection):\n        \"\"\"\n        Return the database column data type for this field, for the provided\n        connection.\n        \"\"\"\n        # The default implementation of this method looks at the\n        # backend-specific data_types dictionary, looking up the field by its\n        # \"internal type\".\n        #\n        # A Field class can implement the get_internal_type() method to specify\n        # which *preexisting* Django Field class it's most similar to -- i.e.,\n        # a custom field might be represented by a TEXT column type, which is\n        # the same as the TextField Django field type, which means the custom\n        # field's get_internal_type() returns 'TextField'.\n        #\n        # But the limitation of the get_internal_type() / data_types approach\n        # is that it cannot handle database column types that aren't already\n        # mapped to one of the built-in Django field types. In this case, you\n        # can implement db_type() instead of get_internal_type() to specify\n        # exactly which wacky database column type you want to use.\n        data = DictWrapper(self.__dict__, connection.ops.quote_name, \"qn_\")\n        try:\n            return connection.data_types[self.get_internal_type()] % data\n        except KeyError:\n            return None"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "class",
+          "name": "Cast",
+          "code": "class Cast(Func):\n    \"\"\"Coerce an expression to a new field type.\"\"\"\n    function = 'CAST'\n    template = '%(function)s(%(expressions)s AS %(db_type)s)'\n\n    mysql_types = {\n        fields.CharField: 'char',\n        fields.IntegerField: 'signed integer',\n        fields.BigIntegerField: 'signed integer',\n        fields.SmallIntegerField: 'signed integer',\n        fields.FloatField: 'signed',\n        fields.PositiveIntegerField: 'unsigned integer',\n        fields.PositiveSmallIntegerField: 'unsigned integer',\n    }\n\n    def __init__(self, expression, output_field):\n        super().__init__(expression, output_field=output_field)\n\n    def as_sql(self, compiler, connection, **extra_context):\n        if 'db_type' not in extra_context:\n            extra_context['db_type'] = self.output_field.db_type(connection)\n        return super().as_sql(compiler, connection, **extra_context)\n\n    def as_mysql(self, compiler, connection):\n        extra_context = {}\n        output_field_class = type(self.output_field)\n        if output_field_class in self.mysql_types:\n            extra_context['db_type'] = self.mysql_types[output_field_class]\n        return self.as_sql(compiler, connection, **extra_context)\n\n    def as_postgresql(self, compiler, connection):\n        # CAST would be valid too, but the :: shortcut syntax is more readable.\n        return self.as_sql(compiler, connection, template='%(expressions)s::%(db_type)s')"
+        },
+        {
+          "file": "django/db/models/functions/base.py",
+          "type": "function",
+          "name": "as_mysql",
+          "class_name": "Length",
+          "code": "def as_mysql(self, compiler, connection):\n        return super().as_sql(compiler, connection, function='CHAR_LENGTH')"
+        }
+      ]
+    },
+    {
+      "pr_number": 13323,
+      "pr_title": "Fixed #31902 -- Fixed crash of ExclusionConstraint on expressions with params.",
+      "pr_body": "[Ticket 31902](https://code.djangoproject.com/ticket/31902)",
+      "issue_id": 31902,
+      "issue_title": "ExclusionConstraint crashes on expression with params.",
+      "issue_body": "When expression for ExclusionConstraint is complex with some parameters Django fails to generate SQL because of wrong params substitution.\nExclusionConstraint(\n    name='field_left',\n    expressions=[(Left('field', 4), RangeOperators.EQUAL)],\n)",
+      "issue_closed_at": "2020-08-19T00:34:22",
+      "base_commit": "e2e34f4de3b90f3820ee11d49cc369ef573bc2ef",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/constraints.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "ExclusionConstraint",
+          "code": "def __init__(\n        self, *, name, expressions, index_type=None, condition=None,\n        deferrable=None, include=None, opclasses=(),\n    ):\n        if index_type and index_type.lower() not in {'gist', 'spgist'}:\n            raise ValueError(\n                'Exclusion constraints only support GiST or SP-GiST indexes.'\n            )\n        if not expressions:\n            raise ValueError(\n                'At least one expression is required to define an exclusion '\n                'constraint.'\n            )\n        if not all(\n            isinstance(expr, (list, tuple)) and len(expr) == 2\n            for expr in expressions\n        ):\n            raise ValueError('The expressions must be a list of 2-tuples.')\n        if not isinstance(condition, (type(None), Q)):\n            raise ValueError(\n                'ExclusionConstraint.condition must be a Q instance.'\n            )\n        if condition and deferrable:\n            raise ValueError(\n                'ExclusionConstraint with conditions cannot be deferred.'\n            )\n        if not isinstance(deferrable, (type(None), Deferrable)):\n            raise ValueError(\n                'ExclusionConstraint.deferrable must be a Deferrable instance.'\n            )\n        if not isinstance(include, (type(None), list, tuple)):\n            raise ValueError(\n                'ExclusionConstraint.include must be a list or tuple.'\n            )\n        if include and index_type and index_type.lower() != 'gist':\n            raise ValueError(\n                'Covering exclusion constraints only support GiST indexes.'\n            )\n        if not isinstance(opclasses, (list, tuple)):\n            raise ValueError(\n                'ExclusionConstraint.opclasses must be a list or tuple.'\n            )\n        if opclasses and len(expressions) != len(opclasses):\n            raise ValueError(\n                'ExclusionConstraint.expressions and '\n                'ExclusionConstraint.opclasses must have the same number of '\n                'elements.'\n            )\n        self.expressions = expressions\n        self.index_type = index_type or 'GIST'\n        self.condition = condition\n        self.deferrable = deferrable\n        self.include = tuple(include) if include else ()\n        self.opclasses = opclasses\n        super().__init__(name=name)"
+        },
+        {
+          "file": "django/contrib/postgres/constraints.py",
+          "type": "function",
+          "name": "_get_condition_sql",
+          "class_name": "ExclusionConstraint",
+          "code": "def _get_condition_sql(self, compiler, schema_editor, query):\n        if self.condition is None:\n            return None\n        where = query.build_where(self.condition)\n        sql, params = where.as_sql(compiler, schema_editor.connection)\n        return sql % tuple(schema_editor.quote_value(p) for p in params)"
+        }
+      ]
+    },
+    {
+      "pr_number": 14536,
+      "pr_title": "Fixed #32858 -- Fixed ExclusionConstraint crash with index transforms in expressions.",
+      "pr_body": "Trying to add a PostgreSQL exclusion constraint on a single field of an array (`field__0`, which becomes `\"field\"[1]` in SQL) caused a syntax error to occur:\r\n\r\n```\r\ndjango.db.utils.ProgrammingError: syntax error at or near \"WITH\"\r\nLINE 1: ...\" ADD CONSTRAINT \"foo\" EXCLUDE USING GIST (\"field\"[1] WITH =)\r\n                                                                 ^\r\n```\r\n\r\n[The Postgres docs](https://www.postgresql.org/docs/current/sql-altertable.html) imply that column names can be specified as they are, but expressions need to be wrapped in parentheses in exclusion constraints. This adds those parentheses anytime an expression is not just a column.",
+      "issue_id": 32858,
+      "issue_title": "Syntax error when using an index transform on an ArrayField in an ExclusionConstraint",
+      "issue_body": "I am trying to create a GIST exclusion constraint on a PostgreSQL 12 database. One of the fields is an ArrayField, and I want to apply the constraint on its first item using\nmy_array__0\n. When doing so, I get a syntax error from Postgres.\nfrom\ndjango.db\nimport\nmodels\nfrom\ndjango.contrib.postgres.constraints\nimport\nExclusionConstraint\nfrom\ndjango.contrib.postgres.fields\nimport\nArrayField\n,\nRangeOperators\nclass\nMyModel\n(\nmodels\n.\nModel\n):\nmy_array\n=\nArrayField\n()\nclass\nMeta\n:\nconstraints\n=\n(\nExclusionConstraint\n(\nname\n=\n'foo'\n,\nexpressions\n=\n[\n(\n'my_array__0'\n,\nRangeOperators\n.\nEQUAL\n),\n]\n)\n)\ndjango.db.utils.ProgrammingError: syntax error at or near \"WITH\"\nLINE 1: ...\" ADD CONSTRAINT \"foo\" EXCLUDE USING GIST (\"my_array\"[1] WITH =)\n                                                                    ^\nIt seems a similar issue had occurred with casts (\n#32392\n). The\n​\ndocs for ALTER TABLE\nmention this syntax for expressions in an EXCLUDE constraint:\nexclude_element in an EXCLUDE constraint is:\n\n{ column_name | ( expression ) } [ opclass ] [ ASC | DESC ] [ NULLS { FIRST | LAST } ]\nThis implies that parentheses around anything that is not a column name are mandatory. Maybe a more generic fix could be made to detect if something is only a column name, or just to add parentheses all the time?\nEXCLUDE USING GIST ((\"my_array\"[1]) WITH =)\nworks without any trouble.",
+      "issue_closed_at": "2021-06-22T00:09:18",
+      "base_commit": "501a3714114b9c72e7dc4d8add76663bb8c83e3a",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/constraints.py",
+          "type": "line",
+          "name": "line 2",
+          "code": "from django.db.backends.ddl_references import Statement, Table\nfrom django.db.models import Deferrable, F, Q\nfrom django.db.models.constraints import BaseConstraint\nfrom django.db.models.sql import Query\n\n__all__ = ['ExclusionConstraint']"
+        },
+        {
+          "file": "django/contrib/postgres/constraints.py",
+          "type": "function",
+          "name": "_get_expression_sql",
+          "class_name": "ExclusionConstraint",
+          "code": "def _get_expression_sql(self, compiler, schema_editor, query):\n        expressions = []\n        for idx, (expression, operator) in enumerate(self.expressions):\n            if isinstance(expression, str):\n                expression = F(expression)\n            expression = expression.resolve_expression(query=query)\n            sql, params = compiler.compile(expression)\n            try:\n                opclass = self.opclasses[idx]\n                if opclass:\n                    sql = '%s %s' % (sql, opclass)\n            except IndexError:\n                pass\n            sql = sql % tuple(schema_editor.quote_value(p) for p in params)\n            expressions.append('%s WITH %s' % (sql, operator))\n        return expressions"
+        },
+        {
+          "file": "django/db/models/functions/comparison.py",
+          "type": "function",
+          "name": "as_mysql",
+          "class_name": "Cast",
+          "code": "def as_mysql(self, compiler, connection, **extra_context):\n        template = None\n        output_type = self.output_field.get_internal_type()\n        # MySQL doesn't support explicit cast to float.\n        if output_type == 'FloatField':\n            template = '(%(expressions)s + 0.0)'\n        # MariaDB doesn't support explicit cast to JSON.\n        elif output_type == 'JSONField' and connection.mysql_is_mariadb:\n            template = \"JSON_EXTRACT(%(expressions)s, '$')\"\n        return self.as_sql(compiler, connection, template=template, **extra_context)"
+        }
+      ]
+    },
+    {
+      "pr_number": 7571,
+      "pr_title": "Fixed #24959 -- Negative timedeltas to date interval.",
+      "pr_body": "Negative `timedelta` is normalized (see [documentation](https://docs.python.org/3.6/library/datetime.html#timedelta-objects)) e.g.\r\n```python\r\n>>> timedelta(hours=-1)\r\n(-1, 82800)\r\n```\r\nthat cause incorrect behavior in `date_interval_sql`. I fixed this in MySQL and Oracle backend.\r\n",
+      "issue_id": 24959,
+      "issue_title": "Allow using negative timedeltas in expressions on MySQL and Oracle",
+      "issue_body": "If I have a\ntimedelta\nobject in python that represents a negative difference, e.g.:\ndelta = timedelta(seconds=-3600)\nprint delta2\n -1 day, 23:00:00\nThe resultant SQL generated by\ndate_interval_sql\nfor the MySQL backend would be something like:\nUPDATE `my_table`\nSET ...\n        `my_datetime` = (`my_table`.`my_datetime` + INTERVAL '-1 0:0:82800:0' DAY_MICROSECOND),\nWHERE (...)\nAND\nwhat we want is the following:\nUPDATE `my_table`\nSET  ...\n`my_datetime` = (`my_table`.`my_datetime` + INTERVAL '-0 0:0:3600:0' DAY_MICROSECOND),\nWHERE (...)\nIn layman's terms - the two layers are not convertible in a one-to-one sense.  A\ntimedelta\nin for the example above in Python means:\ngo back one day and *add* 23 hours\n.  So some\ndatetime + delta\nwould just subtract one hour.\nIn MySQL, however,\nINTERVAL '-1 0:0:82800:0' DAY_MICROSECOND\nmeans:\nadd a negative one day and 23 hours\n.",
+      "issue_closed_at": "2016-11-23T08:11:06",
+      "base_commit": "b1a9041535db5d03dab7f205669f0ab7a47de854",
+      "changes": [
+        {
+          "file": "django/db/backends/mysql/operations.py",
+          "type": "function",
+          "name": "time_trunc_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def time_trunc_sql(self, lookup_type, field_name):\n        fields = {\n            'hour': '%%H:00:00',\n            'minute': '%%H:%%i:00',\n            'second': '%%H:%%i:%%s',\n        }  # Use double percents to escape.\n        if lookup_type in fields:\n            format_str = fields[lookup_type]\n            return \"CAST(DATE_FORMAT(%s, '%s') AS TIME)\" % (field_name, format_str)\n        else:\n            return \"TIME(%s)\" % (field_name)"
+        },
+        {
+          "file": "django/db/backends/oracle/operations.py",
+          "type": "function",
+          "name": "date_extract_sql",
+          "class_name": "DatabaseOperations",
+          "code": "def date_extract_sql(self, lookup_type, field_name):\n        if lookup_type == 'week_day':\n            # TO_CHAR(field, 'D') returns an integer from 1-7, where 1=Sunday.\n            return \"TO_CHAR(%s, 'D')\" % field_name\n        elif lookup_type == 'week':\n            # IW = ISO week number\n            return \"TO_CHAR(%s, 'IW')\" % field_name\n        else:\n            # http://docs.oracle.com/cd/B19306_01/server.102/b14200/functions050.htm\n            return \"EXTRACT(%s FROM %s)\" % (lookup_type.upper(), field_name)"
+        }
+      ]
+    },
+    {
+      "pr_number": 4352,
+      "pr_title": "Fixed #24508 -- Made annotations reflective",
+      "pr_body": "We should backport this to 1.8 to be consistent with `filter(a=2+F())`.\n",
+      "issue_id": 24508,
+      "issue_title": "F() object operations do not correcly reflect with annotate",
+      "issue_body": "Hello,\nThis ticket is related to the 1.8 new feature of using various F operations within an annotation.\nI have spotted 2 problems so far :\n1) F('field') * 2 apparently isn't the same as 2 * F('field')\nDescription of the problem :\nSomeModel.objects.all().annotate(computed = F('some_field') * 2)\nWorks as expected\n\nSomeModel.objects.all().annotate(computed = 2 * F('some_field'))\nE: django.core.exceptions.FieldError: Expression contains mixed types. You must set output_field\n\nSomeModel.objects.all().annotate(computed = Expression(2 * F('some_field'), output_field = FloatField()))\nE : TypeError: __init__() got multiple values for argument 'output_field'\nThe last exception, about init, is the most problematic as it doesn't state anything about where is the problem (no info in the traceback)\n2) When  a F object is added to None, it causes a conflict\nDescription of the problem :\nSomeModel.objects.all().annotate(computed = F('some_field') + None)\nWorks as expected\n\nSomeModel.objects.all().annotate(computed = None + F('some_field'))\nE: django.core.exceptions.FieldError: Expression contains mixed types. You must set output_field\n\nSomeModel.objects.all().annotate(computed = Expression(None + F('some_field'), output_field = FloatField()))\nE : TypeError: __init__() got multiple values for argument 'output_field'\nYou might wonder why there would be a None in the construction. For me it is because I am building the object in a for, so I have something like this :\nannotation = None\nfor field in fields_to_be_added:\n    annotation += F(field)\nSomeModel.objects.all().annotate(annotation)",
+      "issue_closed_at": "2015-03-22T01:34:12",
+      "base_commit": "a6bada1ee0c3756e4b8d6bd4b4346dd5235c78ce",
+      "changes": [
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempts to infer the output type of the expression. If the output\n        fields of all source fields match then we can simply infer the same\n        type here.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                self._output_field = sources[0]\n                for source in sources:\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempts to infer the output type of the expression. If the output\n        fields of all source fields match then we can simply infer the same\n        type here.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                self._output_field = sources[0]\n                for source in sources:\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,158 @@
+{
+  "instance_id": "pytest-dev__pytest-5413",
+  "repo": "pytest-dev/pytest",
+  "created_at": "2019-06-06T15:21:20Z",
+  "problem_statement": "str() on the pytest.raises context variable doesn't behave same as normal exception catch\nPytest 4.6.2, macOS 10.14.5\r\n\r\n```Python\r\ntry:\r\n    raise LookupError(\r\n        f\"A\\n\"\r\n        f\"B\\n\"\r\n        f\"C\"\r\n    )\r\nexcept LookupError as e:\r\n    print(str(e))\r\n```\r\nprints\r\n\r\n> A\r\n> B\r\n> C\r\n\r\nBut\r\n\r\n```Python\r\nwith pytest.raises(LookupError) as e:\r\n    raise LookupError(\r\n        f\"A\\n\"\r\n        f\"B\\n\"\r\n        f\"C\"\r\n    )\r\n\r\nprint(str(e))\r\n```\r\n\r\nprints\r\n\r\n> <console>:3: LookupError: A\r\n\r\nIn order to get the full error message, one must do `str(e.value)`, which is documented, but this is a different interaction. Any chance the behavior could be changed to eliminate this gotcha?\r\n\r\n-----\r\n\r\nPip list gives\r\n\r\n```\r\nPackage            Version  Location\r\n------------------ -------- ------------------------------------------------------\r\napipkg             1.5\r\nasn1crypto         0.24.0\r\natomicwrites       1.3.0\r\nattrs              19.1.0\r\naws-xray-sdk       0.95\r\nboto               2.49.0\r\nboto3              1.9.51\r\nbotocore           1.12.144\r\ncertifi            2019.3.9\r\ncffi               1.12.3\r\nchardet            3.0.4\r\nClick              7.0\r\ncodacy-coverage    1.3.11\r\ncolorama           0.4.1\r\ncoverage           4.5.3\r\ncryptography       2.6.1\r\ndecorator          4.4.0\r\ndocker             3.7.2\r\ndocker-pycreds     0.4.0\r\ndocutils           0.14\r\necdsa              0.13.2\r\nexecnet            1.6.0\r\nfuture             0.17.1\r\nidna               2.8\r\nimportlib-metadata 0.17\r\nipaddress          1.0.22\r\nJinja2             2.10.1\r\njmespath           0.9.4\r\njsondiff           1.1.1\r\njsonpickle         1.1\r\njsonschema         2.6.0\r\nMarkupSafe         1.1.1\r\nmock               3.0.4\r\nmore-itertools     7.0.0\r\nmoto               1.3.7\r\nneobolt            1.7.10\r\nneotime            1.7.4\r\nnetworkx           2.1\r\nnumpy              1.15.0\r\npackaging          19.0\r\npandas             0.24.2\r\npip                19.1.1\r\npluggy             0.12.0\r\nprompt-toolkit     2.0.9\r\npy                 1.8.0\r\npy2neo             4.2.0\r\npyaml              19.4.1\r\npycodestyle        2.5.0\r\npycparser          2.19\r\npycryptodome       3.8.1\r\nPygments           2.3.1\r\npyOpenSSL          19.0.0\r\npyparsing          2.4.0\r\npytest             4.6.2\r\npytest-cache       1.0\r\npytest-codestyle   1.4.0\r\npytest-cov         2.6.1\r\npytest-forked      1.0.2\r\npython-dateutil    2.7.3\r\npython-jose        2.0.2\r\npytz               2018.5\r\nPyYAML             5.1\r\nrequests           2.21.0\r\nrequests-mock      1.5.2\r\nresponses          0.10.6\r\ns3transfer         0.1.13\r\nsetuptools         41.0.1\r\nsix                1.11.0\r\nsqlite3worker      1.1.7\r\ntabulate           0.8.3\r\nurllib3            1.24.3\r\nwcwidth            0.1.7\r\nwebsocket-client   0.56.0\r\nWerkzeug           0.15.2\r\nwheel              0.33.1\r\nwrapt              1.11.1\r\nxlrd               1.1.0\r\nxmltodict          0.12.0\r\nzipp               0.5.1\r\n```\n",
+  "patch": "diff --git a/src/_pytest/_code/code.py b/src/_pytest/_code/code.py\n--- a/src/_pytest/_code/code.py\n+++ b/src/_pytest/_code/code.py\n@@ -534,13 +534,6 @@ def getrepr(\n         )\n         return fmt.repr_excinfo(self)\n \n-    def __str__(self):\n-        if self._excinfo is None:\n-            return repr(self)\n-        entry = self.traceback[-1]\n-        loc = ReprFileLocation(entry.path, entry.lineno + 1, self.exconly())\n-        return str(loc)\n-\n     def match(self, regexp):\n         \"\"\"\n         Check whether the regular expression 'regexp' is found in the string\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 926,
+      "pr_title": "Don't skip fixtures that are substrings of params",
+      "pr_body": "Fix #736\n",
+      "issue_id": 736,
+      "issue_title": "Parametrized argument named similarly to fixture (contains it) breaks that fixture's parametrization",
+      "issue_body": "Originally reported by: **Jacobo Giralt (BitBucket: [jgiralt](http://bitbucket.org/jgiralt), GitHub: [jgiralt](http://github.com/jgiralt))**\n\n---\n\n```\n#!python\n\nimport pytest\n\n@pytest.fixture(params=[1,2,3])\ndef foo(request):\n    return request.param\n\n@pytest.mark.parametrize('foobar', [4,5,6])\ndef test_issue(foo, foobar):\n    assert True\n```\n\n```\n#!python\n\nrequest = <SubRequest 'foo' for <Function 'test_issue[4]'>>\n\n    @pytest.fixture(params=[1,2,3])\n    def foo(request):\n>       return request.param\nAttributeError: SubRequest instance has no attribute 'param'\n```\n\nThe issue seems reproducible as long as the parametrized test argument contains the fixture name as a substring, e.g. foobar, barfoo, foox, xfoo, disappears as soon as I modify the fixture name to anything else.\n\nThis same code works in pytest-2.6.4 and fails for 2.7.\n\n---\n- Bitbucket: https://bitbucket.org/pytest-dev/pytest/issue/736\n",
+      "issue_closed_at": "2015-08-11T00:12:52Z",
+      "base_commit": "681e502c12f5baa3f2da9c9de4a848813a872945",
+      "changes": [
+        {
+          "file": "_pytest/python.py",
+          "type": "function",
+          "name": "pytest_generate_tests",
+          "class_name": "FixtureManager",
+          "code": "def pytest_generate_tests(self, metafunc):\n        for argname in metafunc.fixturenames:\n            faclist = metafunc._arg2fixturedefs.get(argname)\n            if faclist:\n                fixturedef = faclist[-1]\n                if fixturedef.params is not None:\n                    func_params = getattr(getattr(metafunc.function, 'parametrize', None), 'args', [[None]])\n                    # skip directly parametrized arguments\n                    if argname not in func_params and argname not in func_params[0]:\n                        metafunc.parametrize(argname, fixturedef.params,\n                                             indirect=True, scope=fixturedef.scope,\n                                             ids=fixturedef.ids)\n            else:\n                continue"
+        }
+      ]
+    },
+    {
+      "pr_number": 2632,
+      "pr_title": "Support PEP-415's Exception.__suppress_context__",
+      "pr_body": "PEP-415 states that `exception.__context__` should be suppressed\r\nin traceback outputs, if `exception.__suppress_context__` is\r\n`True`.\r\n\r\nNow if a ``raise exception from None`` is caught by pytest,\r\npytest will no longer chain the context in the test report.\r\n\r\nThe algorithm in `FormattedExcinfo` now better matches the one\r\nin `traceback.TracebackException`.\r\n\r\n`Exception.__suppress_context__` is available in all of the\r\nversions of Python 3 that are supported by pytest.\r\n\r\nFixes #2631.",
+      "issue_id": 2631,
+      "issue_title": "Support PEP-415's Exception.__suppress_context__",
+      "issue_body": "- [x] Include a detailed description of the bug or suggestion\r\n\r\nPEP-415 states that `exception.__context__` should be suppressed in traceback outputs, if `exception.__suppress_context__` is `True`.\r\n\r\nIf a ``raise exception from None`` is caught by pytest, pytest should not chain the context in the test report.\r\n\r\nThe current algorithm in `_pytest._code.code.FormattedExcinfo` is:\r\n\r\n```python\r\nif e.__cause__ is not None:\r\n    # Code to chain the cause.\r\nelif e.__context__ is not None:\r\n    # Code to chain the context.\r\n```\r\n\r\nwhich means that pytest always chains the exception, assuming that `e.__context__` hasn't been set to `None`.\r\n\r\nBy comparison, the algorithm in `traceback.TracebackException` is:\r\n\r\n```python\r\nif e.__cause__ is not None:\r\n    # Code to chain the cause.\r\nelif (e.__context__ is not None and not e.__suppress_context__):\r\n    # Code to chain the context.\r\n```\r\n\r\n`Exception.__suppress_context__` is available in all of the versions of Python 3 that are supported by pytest, so it is trivial to add support for this feature.\r\n\r\n- [x] Minimal example if possible\r\n\r\nHere's a test that has a ``raise exception from None`` in it:\r\n\r\n```python\r\ndef test_raise_from_none():\r\n    try:\r\n        raise ValueError()\r\n    except Exception:\r\n        raise AttributeError() from None\r\n```\r\n\r\nThis is the test output (with the chained exception traceback) that results when running against the pytest feature branch (commit 768edde899fe3629a69d55289f82bb0d95635c06):\r\n\r\n```\r\n_____________________________________________________ test_raise_from_none _____________________________________________________\r\n\r\n    def test_raise_from_none():\r\n        try:\r\n>           raise ValueError()\r\nE           ValueError\r\n\r\ntesting/code/test_excinfo.py:1257: ValueError\r\n\r\nDuring handling of the above exception, another exception occurred:\r\n\r\n    def test_raise_from_none():\r\n        try:\r\n            raise ValueError()\r\n        except Exception:\r\n>           raise AttributeError() from None\r\nE           AttributeError\r\n\r\ntesting/code/test_excinfo.py:1259: AttributeError\r\n```\r\n\r\nBut running the same code in a terminal produces this shorter, non-chained traceback:\r\n\r\n```\r\nAttributeError                            Traceback (most recent call last)\r\n<ipython-input-51-e2e3809c49fb> in <module>()\r\n----> 1 test_raise_from_none()\r\n\r\n<ipython-input-50-d651befdf00e> in test_raise_from_none()\r\n      3         raise ValueError()\r\n      4     except Exception:\r\n----> 5         raise AttributeError() from None\r\n      6\r\n\r\nAttributeError:\r\n```\r\n\r\nAnd this is what the pytest output should look like:\r\n\r\n```\r\n_____________________________________________________ test_raise_from_none _____________________________________________________\r\n\r\n    def test_raise_from_none():\r\n        try:\r\n            raise ValueError()\r\n        except Exception:\r\n>           raise AttributeError() from None\r\nE           AttributeError\r\n\r\ntesting/code/test_excinfo.py:1259: AttributeError\r\n```",
+      "issue_closed_at": "2017-07-30T21:46:09Z",
+      "base_commit": "768edde899fe3629a69d55289f82bb0d95635c06",
+      "changes": [
+        {
+          "file": "_pytest/_code/code.py",
+          "type": "function",
+          "name": "repr_excinfo",
+          "class_name": "FormattedExcinfo",
+          "code": "def repr_excinfo(self, excinfo):\n        if _PY2:\n            reprtraceback = self.repr_traceback(excinfo)\n            reprcrash = excinfo._getreprcrash()\n\n            return ReprExceptionInfo(reprtraceback, reprcrash)\n        else:\n            repr_chain = []\n            e = excinfo.value\n            descr = None\n            while e is not None:\n                if excinfo:\n                    reprtraceback = self.repr_traceback(excinfo)\n                    reprcrash = excinfo._getreprcrash()\n                else:\n                    # fallback to native repr if the exception doesn't have a traceback:\n                    # ExceptionInfo objects require a full traceback to work\n                    reprtraceback = ReprTracebackNative(py.std.traceback.format_exception(type(e), e, None))\n                    reprcrash = None\n\n                repr_chain += [(reprtraceback, reprcrash, descr)]\n                if e.__cause__ is not None:\n                    e = e.__cause__\n                    excinfo = ExceptionInfo((type(e), e, e.__traceback__)) if e.__traceback__ else None\n                    descr = 'The above exception was the direct cause of the following exception:'\n                elif e.__context__ is not None:\n                    e = e.__context__\n                    excinfo = ExceptionInfo((type(e), e, e.__traceback__)) if e.__traceback__ else None\n                    descr = 'During handling of the above exception, another exception occurred:'\n                else:\n                    e = None\n            repr_chain.reverse()\n            return ExceptionChainRepr(repr_chain)"
+        }
+      ]
+    },
+    {
+      "pr_number": 2113,
+      "pr_title": "Use a simple ``+-`` ASCII string in the string representation of pytest.approx In Python 2",
+      "pr_body": "Fix #2111",
+      "issue_id": 2111,
+      "issue_title": "Printing detailed diff with pytest.approx fails due to \u00b1 character",
+      "issue_body": "OS: OS X 10.11.6 (also present on Ubuntu 14.04)\r\nPython version: 2.7.12\r\npytest version: 3.0.4\r\nOutput of `pip list`:\r\n```\r\npip (9.0.1)\r\npy (1.4.31)\r\npytest (3.0.4)\r\nsetuptools (30.0.0)\r\nwheel (0.30.0a0)\r\n```\r\n---\r\nThis code:\r\n```\r\nimport pytest\r\n\r\ndef test_foo():\r\n    assert [3] == [pytest.approx(4)]\r\n```\r\nproduces the below output. It looks like the detailed diff can't render due to the \u00b1 character in the `__repr__` of `pytest.approx`.\r\n```\r\n(venv) \u279c  /tmp py.test pytest_broken.py \r\n============================= test session starts ==============================\r\nplatform darwin -- Python 2.7.12, pytest-3.0.4, py-1.4.31, pluggy-0.4.0\r\nrootdir: /private/tmp, inifile: \r\nplugins: cov-2.2.1, mock-0.11.0\r\ncollected 1 items \r\n\r\npytest_broken.py F\r\n\r\n=================================== FAILURES ===================================\r\n___________________________________ test_foo ___________________________________\r\n\r\n    def test_foo():\r\n>       assert [3] == [pytest.approx(4)]\r\nE       assert [3] == [4 \u00b1 4.0e-06]\r\nE         (pytest_assertion plugin: representation of details failed.  Probably an object has a faulty __repr__.)\r\nE         /usr/local/lib/python2.7/site-packages/_pytest/assertion/util.py:228: UnicodeDecodeError: 'ascii' codec can't decode byte 0xc2 in position 2: ordinal not in range(128)\r\n\r\npytest_broken.py:4: AssertionError\r\n============================ pytest-warning summary ============================\r\nWC1 None pytest_funcarg__cov: declaring fixtures using \"pytest_funcarg__\" prefix is deprecated and scheduled to be removed in pytest 4.0.  Please remove the prefix and use the @pytest.fixture decorator instead.\r\n================= 1 failed, 1 pytest-warnings in 0.03 seconds ==================\r\n\r\n```\r\n",
+      "issue_closed_at": "2016-12-05T12:02:07Z",
+      "base_commit": "5365f7c9ca7323f2df932a6ea34fcee280e2672d",
+      "changes": [
+        {
+          "file": "_pytest/python.py",
+          "type": "function",
+          "name": "__repr__",
+          "class_name": "ApproxNonIterable",
+          "code": "def __repr__(self):\n        if isinstance(self.expected, complex):\n            return str(self.expected)\n\n        # Infinities aren't compared using tolerances, so don't show a\n        # tolerance.\n        if math.isinf(self.expected):\n            return str(self.expected)\n\n        # If a sensible tolerance can't be calculated, self.tolerance will\n        # raise a ValueError.  In this case, display '???'.\n        try:\n            vetted_tolerance = '{:.1e}'.format(self.tolerance)\n        except ValueError:\n            vetted_tolerance = '???'\n\n        plus_minus = u'{0} \\u00b1 {1}'.format(self.expected, vetted_tolerance)\n\n        # In python2, __repr__() must return a string (i.e. not a unicode\n        # object).  In python3, __repr__() must return a unicode object\n        # (although now strings are unicode objects and bytes are what\n        # strings were).\n        if sys.version_info[0] == 2:\n            return plus_minus.encode('utf-8')\n        else:\n            return plus_minus"
+        }
+      ]
+    },
+    {
+      "pr_number": 4727,
+      "pr_title": "Change -p so it is possible to early load setuptools plugins",
+      "pr_body": "~~Related to https://github.com/pytest-dev/pluggy/pull/189~~\r\n\r\n\r\nFixes #4718\r\n\r\n\r\n",
+      "issue_id": 4718,
+      "issue_title": "-p plugin not working, fails to early-load plugin",
+      "issue_body": "Operating systems: Ubuntu 16.04, macOS Sierra, macOS High Sierra\r\nPython: 3.7.1\r\nPytest:\r\n\r\n```\r\n$ pytest --version\r\nThis is pytest version 4.2.0, imported from /usr/local/lib/python3.7/site-packages/pytest.py\r\nsetuptools registered plugins:\r\n  pytest-django-3.4.7 at /usr/local/lib/python3.7/site-packages/pytest_django/plugin.py\r\n  pytest-cov-2.6.1 at /usr/local/lib/python3.7/site-packages/pytest_cov/plugin.py\r\n  pysoa-0.56.0 at /usr/local/lib/python3.7/site-packages/pysoa/test/plugins/pytest/fixtures.py\r\n  pysoa-0.56.0 at /usr/local/lib/python3.7/site-packages/pysoa/test/plugins/pytest/plans.py\r\n```\r\n\r\n\r\n`pytest --help` describes an option for early-loading plugins:\r\n\r\n```\r\n  -p name               early-load given plugin (multi-allowed). To avoid\r\n                        loading of plugins, use the `no:` prefix, e.g.\r\n                        `no:doctest`.\r\n```\r\n\r\nI hoped to use this to early-load the code coverage plugin `pytest-cov`. (The motivation is that `pytest-cov` should be loaded before any other plugins, but on some of our machines `pytest-django` is loading first, resulting in about a 15% coverage difference, which causes tests to fail on those machines because we have `--fail-under` set for enforcement of code coverage.) However, as discussed in #935, `-p` is broken and no longer works. Here are all the different approaches I tried:\r\n\r\n```\r\n# disables plugin\r\n$ pytest -p pytest_cov\r\nusage: pytest [options] [file_or_dir] [file_or_dir] [...]\r\npytest: error: unrecognized arguments: --cov-report --cov-branch --cov-fail-under=90 --cov=.......\r\n\r\n# does not recognize it\r\n$ pytest -p pytest-cov\r\nTraceback (most recent call last):\r\n  File \"/usr/local/lib/python3.7/site-packages/_pytest/config/__init__.py\", line 530, in import_plugin\r\n    __import__(importspec)\r\nModuleNotFoundError: No module named 'pytest-cov'\r\n\r\n# does not recognize it\r\n$ pytest -p cov\r\nTraceback (most recent call last):\r\n  File \"/usr/local/lib/python3.7/site-packages/_pytest/config/__init__.py\", line 530, in import_plugin\r\n    __import__(importspec)\r\nModuleNotFoundError: No module named 'cov'\r\n\r\n# finally no error, but does not load it early\r\n$ pytest -p coverage\r\n================= test session starts =================\r\nplatform linux -- Python 3.7.1, pytest-4.1.1, py-1.7.0, pluggy-0.8.1\r\nDjango settings: xxxx.settings.dev_local (from environment variable)\r\nrootdir: /srv/xxxx, inifile: setup.cfg\r\nplugins: django-3.4.6, cov-2.6.1, pysoa-0.56.0\r\ncollected 256 items\r\n...\r\nxxxx/settings/__init__.py                           36     36      0      0     0.0%   1-135\r\nxxxx/settings/dev_local.py                          33     33      6      0     0.0%   1-125\r\nxxxx/settings/jenkins_test.py                       24     24      4      0     0.0%   1-131\r\nxxxx/settings/production_docker.py                  23     23      9      0     0.0%   1-125\r\n...\r\n\r\n# gives an error about its already being loaded\r\n$ pytest -p pytest_cov.plugin\r\nTraceback (most recent call last):\r\n  File \"/usr/local/bin/pytest\", line 11, in <module>\r\n    sys.exit(main())\r\n...\r\nValueError: Plugin already registered: pytest_cov=<module 'pytest_cov.plugin' from '/usr/local/lib/python3.7/site-packages/pytest_cov/plugin.py'>\r\n{'140434823318496': <_pytest.config.PytestPluginManager object at 0x7fb987c20be0>, 'pytestconfig': <_pytest.config.Config object at 0x7fb98498c5c0> ......\r\n```\r\n\r\nI'm not sure if this is a regression or if this command-line argument has always been mis-documented and wasn't actually intended for early-loading plugins. Either way, it's a bug. The `-p` argument conflicts with the entrypoints plugin loading system and there is no way to early-load a plugin unless it doesn't have an entrypoint.",
+      "issue_closed_at": "2019-03-24T09:40:10Z",
+      "base_commit": "c9e69438b19d504dcb3f5adb99bd93ea0202dc11",
+      "changes": [
+        {
+          "file": "setup.py",
+          "type": "line",
+          "name": "line 22",
+          "code": "# if _PYTEST_SETUP_SKIP_PLUGGY_DEP is set, skip installing pluggy;\n# used by tox.ini to test with pluggy master\nif \"_PYTEST_SETUP_SKIP_PLUGGY_DEP\" not in os.environ:\n    INSTALL_REQUIRES.append(\"pluggy>=0.7\")\n\n\ndef main():"
+        },
+        {
+          "file": "src/_pytest/config/__init__.py",
+          "type": "function",
+          "name": "consider_pluginarg",
+          "class_name": "PytestPluginManager",
+          "code": "def consider_pluginarg(self, arg):\n        if arg.startswith(\"no:\"):\n            name = arg[3:]\n            # PR #4304 : remove stepwise if cacheprovider is blocked\n            if name == \"cacheprovider\":\n                self.set_blocked(\"stepwise\")\n                self.set_blocked(\"pytest_stepwise\")\n\n            self.set_blocked(name)\n            if not name.startswith(\"pytest_\"):\n                self.set_blocked(\"pytest_\" + name)\n        else:\n            self.import_plugin(arg)"
+        },
+        {
+          "file": "src/_pytest/config/__init__.py",
+          "type": "function",
+          "name": "_import_plugin_specs",
+          "class_name": "PytestPluginManager",
+          "code": "def _import_plugin_specs(self, spec):\n        plugins = _get_plugin_specs_as_list(spec)\n        for import_spec in plugins:\n            self.import_plugin(import_spec)"
+        },
+        {
+          "file": "src/_pytest/config/__init__.py",
+          "type": "function",
+          "name": "import_plugin",
+          "class_name": "PytestPluginManager",
+          "code": "def import_plugin(self, modname):\n        # most often modname refers to builtin modules, e.g. \"pytester\",\n        # \"terminal\" or \"capture\".  Those plugins are registered under their\n        # basename for historic purposes but must be imported with the\n        # _pytest prefix.\n        assert isinstance(modname, six.string_types), (\n            \"module name as text required, got %r\" % modname\n        )\n        modname = str(modname)\n        if self.is_blocked(modname) or self.get_plugin(modname) is not None:\n            return\n        if modname in builtin_plugins:\n            importspec = \"_pytest.\" + modname\n        else:\n            importspec = modname\n        self.rewrite_hook.mark_rewrite(importspec)\n        try:\n            __import__(importspec)\n        except ImportError as e:\n            new_exc_type = ImportError\n            new_exc_message = 'Error importing plugin \"%s\": %s' % (\n                modname,\n                safe_str(e.args[0]),\n            )\n            new_exc = new_exc_type(new_exc_message)\n\n            six.reraise(new_exc_type, new_exc, sys.exc_info()[2])\n\n        except Skipped as e:\n            from _pytest.warnings import _issue_warning_captured\n\n            _issue_warning_captured(\n                PytestWarning(\"skipped plugin %r: %s\" % (modname, e.msg)),\n                self.hook,\n                stacklevel=1,\n            )\n        else:\n            mod = sys.modules[importspec]\n            self.register(mod, modname)"
+        },
+        {
+          "file": "src/_pytest/helpconfig.py",
+          "type": "function",
+          "name": "pytest_addoption",
+          "class_name": null,
+          "code": "def pytest_addoption(parser):\n    group = parser.getgroup(\"debugconfig\")\n    group.addoption(\n        \"--version\",\n        action=\"store_true\",\n        help=\"display pytest lib version and import information.\",\n    )\n    group._addoption(\n        \"-h\",\n        \"--help\",\n        action=HelpAction,\n        dest=\"help\",\n        help=\"show help message and configuration info\",\n    )\n    group._addoption(\n        \"-p\",\n        action=\"append\",\n        dest=\"plugins\",\n        default=[],\n        metavar=\"name\",\n        help=\"early-load given plugin (multi-allowed). \"\n        \"To avoid loading of plugins, use the `no:` prefix, e.g. \"\n        \"`no:doctest`.\",\n    )\n    group.addoption(\n        \"--traceconfig\",\n        \"--trace-config\",\n        action=\"store_true\",\n        default=False,\n        help=\"trace considerations of conftest.py files.\",\n    ),\n    group.addoption(\n        \"--debug\",\n        action=\"store_true\",\n        dest=\"debug\",\n        default=False,\n        help=\"store internal tracing debug information in 'pytestdebug.log'.\",\n    )\n    group._addoption(\n        \"-o\",\n        \"--override-ini\",\n        dest=\"override_ini\",\n        action=\"append\",\n        help='override ini option with \"option=value\" style, e.g. `-o xfail_strict=True -o cache_dir=cache`.',\n    )"
+        }
+      ]
+    },
+    {
+      "pr_number": 1734,
+      "pr_title": "setup_* and teardown_* functions argument now optional",
+      "pr_body": "setup_module, setup_function and setup_method extra argument are now optional and may be omitted.\n\nFix #1728\n",
+      "issue_id": 1728,
+      "issue_title": "teardown_function() with no argument list crashes",
+      "issue_body": "- [x] Include a detailed description of the bug or suggestion\n\nThese functions appear to work even if someone forgets to list the module/function argument:\n- setup_module()\n- teardown_module()\n- setup_function()\n\nHowever, this crashes:\n- teardown_function()\n\nExample file test_foo.py, listing at end.\n\n```\n> py.test test_foo.py\n<some output deleted>\n>   self.addfinalizer(lambda: fin(self.obj))\nE   TypeError: teardown_function() takes no arguments (1 given)\n<some output deleted>\n```\n\nSuggestion. look at how setup/teardown module and setup_function are handled, because they don't crash.\n- [ ] `pip list` of the virtual environment you are using\n\nCurrently looking at an anaconda install, and the list is huge.\n- [x] py.test and operating system versions\n\n> python --version\n> Python 2.7.10 :: Anaconda 2.4.0 (64-bit)\n> py.test --version\n> This is pytest version 2.8.1, imported from C:\\Python\\lib\\site-packages\\pytest.pyc\n\nHowever, I've tried it with Python 3.5.2 and most recent pytest on a mac without anaconda, and that's broken too.\n- [x] Minimal example if possible\n\ntest_foo.py:\n\n``` python\nfrom __future__ import print_function\n\ndef test_something():\n    print('\\nIn test_something()')\n\ndef teardown_function():\n    print('\\nIn teardown_function()')\n```\n",
+      "issue_closed_at": "2016-07-15T13:00:42Z",
+      "base_commit": "ee374e3b8059351719a85fa3ba7abd5ec6b632ea",
+      "changes": [
+        {
+          "file": "_pytest/python.py",
+          "type": "line",
+          "name": "line 25",
+          "code": "cutdir1 = py.path.local(pluggy.__file__.rstrip(\"oc\"))\n\n\ndef _has_positional_arg(func):\n    return func.__code__.co_argcount\n\n\ndef filter_traceback(entry):\n    # entry.path might sometimes return a str object when the entry\n    # points to dynamically generated code"
+        },
+        {
+          "file": "_pytest/python.py",
+          "type": "function",
+          "name": "_importtestmodule",
+          "class_name": "Module",
+          "code": "def _importtestmodule(self):\n        # we assume we are only called once per module\n        importmode = self.config.getoption(\"--import-mode\")\n        try:\n            mod = self.fspath.pyimport(ensuresyspath=importmode)\n        except SyntaxError:\n            raise self.CollectError(\n                _pytest._code.ExceptionInfo().getrepr(style=\"short\"))\n        except self.fspath.ImportMismatchError:\n            e = sys.exc_info()[1]\n            raise self.CollectError(\n                \"import file mismatch:\\n\"\n                \"imported module %r has this __file__ attribute:\\n\"\n                \"  %s\\n\"\n                \"which is not the same as the test file we want to collect:\\n\"\n                \"  %s\\n\"\n                \"HINT: remove __pycache__ / .pyc files and/or use a \"\n                \"unique basename for your test file modules\"\n                 % e.args\n            )\n        except ImportError:\n            exc_class, exc, _ = sys.exc_info()\n            raise self.CollectError(\n                \"ImportError while importing test module '%s'.\\n\"\n                \"Original error message:\\n'%s'\\n\"\n                \"Make sure your test modules/packages have valid Python names.\"\n                % (self.fspath, exc or exc_class)\n            )\n        except _pytest.runner.Skipped:\n            raise self.CollectError(\n                \"Using @pytest.skip outside a test (e.g. as a test function \"\n                \"decorator) is not allowed. Use @pytest.mark.skip or \"\n                \"@pytest.mark.skipif instead.\"\n            )\n        #print \"imported test module\", mod\n        self.config.pluginmanager.consider_module(mod)\n        return mod"
+        },
+        {
+          "file": "_pytest/python.py",
+          "type": "function",
+          "name": "collect",
+          "class_name": "Generator",
+          "code": "def collect(self):\n        # test generators are seen as collectors but they also\n        # invoke setup/teardown on popular request\n        # (induced by the common \"test_*\" naming shared with normal tests)\n        self.session._setupstate.prepare(self)\n        # see FunctionMixin.setup and test_setupstate_is_preserved_134\n        self._preservedparent = self.parent.obj\n        l = []\n        seen = {}\n        for i, x in enumerate(self.obj()):\n            name, call, args = self.getcallargs(x)\n            if not callable(call):\n                raise TypeError(\"%r yielded non callable test %r\" %(self.obj, call,))\n            if name is None:\n                name = \"[%d]\" % i\n            else:\n                name = \"['%s']\" % name\n            if name in seen:\n                raise ValueError(\"%r generated tests with non-unique name %r\" %(self, name))\n            seen[name] = True\n            l.append(self.Function(name, self, args=args, callobj=call))\n            msg = 'yield tests are deprecated, and scheduled to be removed in pytest 4.0'\n            self.config.warn('C1', msg, fslocation=self.fspath)\n        return l"
+        },
+        {
+          "file": "_pytest/python.py",
+          "type": "function",
+          "name": "setup",
+          "class_name": "Function",
+          "code": "def setup(self):\n        super(Function, self).setup()\n        fixtures.fillfixtures(self)"
+        },
+        {
+          "file": "_pytest/python.py",
+          "type": "function",
+          "name": "setup",
+          "class_name": "Function",
+          "code": "def setup(self):\n        super(Function, self).setup()\n        fixtures.fillfixtures(self)"
+        }
+      ]
+    }
+  ]
+}

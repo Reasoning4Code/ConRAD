@@ -1,0 +1,146 @@
+{
+  "instance_id": "django__django-12286",
+  "repo": "django/django",
+  "created_at": "2020-01-07T13:56:28Z",
+  "problem_statement": "translation.E004 shouldn't be raised on sublanguages when a base language is available.\nDescription\n\t\nAccording to Django documentation:\nIf a base language is available but the sublanguage specified is not, Django uses the base language. For example, if a user specifies de-at (Austrian German) but Django only has de available, Django uses de.\nHowever, when using Django 3.0.2, if my settings.py has\nLANGUAGE_CODE = \"de-at\"\nI get this error message:\nSystemCheckError: System check identified some issues:\nERRORS:\n?: (translation.E004) You have provided a value for the LANGUAGE_CODE setting that is not in the LANGUAGES setting.\nIf using\nLANGUAGE_CODE = \"es-ar\"\nDjango works fine (es-ar is one of the translations provided out of the box).\n",
+  "patch": "diff --git a/django/core/checks/translation.py b/django/core/checks/translation.py\n--- a/django/core/checks/translation.py\n+++ b/django/core/checks/translation.py\n@@ -1,4 +1,5 @@\n from django.conf import settings\n+from django.utils.translation import get_supported_language_variant\n from django.utils.translation.trans_real import language_code_re\n \n from . import Error, Tags, register\n@@ -55,7 +56,9 @@ def check_setting_languages_bidi(app_configs, **kwargs):\n @register(Tags.translation)\n def check_language_settings_consistent(app_configs, **kwargs):\n     \"\"\"Error if language settings are not consistent with each other.\"\"\"\n-    available_tags = {i for i, _ in settings.LANGUAGES} | {'en-us'}\n-    if settings.LANGUAGE_CODE not in available_tags:\n+    try:\n+        get_supported_language_variant(settings.LANGUAGE_CODE)\n+    except LookupError:\n         return [E004]\n-    return []\n+    else:\n+        return []\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 4356,
+      "pr_title": "Fixed #24515 -- Fixed DjangoTranslation plural handling",
+      "pr_body": "",
+      "issue_id": 24515,
+      "issue_title": "Plural handling broken",
+      "issue_body": "",
+      "issue_closed_at": "2015-03-21T04:28:18",
+      "base_commit": "aea02ddfb7c610db9a7cb291b113d6e561d8eba9",
+      "changes": [
+        {
+          "file": "django/utils/translation/trans_real.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "DjangoTranslation",
+          "code": "def __init__(self, language):\n        \"\"\"Create a GNUTranslations() using many locale directories\"\"\"\n        gettext_module.GNUTranslations.__init__(self)\n\n        self.__language = language\n        self.__to_language = to_language(language)\n        self.__locale = to_locale(language)\n        self.plural = lambda n: int(n != 1)\n\n        self._init_translation_catalog()\n        self._add_installed_apps_translations()\n        self._add_local_translations()\n        self._add_fallback()"
+        },
+        {
+          "file": "django/utils/translation/trans_real.py",
+          "type": "function",
+          "name": "_new_gnu_trans",
+          "class_name": "DjangoTranslation",
+          "code": "def _new_gnu_trans(self, localedir, use_null_fallback=True):\n        \"\"\"\n        Returns a mergeable gettext.GNUTranslations instance.\n\n        A convenience wrapper. By default gettext uses 'fallback=False'.\n        Using param `use_null_fallback` to avoid confusion with any other\n        references to 'fallback'.\n        \"\"\"\n        translation = gettext_module.translation(\n            domain='django',\n            localedir=localedir,\n            languages=[self.__locale],\n            codeset='utf-8',\n            fallback=use_null_fallback)\n        if not hasattr(translation, '_catalog'):\n            # provides merge support for NullTranslations()\n            translation._catalog = {}\n            translation._info = {}\n        return translation"
+        },
+        {
+          "file": "django/utils/translation/trans_real.py",
+          "type": "function",
+          "name": "_init_translation_catalog",
+          "class_name": "DjangoTranslation",
+          "code": "def _init_translation_catalog(self):\n        \"\"\"Creates a base catalog using global django translations.\"\"\"\n        settingsfile = upath(sys.modules[settings.__module__].__file__)\n        localedir = os.path.join(os.path.dirname(settingsfile), 'locale')\n        use_null_fallback = True\n        if self.__language == settings.LANGUAGE_CODE:\n            # default lang should be present and parseable, if not\n            # gettext will raise an IOError (refs #18192).\n            use_null_fallback = False\n        translation = self._new_gnu_trans(localedir, use_null_fallback)\n        self._info = translation._info.copy()\n        self._catalog = translation._catalog.copy()"
+        }
+      ]
+    },
+    {
+      "pr_number": 10199,
+      "pr_title": "Fixed #26352 -- Made system check allow ManyToManyField to target the same model if through_fields differs.",
+      "pr_body": "See https://code.djangoproject.com/ticket/26352",
+      "issue_id": 26352,
+      "issue_title": "models.E003 check incorrectly prevents duplicate ManyToMany through-self that differ by through_fields",
+      "issue_body": "",
+      "issue_closed_at": "2018-08-22T11:28:35",
+      "base_commit": "f2d5dafec93e6b3100f004c559ebe21e2b783ae7",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "_check_m2m_through_same_relationship",
+          "class_name": "Model",
+          "code": "def _check_m2m_through_same_relationship(cls):\n        \"\"\" Check if no relationship model is used by more than one m2m field.\n        \"\"\"\n\n        errors = []\n        seen_intermediary_signatures = []\n\n        fields = cls._meta.local_many_to_many\n\n        # Skip when the target model wasn't found.\n        fields = (f for f in fields if isinstance(f.remote_field.model, ModelBase))\n\n        # Skip when the relationship model wasn't found.\n        fields = (f for f in fields if isinstance(f.remote_field.through, ModelBase))\n\n        for f in fields:\n            signature = (f.remote_field.model, cls, f.remote_field.through)\n            if signature in seen_intermediary_signatures:\n                errors.append(\n                    checks.Error(\n                        \"The model has two many-to-many relations through \"\n                        \"the intermediate model '%s'.\" % f.remote_field.through._meta.label,\n                        obj=cls,\n                        id='models.E003',\n                    )\n                )\n            else:\n                seen_intermediary_signatures.append(signature)\n        return errors"
+        }
+      ]
+    },
+    {
+      "pr_number": 9112,
+      "pr_title": "Fixed #27846 -- clear all cached reverse relationships on refresh_from_db()",
+      "pr_body": "https://code.djangoproject.com/ticket/27846",
+      "issue_id": 27846,
+      "issue_title": "refresh_from_db() doesn't clear reverse OneToOneFields",
+      "issue_body": "",
+      "issue_closed_at": "2017-10-12T16:25:22",
+      "base_commit": "df0aebc893973c78d7d2cda712ba4133dbe29b6e",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "refresh_from_db",
+          "class_name": "Model",
+          "code": "def refresh_from_db(self, using=None, fields=None):\n        \"\"\"\n        Reload field values from the database.\n\n        By default, the reloading happens from the database this instance was\n        loaded from, or by the read router if this instance wasn't loaded from\n        any database. The using parameter will override the default.\n\n        Fields can be used to specify which fields to reload. The fields\n        should be an iterable of field attnames. If fields is None, then\n        all non-deferred fields are reloaded.\n\n        When accessing deferred fields of an instance, the deferred loading\n        of the field will call this method.\n        \"\"\"\n        if fields is not None:\n            if len(fields) == 0:\n                return\n            if any(LOOKUP_SEP in f for f in fields):\n                raise ValueError(\n                    'Found \"%s\" in fields argument. Relations and transforms '\n                    'are not allowed in fields.' % LOOKUP_SEP)\n\n        db = using if using is not None else self._state.db\n        db_instance_qs = self.__class__._default_manager.using(db).filter(pk=self.pk)\n\n        # Use provided fields, if not set then reload all non-deferred fields.\n        deferred_fields = self.get_deferred_fields()\n        if fields is not None:\n            fields = list(fields)\n            db_instance_qs = db_instance_qs.only(*fields)\n        elif deferred_fields:\n            fields = [f.attname for f in self._meta.concrete_fields\n                      if f.attname not in deferred_fields]\n            db_instance_qs = db_instance_qs.only(*fields)\n\n        db_instance = db_instance_qs.get()\n        non_loaded_fields = db_instance.get_deferred_fields()\n        for field in self._meta.concrete_fields:\n            if field.attname in non_loaded_fields:\n                # This field wasn't refreshed - skip ahead.\n                continue\n            setattr(self, field.attname, getattr(db_instance, field.attname))\n            # Throw away stale foreign key references.\n            if field.is_relation and field.is_cached(self):\n                rel_instance = field.get_cached_value(self)\n                local_val = getattr(db_instance, field.attname)\n                related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)\n                if local_val != related_val or (local_val is None and related_val is None):\n                    field.delete_cached_value(self)\n        self._state.db = db_instance._state.db"
+        }
+      ]
+    },
+    {
+      "pr_number": 10277,
+      "pr_title": "Fixed #29612 -- Add prefetch_related() cache invalidation for Generic Relations",
+      "pr_body": "Ticket: https://code.djangoproject.com/ticket/29612\r\n\r\nNot sure if I need documentation for this, as the current docs seem to imply that this is the case anyway.",
+      "issue_id": 29612,
+      "issue_title": "Add prefetch_related() cache invalidation for GenericRelations",
+      "issue_body": "",
+      "issue_closed_at": "2018-08-17T14:21:37",
+      "base_commit": "bf17f5e88466e3f571065345f5b2fea0d8af89fe",
+      "changes": [
+        {
+          "file": "django/contrib/contenttypes/fields.py",
+          "type": "function",
+          "name": "_apply_rel_filters",
+          "class_name": "GenericRelatedObjectManager",
+          "code": "def _apply_rel_filters(self, queryset):\n            \"\"\"\n            Filter the queryset for the instance this manager is bound to.\n            \"\"\"\n            db = self._db or router.db_for_read(self.model, instance=self.instance)\n            return queryset.using(db).filter(**self.core_filters)"
+        },
+        {
+          "file": "django/contrib/contenttypes/fields.py",
+          "type": "function",
+          "name": "get_prefetch_queryset",
+          "class_name": "GenericRelatedObjectManager",
+          "code": "def get_prefetch_queryset(self, instances, queryset=None):\n            if queryset is None:\n                queryset = super().get_queryset()\n\n            queryset._add_hints(instance=instances[0])\n            queryset = queryset.using(queryset._db or self._db)\n\n            query = {\n                '%s__pk' % self.content_type_field_name: self.content_type.id,\n                '%s__in' % self.object_id_field_name: {obj.pk for obj in instances}\n            }\n\n            # We (possibly) need to convert object IDs to the type of the\n            # instances' PK in order to match up instances:\n            object_id_converter = instances[0]._meta.pk.to_python\n            return (\n                queryset.filter(**query),\n                lambda relobj: object_id_converter(getattr(relobj, self.object_id_field_name)),\n                lambda obj: obj.pk,\n                False,\n                self.prefetch_cache_name,\n                False,\n            )"
+        },
+        {
+          "file": "django/contrib/contenttypes/fields.py",
+          "type": "function",
+          "name": "clear",
+          "class_name": "GenericRelatedObjectManager",
+          "code": "def clear(self, *, bulk=True):\n            self._clear(self, bulk)"
+        },
+        {
+          "file": "django/contrib/contenttypes/fields.py",
+          "type": "function",
+          "name": "set",
+          "class_name": "GenericRelatedObjectManager",
+          "code": "def set(self, objs, *, bulk=True, clear=False):\n            # Force evaluation of `objs` in case it's a queryset whose value\n            # could be affected by `manager.clear()`. Refs #19816.\n            objs = tuple(objs)\n\n            db = router.db_for_write(self.model, instance=self.instance)\n            with transaction.atomic(using=db, savepoint=False):\n                if clear:\n                    self.clear()\n                    self.add(*objs, bulk=bulk)\n                else:\n                    old_objs = set(self.using(db).all())\n                    new_objs = []\n                    for obj in objs:\n                        if obj in old_objs:\n                            old_objs.remove(obj)\n                        else:\n                            new_objs.append(obj)\n\n                    self.remove(*old_objs)\n                    self.add(*new_objs, bulk=bulk)"
+        }
+      ]
+    },
+    {
+      "pr_number": 7036,
+      "pr_title": "Fixed #27024 -- Prevented logging error with empty string as geometry widget value",
+      "pr_body": "Thanks Gavin Wahl for the report.\n",
+      "issue_id": 27024,
+      "issue_title": "BaseGeometryWidget logs a false positive: Error creating geometry from value ''",
+      "issue_body": "",
+      "issue_closed_at": "2016-08-08T09:25:25",
+      "base_commit": "2a11d2d7a7d5c6609c85dbc631fad6b8a8645a64",
+      "changes": [
+        {
+          "file": "django/contrib/gis/admin/widgets.py",
+          "type": "function",
+          "name": "render",
+          "class_name": "OpenLayersWidget",
+          "code": "def render(self, name, value, attrs=None):\n        # Update the template parameters with any attributes passed in.\n        if attrs:\n            self.params.update(attrs)\n            self.params['editable'] = self.params['modifiable']\n        else:\n            self.params['editable'] = True\n\n        # Defaulting the WKT value to a blank string -- this\n        # will be tested in the JavaScript and the appropriate\n        # interface will be constructed.\n        self.params['wkt'] = ''\n\n        # If a string reaches here (via a validation error on another\n        # field) then just reconstruct the Geometry.\n        if isinstance(value, six.string_types):\n            try:\n                value = GEOSGeometry(value)\n            except (GEOSException, ValueError) as err:\n                logger.error(\"Error creating geometry from value '%s' (%s)\", value, err)\n                value = None\n\n        if (value and value.geom_type.upper() != self.geom_type and\n                self.geom_type != 'GEOMETRY'):\n            value = None\n\n        # Constructing the dictionary of the map options.\n        self.params['map_options'] = self.map_options()\n\n        # Constructing the JavaScript module name using the name of\n        # the GeometryField (passed in via the `attrs` keyword).\n        # Use the 'name' attr for the field name (rather than 'field')\n        self.params['name'] = name\n        # note: we must switch out dashes for underscores since js\n        # functions are created using the module variable\n        js_safe_name = self.params['name'].replace('-', '_')\n        self.params['module'] = 'geodjango_%s' % js_safe_name\n\n        if value:\n            # Transforming the geometry to the projection used on the\n            # OpenLayers map.\n            srid = self.params['srid']\n            if value.srid != srid:\n                try:\n                    ogr = value.ogr\n                    ogr.transform(srid)\n                    wkt = ogr.wkt\n                except GDALException as err:\n                    logger.error(\n                        \"Error transforming geometry from srid '%s' to srid '%s' (%s)\",\n                        value.srid, srid, err\n                    )\n                    wkt = ''\n            else:\n                wkt = value.wkt\n\n            # Setting the parameter WKT with that of the transformed\n            # geometry.\n            self.params['wkt'] = wkt\n\n        self.params.update(geo_context)\n        return loader.render_to_string(self.template, self.params)"
+        },
+        {
+          "file": "django/contrib/gis/forms/widgets.py",
+          "type": "function",
+          "name": "deserialize",
+          "class_name": "BaseGeometryWidget",
+          "code": "def deserialize(self, value):\n        try:\n            return GEOSGeometry(value, self.map_srid)\n        except (GEOSException, ValueError) as err:\n            logger.error(\"Error creating geometry from value '%s' (%s)\", value, err)\n        return None"
+        }
+      ]
+    }
+  ]
+}

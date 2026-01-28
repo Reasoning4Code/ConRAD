@@ -1,0 +1,124 @@
+{
+  "instance_id": "django__django-11742",
+  "repo": "django/django",
+  "created_at": "2019-09-04T08:30:14Z",
+  "problem_statement": "Add check to ensure max_length fits longest choice.\nDescription\n\t\nThere is currently no check to ensure that Field.max_length is large enough to fit the longest value in Field.choices.\nThis would be very helpful as often this mistake is not noticed until an attempt is made to save a record with those values that are too long.\n",
+  "patch": "diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py\n--- a/django/db/models/fields/__init__.py\n+++ b/django/db/models/fields/__init__.py\n@@ -257,6 +257,7 @@ def is_value(value, accept_promise=True):\n                 )\n             ]\n \n+        choice_max_length = 0\n         # Expect [group_name, [value, display]]\n         for choices_group in self.choices:\n             try:\n@@ -270,16 +271,32 @@ def is_value(value, accept_promise=True):\n                     for value, human_name in group_choices\n                 ):\n                     break\n+                if self.max_length is not None and group_choices:\n+                    choice_max_length = max(\n+                        choice_max_length,\n+                        *(len(value) for value, _ in group_choices if isinstance(value, str)),\n+                    )\n             except (TypeError, ValueError):\n                 # No groups, choices in the form [value, display]\n                 value, human_name = group_name, group_choices\n                 if not is_value(value) or not is_value(human_name):\n                     break\n+                if self.max_length is not None and isinstance(value, str):\n+                    choice_max_length = max(choice_max_length, len(value))\n \n             # Special case: choices=['ab']\n             if isinstance(choices_group, str):\n                 break\n         else:\n+            if self.max_length is not None and choice_max_length > self.max_length:\n+                return [\n+                    checks.Error(\n+                        \"'max_length' is too small to fit the longest value \"\n+                        \"in 'choices' (%d characters).\" % choice_max_length,\n+                        obj=self,\n+                        id='fields.E009',\n+                    ),\n+                ]\n             return []\n \n         return [\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 1295,
+      "pr_title": "Fixed #20587 -- Made convert_values handle None values",
+      "pr_body": "",
+      "issue_id": 20587,
+      "issue_title": "sqlite3 backend fails to properly handle null dates in certain cases.",
+      "issue_body": "When converting from the model field to a django type db/sqlite3/base.py uses a method called convert_values to coerce certain types to match what is returned by other backends.  However, in certain cases this fails.  One such case is when the field is a DateTimeField and the value is null.\nIn that particular case, Django attempts to use parse_date() to coerce the value into a datetime value, which fails with a TypeError (since it is passed a null.)\nI believe the proper behaviour here is to simply short-circuit the logic and return None if the value in the field is None, if it is not None, assume it fits the specified type and allow the method to proceed as normal.\nSo basically, this method definition:\ndef convert_values(self, value, field):\n        \"\"\"SQLite returns floats when it should be returning decimals,\n        and gets dates and datetimes wrong.\n        For consistency with other backends, coerce when required.\n        \"\"\"\n        if value is None:\n            return None\n        internal_type = field.get_internal_type()\n        if internal_type == 'DecimalField':\n            return util.typecast_decimal(field.format_number(value))\n        elif internal_type and internal_type.endswith('IntegerField') or internal_type == 'AutoField':\n            return int(value)\n        elif internal_type == 'DateField':\n            return parse_date(value)\n        elif internal_type == 'DateTimeField':\n            return parse_datetime_with_timezone_support(value)\n        elif internal_type == 'TimeField':\n            return parse_time(value)\n\n        # No field, or the field isn't known to be a decimal or integer\n        return value",
+      "issue_closed_at": "2013-06-22T08:10:43",
+      "base_commit": "257a137c430cd325f3deeda8daffbf03a3cb20fd",
+      "changes": [
+        {
+          "file": "django/db/backends/sqlite3/base.py",
+          "type": "function",
+          "name": "convert_values",
+          "class_name": "DatabaseOperations",
+          "code": "def convert_values(self, value, field):\n        \"\"\"SQLite returns floats when it should be returning decimals,\n        and gets dates and datetimes wrong.\n        For consistency with other backends, coerce when required.\n        \"\"\"\n        internal_type = field.get_internal_type()\n        if internal_type == 'DecimalField':\n            return util.typecast_decimal(field.format_number(value))\n        elif internal_type and internal_type.endswith('IntegerField') or internal_type == 'AutoField':\n            return int(value)\n        elif internal_type == 'DateField':\n            return parse_date(value)\n        elif internal_type == 'DateTimeField':\n            return parse_datetime_with_timezone_support(value)\n        elif internal_type == 'TimeField':\n            return parse_time(value)\n\n        # No field, or the field isn't known to be a decimal or integer\n        return value"
+        }
+      ]
+    },
+    {
+      "pr_number": 4352,
+      "pr_title": "Fixed #24508 -- Made annotations reflective",
+      "pr_body": "We should backport this to 1.8 to be consistent with `filter(a=2+F())`.\n",
+      "issue_id": 24508,
+      "issue_title": "F() object operations do not correcly reflect with annotate",
+      "issue_body": "Hello,\nThis ticket is related to the 1.8 new feature of using various F operations within an annotation.\nI have spotted 2 problems so far :\n1) F('field') * 2 apparently isn't the same as 2 * F('field')\nDescription of the problem :\nSomeModel.objects.all().annotate(computed = F('some_field') * 2)\nWorks as expected\n\nSomeModel.objects.all().annotate(computed = 2 * F('some_field'))\nE: django.core.exceptions.FieldError: Expression contains mixed types. You must set output_field\n\nSomeModel.objects.all().annotate(computed = Expression(2 * F('some_field'), output_field = FloatField()))\nE : TypeError: __init__() got multiple values for argument 'output_field'\nThe last exception, about init, is the most problematic as it doesn't state anything about where is the problem (no info in the traceback)\n2) When  a F object is added to None, it causes a conflict\nDescription of the problem :\nSomeModel.objects.all().annotate(computed = F('some_field') + None)\nWorks as expected\n\nSomeModel.objects.all().annotate(computed = None + F('some_field'))\nE: django.core.exceptions.FieldError: Expression contains mixed types. You must set output_field\n\nSomeModel.objects.all().annotate(computed = Expression(None + F('some_field'), output_field = FloatField()))\nE : TypeError: __init__() got multiple values for argument 'output_field'\nYou might wonder why there would be a None in the construction. For me it is because I am building the object in a for, so I have something like this :\nannotation = None\nfor field in fields_to_be_added:\n    annotation += F(field)\nSomeModel.objects.all().annotate(annotation)",
+      "issue_closed_at": "2015-03-22T01:34:12",
+      "base_commit": "a6bada1ee0c3756e4b8d6bd4b4346dd5235c78ce",
+      "changes": [
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempts to infer the output type of the expression. If the output\n        fields of all source fields match then we can simply infer the same\n        type here.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                self._output_field = sources[0]\n                for source in sources:\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempts to infer the output type of the expression. If the output\n        fields of all source fields match then we can simply infer the same\n        type here.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                self._output_field = sources[0]\n                for source in sources:\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        }
+      ]
+    },
+    {
+      "pr_number": 750,
+      "pr_title": "Method \"save\" in BaseModelFormSet is marked as alters_data",
+      "pr_body": "Fixes #17663\n",
+      "issue_id": 17663,
+      "issue_title": "Method \"save\" in BaseModelFormSet is not marked as alters_data",
+      "issue_body": "",
+      "issue_closed_at": "2013-02-23T06:12:21",
+      "base_commit": "6000600cc5ef6f56cb8076034295b1cea144f569",
+      "changes": [
+        {
+          "file": "django/forms/models.py",
+          "type": "function",
+          "name": "save_m2m",
+          "class_name": "BaseModelFormSet",
+          "code": "def save_m2m():\n                for form in self.saved_forms:\n                    form.save_m2m()"
+        }
+      ]
+    },
+    {
+      "pr_number": 1829,
+      "pr_title": "Fixed #14877 -- repeated deletion using formsets",
+      "pr_body": "When a formset contained deletion for an existing instance, and the\ninstance was already deleted, django threw an exception. A common cause for\nthis was resubmit of the formset.\n\nOriginal patch by Trac alias olau.\n\nIn addition this commit cleaned some code in _construct_form(). This\nwas needed as a primary key that was also a related field didn't convert\nthe pk value properly.\n",
+      "issue_id": 14877,
+      "issue_title": "ModelFormSet.save() with a deleted form should work even if the model has already been deleted",
+      "issue_body": "Background\nThis issue occurs when you have a\nModelFormSet\nthat contains a deleted Form that has an already deleted instance. When trying to save the\nModelFormSet\n, Django will try and fail during\nsave()\nbecause it is not able to lookup the instance by the raw_pk_value.\nUse Case\nAn edit page with two formsets. The formset at the top allows you to edit or delete instances of model\nFoo\n. The formset at the bottom allows you to edit or delete instances of model\nBar\n, each of which have a FK to one of the instance of\nFoo\nin the top formset.\nIf the user deletes\nFoo\nabove, the the related Bars below are marked as deleted (\nfields['DELETE']=True\n). If a\nFoo\nis deleted and save() is called on the top formset before the bottom formset, then the\nBars\nthat have a FK to the deleted\nFoo\nwill be deleted. Then when\nModelFormSet\ntries to delete the\nBar\nforms marked as deleted it will fail when it tries to lookup the deleted\nBar\nby its PK.\nThis may can also occur outside of a single request if a Foo is deleted, for example, in another browser tab (untested):\n1) Bar edit page GET request.\n2) Foo edit page GET request.\n3) Foo edit page POST: Delete 1 Foo, which cascade deletes some Bars\n4) Bar edit page POST: Delete 1 Bar (the same one deleted in #3) - fails on\nsave()\nduring instance lookup\nRelevant Code\ndjango.forms.models.BaseModelFormSet.save_existing_objects()#603\ndef\nsave_existing_objects\n(\nself\n,\ncommit\n=\nTrue\n):\n# ... snip ...\npk_name\n=\nself\n.\n_pk_field\n.\nname\nraw_pk_value\n=\nform\n.\n_raw_value\n(\npk_name\n)\n# clean() for different types of PK fields can sometimes return\n# the model instance, and sometimes the PK. Handle either.\npk_value\n=\nform\n.\nfields\n[\npk_name\n]\n.\nclean\n(\nraw_pk_value\n)\npk_value\n=\ngetattr\n(\npk_value\n,\n'pk'\n,\npk_value\n)\nobj\n=\nself\n.\n_existing_object\n(\npk_value\n)\nSuggestion\nIt may make more sense to use\nform.instance\ninstead of looking up the instance by its\nraw_pk_value\nagain. This would also require fewer calls to the database.\nPerhaps, consider replacing the code above with:\nobj\n=\nself\n.\ninstance\nOf course, other changes may also be necessary to fix this use case.",
+      "issue_closed_at": "2013-10-30T16:16:34",
+      "base_commit": "8faaf03b86030f242e35aebd56d9b969c53e7be9",
+      "changes": [
+        {
+          "file": "django/forms/models.py",
+          "type": "function",
+          "name": "_existing_object",
+          "class_name": "BaseModelFormSet",
+          "code": "def _existing_object(self, pk):\n        if not hasattr(self, '_object_dict'):\n            self._object_dict = dict((o.pk, o) for o in self.get_queryset())\n        return self._object_dict.get(pk)"
+        },
+        {
+          "file": "django/forms/models.py",
+          "type": "function",
+          "name": "save_existing_objects",
+          "class_name": "BaseModelFormSet",
+          "code": "def save_existing_objects(self, commit=True):\n        self.changed_objects = []\n        self.deleted_objects = []\n        if not self.initial_forms:\n            return []\n\n        saved_instances = []\n        forms_to_delete = self.deleted_forms\n        for form in self.initial_forms:\n            pk_name = self._pk_field.name\n            raw_pk_value = form._raw_value(pk_name)\n\n            # clean() for different types of PK fields can sometimes return\n            # the model instance, and sometimes the PK. Handle either.\n            pk_value = form.fields[pk_name].clean(raw_pk_value)\n            pk_value = getattr(pk_value, 'pk', pk_value)\n\n            obj = self._existing_object(pk_value)\n            if form in forms_to_delete:\n                self.deleted_objects.append(obj)\n                if commit:\n                    obj.delete()\n                continue\n            if form.has_changed():\n                self.changed_objects.append((obj, form.changed_data))\n                saved_instances.append(self.save_existing(form, obj, commit=commit))\n                if not commit:\n                    self.saved_forms.append(form)\n        return saved_instances"
+        }
+      ]
+    },
+    {
+      "pr_number": 3792,
+      "pr_title": "Fixed #24054 -- Enabled sqlsequencereset for apps with migrations.",
+      "pr_body": "https://code.djangoproject.com/ticket/24054\n",
+      "issue_id": 24054,
+      "issue_title": "Enable sqlsequencereset for apps with migrations",
+      "issue_body": "The command doesn't depend on the\nDatabaseCreation\nclass and it doesn't seem that the problem the command aims to solve is obsoleted by migrations.",
+      "issue_closed_at": "2014-12-26T14:56:14",
+      "base_commit": "1729a5250b052832540cd696df3ff0a0a77baddf",
+      "changes": [
+        {
+          "file": "django/core/management/commands/sqlsequencereset.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from __future__ import unicode_literals\n\nfrom django.core.management.base import AppCommand\nfrom django.core.management.sql import check_for_migrations\nfrom django.db import connections, DEFAULT_DB_ALIAS\n\n"
+        },
+        {
+          "file": "django/core/management/commands/sqlsequencereset.py",
+          "type": "function",
+          "name": "handle_app_config",
+          "class_name": "Command",
+          "code": "def handle_app_config(self, app_config, **options):\n        if app_config.models_module is None:\n            return\n        connection = connections[options.get('database')]\n        check_for_migrations(app_config, connection)\n        models = app_config.get_models(include_auto_created=True)\n        statements = connection.ops.sequence_reset_sql(self.style, models)\n        return '\\n'.join(statements)"
+        }
+      ]
+    }
+  ]
+}

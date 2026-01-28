@@ -1,0 +1,135 @@
+{
+  "instance_id": "sympy__sympy-13437",
+  "repo": "sympy/sympy",
+  "created_at": "2017-10-12T18:21:19Z",
+  "problem_statement": "bell(n).limit(n, oo) should be oo rather than bell(oo)\n`bell(n).limit(n,oo)` should take the value infinity, but the current output is `bell(oo)`. As the Bell numbers represent the number of partitions of a set, it seems natural that `bell(oo)` should be able to be evaluated rather than be returned unevaluated. This issue is also in line with the recent fixes to the corresponding limit for the Fibonacci numbers and Lucas numbers.\n\n```\nfrom sympy import *\nn = symbols('n')\nbell(n).limit(n,oo)\n\nOutput:\nbell(oo)\n```\n\nI'm new to Sympy, so I'd appreciate the opportunity to fix this bug myself if that's alright.\n\n",
+  "patch": "diff --git a/sympy/functions/combinatorial/numbers.py b/sympy/functions/combinatorial/numbers.py\n--- a/sympy/functions/combinatorial/numbers.py\n+++ b/sympy/functions/combinatorial/numbers.py\n@@ -424,6 +424,15 @@ def _bell_incomplete_poly(n, k, symbols):\n \n     @classmethod\n     def eval(cls, n, k_sym=None, symbols=None):\n+        if n is S.Infinity:\n+            if k_sym is None:\n+                return S.Infinity\n+            else:\n+                raise ValueError(\"Bell polynomial is not defined\")\n+\n+        if n.is_negative or n.is_integer is False:\n+            raise ValueError(\"a non-negative integer expected\")\n+\n         if n.is_Integer and n.is_nonnegative:\n             if k_sym is None:\n                 return Integer(cls._bell(int(n)))\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 12882,
+      "pr_title": "Checker functions for orthogonality of coordinate system",
+      "pr_body": "This PR introduce additional condition for transformation equation which must be fulfill. \r\nIn `vector` module we are dealing with orthogonal curvilinear coordinate system only, so we need to check if transformation equations are correctly defined.\r\n\r\nCloses #12852",
+      "issue_id": 12852,
+      "issue_title": "Vector module: make sure that the base vectors remain orthogonal",
+      "issue_body": "Given a generic transformation equation, make sure that the base vectors remain orthogonal, if not, raise an exception.",
+      "issue_closed_at": "2017-07-05T15:10:49Z",
+      "base_commit": "c87c0fbf1223c28db8590f2591f64db75d5bdd66",
+      "changes": [
+        {
+          "file": "sympy/vector/coordsysrect.py",
+          "type": "line",
+          "name": "line 4",
+          "code": "from sympy.core.cache import cacheit\nfrom sympy.core import S\nfrom sympy.vector.scalar import BaseScalar\nfrom sympy import eye, trigsimp, ImmutableMatrix as Matrix, Symbol, sin, cos, sqrt, diff, Tuple\nimport sympy.vector\nfrom sympy import simplify\nfrom sympy.vector.orienters import (Orienter, AxisOrienter, BodyOrienter,"
+        },
+        {
+          "file": "sympy/vector/coordsysrect.py",
+          "type": "function",
+          "name": "_connect_to_standard_cartesian",
+          "class_name": "CoordSys3D",
+          "code": "def _connect_to_standard_cartesian(self, curv_coord_type):\n        \"\"\"\n        Change the type of orthogonal curvilinear system. It could be done\n        by tuple of transformation equations or by choosing one of pre-defined\n        coordinate system.\n\n        Parameters\n        ==========\n\n        :param curv_coord_type: str, tuple\n\n        \"\"\"\n        if isinstance(curv_coord_type, string_types):\n            self._set_transformation_equations_mapping(curv_coord_type)\n            self._set_lame_coefficient_mapping(curv_coord_type)\n\n        elif isinstance(curv_coord_type, (tuple, list, Tuple)) and len(curv_coord_type) == 3:\n            self._transformation_eqs = curv_coord_type\n            self._h1, self._h2, self._h3 = self._calculate_lame_coefficients(curv_coord_type)\n\n        elif isinstance(curv_coord_type, (tuple, list, Tuple)) and len(curv_coord_type) == 2:\n            self._transformation_eqs = \\\n            tuple([eq.subs({curv_coord_type[0][0]: self.x,\n                            curv_coord_type[0][1]: self.y,\n                            curv_coord_type[0][2]: self.z}) for eq in curv_coord_type[1]])\n            self._h1, self._h2, self._h3 = self._calculate_lame_coefficients(self._transformation_equations())\n\n        else:\n            raise ValueError(\"Wrong set of parameter.\")"
+        }
+      ]
+    },
+    {
+      "pr_number": 8225,
+      "pr_title": "Print Limit arrows with unicode",
+      "pr_body": "```\nIn [1]: Limit(sin(x)/x, x, 0)\nOut[1]: \n     sin(x)\n lim \u2500\u2500\u2500\u2500\u2500\u2500\nx\u2500\u21920\u207a  x   \n```\n",
+      "issue_id": 5255,
+      "issue_title": "Limit pretty print bug",
+      "issue_body": "```\nReported by Aaron in issue 5099 :\n\nIn [24]: Limit(x, x, 1, dir='-')\nOut[24]: \nlim x\nx->1 \n\nShould be\n\nIn [24]: Limit(x, x, 1, dir='-')\nOut[24]: \n lim x\n    - \nx->1  \n\nAnd assumedly it is possible to create a better looking arrow using unicode (?)\n```\n\nOriginal issue for #5255: http://code.google.com/p/sympy/issues/detail?id=2156\nOriginal author: https://code.google.com/u/117997262464115802198/\nReferenced issues: #5099\nOriginal owner: https://code.google.com/u/asmeurer@gmail.com/\n",
+      "issue_closed_at": "2014-10-16T08:42:21Z",
+      "base_commit": "a40682899bfb540dd8419c5031997cd881dcd426",
+      "changes": [
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_Limit",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_Limit(self, l):\n        e, z, z0, dir = l.args\n\n        E = self._print(e)\n        Lim = prettyForm('lim')\n\n        LimArg = self._print(z)\n        LimArg = prettyForm(*LimArg.right('->'))\n        LimArg = prettyForm(*LimArg.right(self._print(z0)))\n\n        if z0 in (S.Infinity, S.NegativeInfinity):\n            dir = \"\"\n        else:\n            if self._use_unicode:\n                dir = u('\\u207A') if str(dir) == \"+\" else u('\\u207B')\n\n        LimArg = prettyForm(*LimArg.right(self._print(dir)))\n\n        Lim = prettyForm(*Lim.below(LimArg))\n        Lim = prettyForm(*Lim.right(E))\n\n        return Lim"
+        }
+      ]
+    },
+    {
+      "pr_number": 7525,
+      "pr_title": "fix indeterminacy in FiniteSet",
+      "pr_body": "This fixes #7456. I downloaded 3.4 and found a failing pythonhashseed for test_rv. After applying these mods the test no longer occurs so I think it's taken care of now. I reverted the sorting of random_symbols as it was not needed to fix this issue.\n\nIn addition, I noticed that a deprecation warning from numpy is emitted during testing because non-integer dimensions were being used to create a matrix, so I used randint instead.\n",
+      "issue_id": 7456,
+      "issue_title": "test_rv fails sometimes on Python 3.4",
+      "issue_body": "https://travis-ci.org/debugger22/sympy/jobs/24221323\nhttps://travis-ci.org/sympy/sympy/jobs/24353106\n\n```\nFile \"/home/travis/virtualenv/python3.4.0/lib/python3.4/site-packages/sympy/stats/tests/test_rv.py\", line 50, in test_pspace\n    assert pspace(2*X + Y) == ProductPSpace(Y.pspace, X.pspace)\nAssertionError\n________________________________________________________________________________\n_______________ sympy/stats/tests/test_rv.py:test_ProductPSpace ________________\n  File \"/home/travis/virtualenv/python3.4.0/lib/python3.4/site-packages/sympy/stats/tests/test_rv.py\", line 95, in test_ProductPSpace\n    assert pspace(X + Y) == ProductPSpace(py, px)\nAssertionError\n tests finished: 2608 passed, 2 failed, 43 skipped, 62 expected to fail, \n1 expected to fail but passed, in 2921.03 seconds \nDO *NOT* COMMIT!\nTraceback (most recent call last):\n  File \"<stdin>\", line 3, in <module>\nException: Tests failed\n```\n\n@asmeurer This is what I was talking about.\n",
+      "issue_closed_at": "2014-05-26T12:55:04Z",
+      "base_commit": "f945422d57a8f6419005d96192eae48d8dd53ce5",
+      "changes": [
+        {
+          "file": "sympy/sets/sets.py",
+          "type": "line",
+          "name": "line 7",
+          "code": "from sympy.core.singleton import Singleton, S\nfrom sympy.core.evalf import EvalfMixin\nfrom sympy.core.numbers import Float\nfrom sympy.core.compatibility import iterable, with_metaclass\nfrom sympy.core.evaluate import global_evaluate\nfrom sympy.core.decorators import deprecated\n"
+        },
+        {
+          "file": "sympy/sets/sets.py",
+          "type": "class",
+          "name": "FiniteSet",
+          "code": "class FiniteSet(Set, EvalfMixin):\n    \"\"\"\n    Represents a finite set of discrete numbers\n\n    Examples\n    ========\n\n        >>> from sympy import FiniteSet\n\n        >>> FiniteSet(1, 2, 3, 4)\n        {1, 2, 3, 4}\n        >>> 3 in FiniteSet(1, 2, 3, 4)\n        True\n\n    References\n    ==========\n    http://en.wikipedia.org/wiki/Finite_set\n    \"\"\"\n    is_FiniteSet = True\n    is_iterable = True\n\n    def __new__(cls, *args, **kwargs):\n        evaluate = kwargs.get('evaluate', global_evaluate[0])\n        if evaluate:\n            if len(args) == 1 and iterable(args[0]):\n                args = args[0]\n\n            args = list(map(sympify, args))\n\n            if len(args) == 0:\n                return EmptySet()\n\n\n        args = frozenset(args)  # remove duplicates\n        args = map(sympify, args)\n        args = frozenset(args)\n        obj = Basic.__new__(cls, *args)\n        obj._elements = args\n        return obj\n\n    def __iter__(self):\n        return iter(self.args)\n\n    def _intersect(self, other):\n        \"\"\"\n        This function should only be used internally\n\n        See Set._intersect for docstring\n        \"\"\"\n        if isinstance(other, self.__class__):\n            return self.__class__(*(self._elements & other._elements))\n        return self.__class__(el for el in self if el in other)\n\n    def _union(self, other):\n        \"\"\"\n        This function should only be used internally\n\n        See Set._union for docstring\n        \"\"\"\n        if other.is_FiniteSet:\n            return FiniteSet(*(self._elements | other._elements))\n\n        # If other set contains one of my elements, remove it from myself\n        if any(other.contains(x) is True for x in self):\n            return set((\n                FiniteSet(x for x in self if other.contains(x) is not True),\n                other))\n\n        return None\n\n    def _contains(self, other):\n        \"\"\"\n        Tests whether an element, other, is in the set.\n\n        Relies on Python's set class. This tests for object equality\n        All inputs are sympified\n\n        >>> from sympy import FiniteSet\n\n        >>> 1 in FiniteSet(1, 2)\n        True\n        >>> 5 in FiniteSet(1, 2)\n        False\n\n        \"\"\"\n        return other in self._elements\n\n    def _eval_imageset(self, f):\n        return FiniteSet(*map(f, self))\n\n    @property\n    def _complement(self):\n        \"\"\"\n        The complement of a real finite set is the Union of open Intervals\n        between the elements of the set.\n\n        >>> from sympy import FiniteSet\n        >>> FiniteSet(1, 2, 3).complement\n        (-oo, 1) U (1, 2) U (2, 3) U (3, oo)\n\n\n        \"\"\"\n        if not all(elem.is_number for elem in self):\n            raise ValueError(\"%s: Complement not defined for symbolic inputs\"\n                    % self)\n\n        # as there are only numbers involved, a straight sort is sufficient;\n        # default_sort_key is not needed\n        args = sorted(self.args)\n\n        intervals = []  # Build up a list of intervals between the elements\n        intervals += [Interval(S.NegativeInfinity, args[0], True, True)]\n        for a, b in zip(args[:-1], args[1:]):\n            intervals.append(Interval(a, b, True, True))  # open intervals\n        intervals.append(Interval(args[-1], S.Infinity, True, True))\n        return Union(intervals, evaluate=False)\n\n    @property\n    def _boundary(self):\n        return self\n\n    @property\n    def _inf(self):\n        from sympy.functions.elementary.miscellaneous import Min\n        return Min(*self)\n\n    @property\n    def _sup(self):\n        from sympy.functions.elementary.miscellaneous import Max\n        return Max(*self)\n\n    @property\n    def measure(self):\n        return 0\n\n    def __len__(self):\n        return len(self.args)\n\n    def __sub__(self, other):\n        return FiniteSet(el for el in self if el not in other)\n\n    def as_relational(self, symbol):\n        \"\"\"Rewrite a FiniteSet in terms of equalities and logic operators. \"\"\"\n        from sympy.core.relational import Eq\n        return Or(*[Eq(symbol, elem) for elem in self])\n\n    @property\n    def is_real(self):\n        return all(el.is_real for el in self)\n\n    def compare(self, other):\n        return (hash(self) - hash(other))\n\n    def _eval_evalf(self, prec):\n        return FiniteSet(elem.evalf(prec) for elem in self)\n\n    def _hashable_content(self):\n        return (self._elements,)\n\n    @property\n    def _sorted_args(self):\n        from sympy.utilities import default_sort_key\n        return sorted(self.args, key=default_sort_key)\n\n    def _eval_powerset(self):\n        return self.func(self.func(s) for s in subsets(self.args))\n\n    def __ge__(self, other):\n        return other.is_subset(self)\n\n    def __gt__(self, other):\n        return self != other and self >= other\n\n    def __le__(self, other):\n        return self.is_subset(other)\n\n    def __lt__(self, other):\n        return self != other and other >= self"
+        },
+        {
+          "file": "sympy/sets/sets.py",
+          "type": "function",
+          "name": "__new__",
+          "class_name": "FiniteSet",
+          "code": "def __new__(cls, *args, **kwargs):\n        evaluate = kwargs.get('evaluate', global_evaluate[0])\n        if evaluate:\n            if len(args) == 1 and iterable(args[0]):\n                args = args[0]\n\n            args = list(map(sympify, args))\n\n            if len(args) == 0:\n                return EmptySet()\n\n\n        args = frozenset(args)  # remove duplicates\n        args = map(sympify, args)\n        args = frozenset(args)\n        obj = Basic.__new__(cls, *args)\n        obj._elements = args\n        return obj"
+        },
+        {
+          "file": "sympy/stats/rv.py",
+          "type": "line",
+          "name": "line 16",
+          "code": "\nfrom sympy import (Basic, S, Expr, Symbol, Tuple, And, Add, Eq, lambdify,\n        sympify, Equality, solve, Lambda, DiracDelta)\nfrom sympy.core.compatibility import reduce, ordered\nfrom sympy.sets.sets import FiniteSet, ProductSet\nfrom sympy.abc import x\n"
+        },
+        {
+          "file": "sympy/stats/rv.py",
+          "type": "function",
+          "name": "as_boolean",
+          "class_name": "ProductDomain",
+          "code": "def as_boolean(self):\n        return And(*[domain.as_boolean() for domain in self.domains])"
+        }
+      ]
+    },
+    {
+      "pr_number": 8052,
+      "pr_title": "Revert \"simplify Mul._eval_is_even\"",
+      "pr_body": "This reverts commit 1b436d045107f610b51065e03eff0dbdf92e76c5.\n\nThis \"simplification\" produces loop, because Add._eval_is_odd\ncall in turn is_even property on Add's arguments.\n\nfixes #8050\n",
+      "issue_id": 8050,
+      "issue_title": "Build failure in master after merging #8044",
+      "issue_body": "Hate to be the bearer of bad news [but](https://travis-ci.org/sympy/sympy/builds/35446512)...\n\n``` bash\n============================= test process starts ==============================\nexecutable:         /home/travis/virtualenv/python2.6.9/bin/python  (2.6.9-final-0) [CPython]\narchitecture:       64-bit\ncache:              yes\nground types:       python \nrandom seed:        17472977\nhash randomization: on (PYTHONHASHSEED=2650512865)\nsplit:              1/4\nsympy/assumptions/tests/test_assumptions_2.py[5] .....                      [OK]\nsympy/assumptions/tests/test_context.py[4] ....                             [OK]\nsympy/assumptions/tests/test_matrices.py[19] ..........ff.......            [OK]\nsympy/assumptions/tests/test_query.py[57] ....fff.w.............................\n...................                                                         [OK]\nsympy/assumptions/tests/test_refine.py[6] ......                            [OK]\nsympy/calculus/tests/test_euler.py[5] .....                                 [OK]\nsympy/calculus/tests/test_finite_diff.py[3] ...                             [OK]\nsympy/calculus/tests/test_singularities.py[2] .f                            [OK]\nsympy/categories/tests/test_baseclasses.py[3] ...                           [OK]\nsympy/categories/tests/test_drawing.py[8] ........                          [OK]\nsympy/combinatorics/tests/test_generators.py[1] .                           [OK]\nsympy/combinatorics/tests/test_graycode.py[1] .                             [OK]\nsympy/combinatorics/tests/test_group_constructs.py[1] .                     [OK]\nsympy/combinatorics/tests/test_named_groups.py[5] .....                     [OK]\nsympy/combinatorics/tests/test_partitions.py[3] ...                         [OK]\nsympy/combinatorics/tests/test_perm_groups.py[38] .....ff.......................\n........                                                                    [OK]\nsympy/combinatorics/tests/test_permutations.py[7] .......                   [OK]\nsympy/combinatorics/tests/test_polyhedron.py[1] .                           [OK]\nsympy/combinatorics/tests/test_prufer.py[2] ..                              [OK]\nsympy/combinatorics/tests/test_subsets.py[1] .                              [OK]\nsympy/combinatorics/tests/test_tensor_can.py[12] ....f.......               [OK]\nsympy/combinatorics/tests/test_testutil.py[5] .....                         [OK]\nsympy/combinatorics/tests/test_util.py[8] ........                          [OK]\nsympy/concrete/tests/test_delta.py[26] ..........................           [OK]\nsympy/concrete/tests/test_gosper.py[11] ...........                         [OK]\nsympy/concrete/tests/test_products.py[16] ................                  [OK]\nsympy/concrete/tests/test_sums_products.py[48] .................................\n...............                                                             [OK]\nsympy/core/tests/test_args.py[625] ....ffffffffffffffffff.fffffff.ssssssssssssss\nssssssssssssssssssssssssssssssssss..............................................\n................................................................................\n................................................................................\n................................................................................\n................................................................................\n................................................................................\n................................................................................\n....................                                                        [OK]\nsympy/core/tests/test_arit.py[71] .....ff............F..........................\n.........................                                                 [FAIL]\n```\n\namong others\n",
+      "issue_closed_at": "2014-09-17T11:55:20Z",
+      "base_commit": "f69f6b514ca0075c94448c80731b1590f5445647",
+      "changes": [
+        {
+          "file": "sympy/core/mul.py",
+          "type": "function",
+          "name": "_eval_is_odd",
+          "class_name": "Mul",
+          "code": "def _eval_is_odd(self):\n        is_integer = self.is_integer\n\n        if is_integer:\n            r, acc = True, 1\n            for t in self.args:\n                if not t.is_integer:\n                    return None\n                elif t.is_even:\n                    r = False\n                elif t.is_integer:\n                    if r is False:\n                        pass\n                    elif acc != 1 and (acc + t).is_odd:\n                        r = False\n                    elif t.is_odd is None:\n                        r = None\n                acc = t\n            return r\n\n        # !integer -> !odd\n        elif is_integer is False:\n            return False"
+        }
+      ]
+    },
+    {
+      "pr_number": 10750,
+      "pr_title": "fixed #10719: eigenvals of empty matrix raises IndexError",
+      "pr_body": "Now,\n\n```\n>>> Matrix([]).eigenvals()\n{}\n```\n\nfixed #10719\n",
+      "issue_id": 10719,
+      "issue_title": "eigenvals of empty matrix raises IndexError",
+      "issue_body": "``` python\n>>> Matrix([[]]).eigenvals()\nTraceback (most recent call last):\n[...]\nIndexError: Index out of range: a[0]\n```\n\nThis appears to be a bug, spotted by @aravindkanna in https://github.com/sympy/sympy/issues/10701#issuecomment-191355482. I'd expect `eigenvals()` of an empty matrix to return an empty collection instead of raising an indexing exception.\n",
+      "issue_closed_at": "2016-03-10T16:31:44Z",
+      "base_commit": "2e3f7fb8782f5d4539c8eed547308bbd8d879e2f",
+      "changes": [
+        {
+          "file": "sympy/matrices/matrices.py",
+          "type": "function",
+          "name": "eigenvals",
+          "class_name": "MatrixBase",
+          "code": "def eigenvals(self, **flags):\n        \"\"\"Return eigen values using the berkowitz_eigenvals routine.\n\n        Since the roots routine doesn't always work well with Floats,\n        they will be replaced with Rationals before calling that\n        routine. If this is not desired, set flag ``rational`` to False.\n        \"\"\"\n        # roots doesn't like Floats, so replace them with Rationals\n        # unless the nsimplify flag indicates that this has already\n        # been done, e.g. in eigenvects\n        mat = self\n        if flags.pop('rational', True):\n            if any(v.has(Float) for v in mat):\n                mat = mat._new(mat.rows, mat.cols,\n                    [nsimplify(v, rational=True) for v in mat])\n\n        flags.pop('simplify', None)  # pop unsupported flag\n        return mat.berkowitz_eigenvals(**flags)"
+        }
+      ]
+    }
+  ]
+}

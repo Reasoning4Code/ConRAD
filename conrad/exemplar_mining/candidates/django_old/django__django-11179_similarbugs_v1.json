@@ -1,0 +1,158 @@
+{
+  "instance_id": "django__django-11179",
+  "repo": "django/django",
+  "created_at": "2019-04-05T15:54:39Z",
+  "problem_statement": "delete() on instances of models without any dependencies doesn't clear PKs.\nDescription\n\t\nDeleting any model with no dependencies not updates the PK on the model. It should be set to None after .delete() call.\nSee Django.db.models.deletion:276-281. Should update the model line 280.\n",
+  "patch": "diff --git a/django/db/models/deletion.py b/django/db/models/deletion.py\n--- a/django/db/models/deletion.py\n+++ b/django/db/models/deletion.py\n@@ -277,6 +277,7 @@ def delete(self):\n             if self.can_fast_delete(instance):\n                 with transaction.mark_for_rollback_on_error():\n                     count = sql.DeleteQuery(model).delete_batch([instance.pk], self.using)\n+                setattr(instance, model._meta.pk.attname, None)\n                 return count, {model._meta.label: count}\n \n         with transaction.atomic(using=self.using, savepoint=False):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 3782,
+      "pr_title": "Fixed #24037 -- Prevented data loss possibility when changing Meta.managed.",
+      "pr_body": "The migrations autodetector now issues AlterModelOptions operations for\nMeta.managed changes instead of DeleteModel + CreateModel.\n\nhttps://code.djangoproject.com/ticket/24037\n",
+      "issue_id": 24037,
+      "issue_title": "Migrating a legacy table results in data loss",
+      "issue_body": "",
+      "issue_closed_at": "2014-12-23T13:25:44",
+      "base_commit": "69ee7c8d76da72d1392ed2a2597ed094da05d57e",
+      "changes": [
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_created_models",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_created_models(self):\n        \"\"\"\n        Find all new models (both managed and unmanaged) and make create\n        operations for them as well as separate operations to create any\n        foreign key or M2M relationships (we'll optimize these back in later\n        if we can).\n\n        We also defer any model options that refer to collections of fields\n        that might be deferred (e.g. unique_together, index_together).\n        \"\"\"\n        added_models = set(self.new_model_keys) - set(self.old_model_keys)\n        added_unmanaged_models = set(self.new_unmanaged_keys) - set(self.old_unmanaged_keys)\n        models = chain(\n            sorted(added_models, key=self.swappable_first_key, reverse=True),\n            sorted(added_unmanaged_models, key=self.swappable_first_key, reverse=True)\n        )\n        for app_label, model_name in models:\n            model_state = self.to_state.models[app_label, model_name]\n            model_opts = self.new_apps.get_model(app_label, model_name)._meta\n            # Gather related fields\n            related_fields = {}\n            primary_key_rel = None\n            for field in model_opts.local_fields:\n                if field.rel:\n                    if field.rel.to:\n                        if field.primary_key:\n                            primary_key_rel = field.rel.to\n                        elif not field.rel.parent_link:\n                            related_fields[field.name] = field\n                    # through will be none on M2Ms on swapped-out models;\n                    # we can treat lack of through as auto_created=True, though.\n                    if getattr(field.rel, \"through\", None) and not field.rel.through._meta.auto_created:\n                        related_fields[field.name] = field\n            for field in model_opts.local_many_to_many:\n                if field.rel.to:\n                    related_fields[field.name] = field\n                if getattr(field.rel, \"through\", None) and not field.rel.through._meta.auto_created:\n                    related_fields[field.name] = field\n            # Are there unique/index_together to defer?\n            unique_together = model_state.options.pop('unique_together', None)\n            index_together = model_state.options.pop('index_together', None)\n            order_with_respect_to = model_state.options.pop('order_with_respect_to', None)\n            # Depend on the deletion of any possible proxy version of us\n            dependencies = [\n                (app_label, model_name, None, False),\n            ]\n            # Depend on all bases\n            for base in model_state.bases:\n                if isinstance(base, six.string_types) and \".\" in base:\n                    base_app_label, base_name = base.split(\".\", 1)\n                    dependencies.append((base_app_label, base_name, None, True))\n            # Depend on the other end of the primary key if it's a relation\n            if primary_key_rel:\n                dependencies.append((\n                    primary_key_rel._meta.app_label,\n                    primary_key_rel._meta.object_name,\n                    None,\n                    True\n                ))\n            # Generate creation operation\n            self.add_operation(\n                app_label,\n                operations.CreateModel(\n                    name=model_state.name,\n                    fields=[d for d in model_state.fields if d[0] not in related_fields],\n                    options=model_state.options,\n                    bases=model_state.bases,\n                    managers=model_state.managers,\n                ),\n                dependencies=dependencies,\n                beginning=True,\n            )\n\n            # Don't add operations which modify the database for unmanaged models\n            if not model_opts.managed:\n                continue\n\n            # Generate operations for each related field\n            for name, field in sorted(related_fields.items()):\n                # Account for FKs to swappable models\n                swappable_setting = getattr(field, 'swappable_setting', None)\n                if swappable_setting is not None:\n                    dep_app_label = \"__setting__\"\n                    dep_object_name = swappable_setting\n                else:\n                    dep_app_label = field.rel.to._meta.app_label\n                    dep_object_name = field.rel.to._meta.object_name\n                dependencies = [(dep_app_label, dep_object_name, None, True)]\n                if getattr(field.rel, \"through\", None) and not field.rel.through._meta.auto_created:\n                    dependencies.append((\n                        field.rel.through._meta.app_label,\n                        field.rel.through._meta.object_name,\n                        None,\n                        True\n                    ))\n                # Depend on our own model being created\n                dependencies.append((app_label, model_name, None, True))\n                # Make operation\n                self.add_operation(\n                    app_label,\n                    operations.AddField(\n                        model_name=model_name,\n                        name=name,\n                        field=field,\n                    ),\n                    dependencies=list(set(dependencies)),\n                )\n            # Generate other opns\n            related_dependencies = [\n                (app_label, model_name, name, True)\n                for name, field in sorted(related_fields.items())\n            ]\n            related_dependencies.append((app_label, model_name, None, True))\n            if unique_together:\n                self.add_operation(\n                    app_label,\n                    operations.AlterUniqueTogether(\n                        name=model_name,\n                        unique_together=unique_together,\n                    ),\n                    dependencies=related_dependencies\n                )\n            if index_together:\n                self.add_operation(\n                    app_label,\n                    operations.AlterIndexTogether(\n                        name=model_name,\n                        index_together=index_together,\n                    ),\n                    dependencies=related_dependencies\n                )\n            if order_with_respect_to:\n                self.add_operation(\n                    app_label,\n                    operations.AlterOrderWithRespectTo(\n                        name=model_name,\n                        order_with_respect_to=order_with_respect_to,\n                    ),\n                    dependencies=[\n                        (app_label, model_name, order_with_respect_to, True),\n                        (app_label, model_name, None, True),\n                    ]\n                )"
+        },
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_deleted_models",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_deleted_models(self):\n        \"\"\"\n        Find all deleted models (managed and unmanaged) and make delete\n        operations for them as well as separate operations to delete any\n        foreign key or M2M relationships (we'll optimize these back in later\n        if we can).\n\n        We also bring forward removal of any model options that refer to\n        collections of fields - the inverse of generate_created_models().\n        \"\"\"\n        deleted_models = set(self.old_model_keys) - set(self.new_model_keys)\n        deleted_unmanaged_models = set(self.old_unmanaged_keys) - set(self.new_unmanaged_keys)\n        models = chain(sorted(deleted_models), sorted(deleted_unmanaged_models))\n        for app_label, model_name in models:\n            model_state = self.from_state.models[app_label, model_name]\n            model = self.old_apps.get_model(app_label, model_name)\n            if not model._meta.managed:\n                self.add_operation(\n                    app_label,\n                    operations.DeleteModel(\n                        name=model_state.name,\n                    ),\n                )\n                # Skip here, no need to handle fields for unmanaged models\n                continue\n\n            # Gather related fields\n            related_fields = {}\n            for field in model._meta.local_fields:\n                if field.rel:\n                    if field.rel.to:\n                        related_fields[field.name] = field\n                    # through will be none on M2Ms on swapped-out models;\n                    # we can treat lack of through as auto_created=True, though.\n                    if getattr(field.rel, \"through\", None) and not field.rel.through._meta.auto_created:\n                        related_fields[field.name] = field\n            for field in model._meta.local_many_to_many:\n                if field.rel.to:\n                    related_fields[field.name] = field\n                if getattr(field.rel, \"through\", None) and not field.rel.through._meta.auto_created:\n                    related_fields[field.name] = field\n            # Generate option removal first\n            unique_together = model_state.options.pop('unique_together', None)\n            index_together = model_state.options.pop('index_together', None)\n            if unique_together:\n                self.add_operation(\n                    app_label,\n                    operations.AlterUniqueTogether(\n                        name=model_name,\n                        unique_together=None,\n                    )\n                )\n            if index_together:\n                self.add_operation(\n                    app_label,\n                    operations.AlterIndexTogether(\n                        name=model_name,\n                        index_together=None,\n                    )\n                )\n            # Then remove each related field\n            for name, field in sorted(related_fields.items()):\n                self.add_operation(\n                    app_label,\n                    operations.RemoveField(\n                        model_name=model_name,\n                        name=name,\n                    )\n                )\n            # Finally, remove the model.\n            # This depends on both the removal/alteration of all incoming fields\n            # and the removal of all its own related fields, and if it's\n            # a through model the field that references it.\n            dependencies = []\n            for related_object in model._meta.get_all_related_objects():\n                dependencies.append((\n                    related_object.model._meta.app_label,\n                    related_object.model._meta.object_name,\n                    related_object.field.name,\n                    False,\n                ))\n                dependencies.append((\n                    related_object.model._meta.app_label,\n                    related_object.model._meta.object_name,\n                    related_object.field.name,\n                    \"alter\",\n                ))\n            for related_object in model._meta.get_all_related_many_to_many_objects():\n                dependencies.append((\n                    related_object.model._meta.app_label,\n                    related_object.model._meta.object_name,\n                    related_object.field.name,\n                    False,\n                ))\n            for name, field in sorted(related_fields.items()):\n                dependencies.append((app_label, model_name, name, False))\n            # We're referenced in another field's through=\n            through_user = self.through_users.get((app_label, model_state.name.lower()), None)\n            if through_user:\n                dependencies.append((through_user[0], through_user[1], through_user[2], False))\n            # Finally, make the operation, deduping any dependencies\n            self.add_operation(\n                app_label,\n                operations.DeleteModel(\n                    name=model_state.name,\n                ),\n                dependencies=list(set(dependencies)),\n            )"
+        },
+        {
+          "file": "django/db/migrations/autodetector.py",
+          "type": "function",
+          "name": "generate_altered_options",
+          "class_name": "MigrationAutodetector",
+          "code": "def generate_altered_options(self):\n        \"\"\"\n        Works out if any non-schema-affecting options have changed and\n        makes an operation to represent them in state changes (in case Python\n        code in migrations needs them)\n        \"\"\"\n        models_to_check = self.kept_model_keys.union(self.kept_proxy_keys).union(self.kept_unmanaged_keys)\n        for app_label, model_name in sorted(models_to_check):\n            old_model_name = self.renamed_models.get((app_label, model_name), model_name)\n            old_model_state = self.from_state.models[app_label, old_model_name]\n            new_model_state = self.to_state.models[app_label, model_name]\n            old_options = dict(\n                option for option in old_model_state.options.items()\n                if option[0] in AlterModelOptions.ALTER_OPTION_KEYS\n            )\n            new_options = dict(\n                option for option in new_model_state.options.items()\n                if option[0] in AlterModelOptions.ALTER_OPTION_KEYS\n            )\n            if old_options != new_options:\n                self.add_operation(\n                    app_label,\n                    operations.AlterModelOptions(\n                        name=model_name,\n                        options=new_options,\n                    )\n                )"
+        },
+        {
+          "file": "django/db/migrations/operations/models.py",
+          "type": "class",
+          "name": "AlterModelOptions",
+          "code": "class AlterModelOptions(Operation):\n    \"\"\"\n    Sets new model options that don't directly affect the database schema\n    (like verbose_name, permissions, ordering). Python code in migrations\n    may still need them.\n    \"\"\"\n\n    # Model options we want to compare and preserve in an AlterModelOptions op\n    ALTER_OPTION_KEYS = [\n        \"get_latest_by\",\n        \"ordering\",\n        \"permissions\",\n        \"default_permissions\",\n        \"select_on_save\",\n        \"verbose_name\",\n        \"verbose_name_plural\",\n    ]\n\n    def __init__(self, name, options):\n        self.name = name\n        self.options = options\n\n    def deconstruct(self):\n        kwargs = {\n            'name': self.name,\n            'options': self.options,\n        }\n        return (\n            self.__class__.__name__,\n            [],\n            kwargs\n        )\n\n    def state_forwards(self, app_label, state):\n        model_state = state.models[app_label, self.name.lower()]\n        model_state.options = dict(model_state.options)\n        model_state.options.update(self.options)\n        for key in self.ALTER_OPTION_KEYS:\n            if key not in self.options and key in model_state.options:\n                del model_state.options[key]\n\n    def database_forwards(self, app_label, schema_editor, from_state, to_state):\n        pass\n\n    def database_backwards(self, app_label, schema_editor, from_state, to_state):\n        pass\n\n    def references_model(self, name, app_label=None):\n        return name.lower() == self.name.lower()\n\n    def describe(self):\n        return \"Change Meta options on %s\" % (self.name, )"
+        }
+      ]
+    },
+    {
+      "pr_number": 6178,
+      "pr_title": "Fixed #26186 -- Documented how app relative relationships of abstract models behave.",
+      "pr_body": "This partially reverts commit bc7d201bdbaeac14a49f51a9ef292d6312b4c45e.\n\nRefs #25858.\n",
+      "issue_id": 26186,
+      "issue_title": "When extending from abstract model, ForeignKey points to wrong application",
+      "issue_body": "",
+      "issue_closed_at": "2016-02-29T21:07:53",
+      "base_commit": "eac1423f9ebcf432dc5be95d605d124a05ab2686",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "line",
+          "name": "line 35",
+          "code": "RECURSIVE_RELATIONSHIP_CONSTANT = 'self'\n\n\ndef resolve_relation(scope_model, relation, resolve_recursive_relationship=True):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model."
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_relation",
+          "class_name": null,
+          "code": "def resolve_relation(scope_model, relation, resolve_recursive_relationship=True):\n    \"\"\"\n    Transform relation into a model or fully-qualified model string of the form\n    \"app_label.ModelName\", relative to scope_model.\n\n    The relation argument can be:\n      * RECURSIVE_RELATIONSHIP_CONSTANT, i.e. the string \"self\", in which case\n        the model argument will be returned.\n      * A bare model name without an app_label, in which case scope_model's\n        app_label will be prepended.\n      * An \"app_label.ModelName\" string.\n      * A model class, which will be returned unchanged.\n    \"\"\"\n    # Check for recursive relations\n    if relation == RECURSIVE_RELATIONSHIP_CONSTANT:\n        if resolve_recursive_relationship:\n            relation = scope_model\n    # Look for an \"app.Model\" relation\n    elif isinstance(relation, six.string_types) and '.' not in relation:\n        relation = \"%s.%s\" % (scope_model._meta.app_label, relation)\n\n    return relation"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_related_class",
+          "class_name": "RelatedField",
+          "code": "def resolve_related_class(model, related, field):\n                field.remote_field.model = related\n                field.do_related_class(related, model)"
+        },
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "resolve_through_model",
+          "class_name": "ManyToManyField",
+          "code": "def resolve_through_model(_, model, field):\n                    field.remote_field.through = model"
+        }
+      ]
+    },
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 9512,
+      "pr_title": "Fixed #28918 -- Fixed Model.refresh_from_db() for instances hidden by the default manager.",
+      "pr_body": "https://code.djangoproject.com/ticket/28918",
+      "issue_id": 28918,
+      "issue_title": "Model.refresh_from_db() should use _base_manager instead of the default_manager",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-30T17:01:08",
+      "base_commit": "dcdd219ee1e062dc6189f382e0298e0adf5d5ddf",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "refresh_from_db",
+          "class_name": "Model",
+          "code": "def refresh_from_db(self, using=None, fields=None):\n        \"\"\"\n        Reload field values from the database.\n\n        By default, the reloading happens from the database this instance was\n        loaded from, or by the read router if this instance wasn't loaded from\n        any database. The using parameter will override the default.\n\n        Fields can be used to specify which fields to reload. The fields\n        should be an iterable of field attnames. If fields is None, then\n        all non-deferred fields are reloaded.\n\n        When accessing deferred fields of an instance, the deferred loading\n        of the field will call this method.\n        \"\"\"\n        if fields is not None:\n            if not fields:\n                return\n            if any(LOOKUP_SEP in f for f in fields):\n                raise ValueError(\n                    'Found \"%s\" in fields argument. Relations and transforms '\n                    'are not allowed in fields.' % LOOKUP_SEP)\n\n        db = using if using is not None else self._state.db\n        db_instance_qs = self.__class__._default_manager.using(db).filter(pk=self.pk)\n\n        # Use provided fields, if not set then reload all non-deferred fields.\n        deferred_fields = self.get_deferred_fields()\n        if fields is not None:\n            fields = list(fields)\n            db_instance_qs = db_instance_qs.only(*fields)\n        elif deferred_fields:\n            fields = [f.attname for f in self._meta.concrete_fields\n                      if f.attname not in deferred_fields]\n            db_instance_qs = db_instance_qs.only(*fields)\n\n        db_instance = db_instance_qs.get()\n        non_loaded_fields = db_instance.get_deferred_fields()\n        for field in self._meta.concrete_fields:\n            if field.attname in non_loaded_fields:\n                # This field wasn't refreshed - skip ahead.\n                continue\n            setattr(self, field.attname, getattr(db_instance, field.attname))\n            # Throw away stale foreign key references.\n            if field.is_relation and field.is_cached(self):\n                rel_instance = field.get_cached_value(self)\n                local_val = getattr(db_instance, field.attname)\n                related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)\n                if local_val != related_val or (local_val is None and related_val is None):\n                    field.delete_cached_value(self)\n\n        # Clear cached relations.\n        for field in self._meta.related_objects:\n            if field.is_cached(self):\n                field.delete_cached_value(self)\n\n        self._state.db = db_instance._state.db"
+        }
+      ]
+    },
+    {
+      "pr_number": 9112,
+      "pr_title": "Fixed #27846 -- clear all cached reverse relationships on refresh_from_db()",
+      "pr_body": "https://code.djangoproject.com/ticket/27846",
+      "issue_id": 27846,
+      "issue_title": "refresh_from_db() doesn't clear reverse OneToOneFields",
+      "issue_body": "",
+      "issue_closed_at": "2017-10-12T16:25:22",
+      "base_commit": "df0aebc893973c78d7d2cda712ba4133dbe29b6e",
+      "changes": [
+        {
+          "file": "django/db/models/base.py",
+          "type": "function",
+          "name": "refresh_from_db",
+          "class_name": "Model",
+          "code": "def refresh_from_db(self, using=None, fields=None):\n        \"\"\"\n        Reload field values from the database.\n\n        By default, the reloading happens from the database this instance was\n        loaded from, or by the read router if this instance wasn't loaded from\n        any database. The using parameter will override the default.\n\n        Fields can be used to specify which fields to reload. The fields\n        should be an iterable of field attnames. If fields is None, then\n        all non-deferred fields are reloaded.\n\n        When accessing deferred fields of an instance, the deferred loading\n        of the field will call this method.\n        \"\"\"\n        if fields is not None:\n            if len(fields) == 0:\n                return\n            if any(LOOKUP_SEP in f for f in fields):\n                raise ValueError(\n                    'Found \"%s\" in fields argument. Relations and transforms '\n                    'are not allowed in fields.' % LOOKUP_SEP)\n\n        db = using if using is not None else self._state.db\n        db_instance_qs = self.__class__._default_manager.using(db).filter(pk=self.pk)\n\n        # Use provided fields, if not set then reload all non-deferred fields.\n        deferred_fields = self.get_deferred_fields()\n        if fields is not None:\n            fields = list(fields)\n            db_instance_qs = db_instance_qs.only(*fields)\n        elif deferred_fields:\n            fields = [f.attname for f in self._meta.concrete_fields\n                      if f.attname not in deferred_fields]\n            db_instance_qs = db_instance_qs.only(*fields)\n\n        db_instance = db_instance_qs.get()\n        non_loaded_fields = db_instance.get_deferred_fields()\n        for field in self._meta.concrete_fields:\n            if field.attname in non_loaded_fields:\n                # This field wasn't refreshed - skip ahead.\n                continue\n            setattr(self, field.attname, getattr(db_instance, field.attname))\n            # Throw away stale foreign key references.\n            if field.is_relation and field.is_cached(self):\n                rel_instance = field.get_cached_value(self)\n                local_val = getattr(db_instance, field.attname)\n                related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)\n                if local_val != related_val or (local_val is None and related_val is None):\n                    field.delete_cached_value(self)\n        self._state.db = db_instance._state.db"
+        }
+      ]
+    }
+  ]
+}

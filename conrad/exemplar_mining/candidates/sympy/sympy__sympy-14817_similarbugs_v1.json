@@ -1,0 +1,160 @@
+{
+  "instance_id": "sympy__sympy-14817",
+  "repo": "sympy/sympy",
+  "created_at": "2018-06-21T08:34:37Z",
+  "problem_statement": "Error pretty printing MatAdd\n```py\r\n>>> pprint(MatrixSymbol('x', n, n) + MatrixSymbol('y*', n, n))\r\nTraceback (most recent call last):\r\n  File \"./sympy/core/sympify.py\", line 368, in sympify\r\n    expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)\r\n  File \"./sympy/parsing/sympy_parser.py\", line 950, in parse_expr\r\n    return eval_expr(code, local_dict, global_dict)\r\n  File \"./sympy/parsing/sympy_parser.py\", line 863, in eval_expr\r\n    code, global_dict, local_dict)  # take local objects in preference\r\n  File \"<string>\", line 1\r\n    Symbol ('y' )*\r\n                 ^\r\nSyntaxError: unexpected EOF while parsing\r\n\r\nDuring handling of the above exception, another exception occurred:\r\n\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"./sympy/printing/pretty/pretty.py\", line 2371, in pretty_print\r\n    use_unicode_sqrt_char=use_unicode_sqrt_char))\r\n  File \"./sympy/printing/pretty/pretty.py\", line 2331, in pretty\r\n    return pp.doprint(expr)\r\n  File \"./sympy/printing/pretty/pretty.py\", line 62, in doprint\r\n    return self._print(expr).render(**self._settings)\r\n  File \"./sympy/printing/printer.py\", line 274, in _print\r\n    return getattr(self, printmethod)(expr, *args, **kwargs)\r\n  File \"./sympy/printing/pretty/pretty.py\", line 828, in _print_MatAdd\r\n    if S(item.args[0]).is_negative:\r\n  File \"./sympy/core/sympify.py\", line 370, in sympify\r\n    raise SympifyError('could not parse %r' % a, exc)\r\nsympy.core.sympify.SympifyError: Sympify of expression 'could not parse 'y*'' failed, because of exception being raised:\r\nSyntaxError: unexpected EOF while parsing (<string>, line 1)\r\n```\r\n\r\nThe code shouldn't be using sympify to handle string arguments from MatrixSymbol.\r\n\r\nI don't even understand what the code is doing. Why does it omit the `+` when the first argument is negative? This seems to assume that the arguments of MatAdd have a certain form, and that they will always print a certain way if they are negative. \n",
+  "patch": "diff --git a/sympy/printing/pretty/pretty.py b/sympy/printing/pretty/pretty.py\n--- a/sympy/printing/pretty/pretty.py\n+++ b/sympy/printing/pretty/pretty.py\n@@ -825,7 +825,8 @@ def _print_MatAdd(self, expr):\n             if s is None:\n                 s = pform     # First element\n             else:\n-                if S(item.args[0]).is_negative:\n+                coeff = item.as_coeff_mmul()[0]\n+                if _coeff_isneg(S(coeff)):\n                     s = prettyForm(*stringPict.next(s, ' '))\n                     pform = self._print(item)\n                 else:\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 12920,
+      "pr_title": "fix Piecewise assumptions",
+      "pr_body": "fixes #10258\r\n",
+      "issue_id": 10258,
+      "issue_title": "Relational involving Piecewise evaluates incorrectly as True",
+      "issue_body": "``` python\n>>> p = Piecewise((1,x<0),(0,True)); p\nPiecewise((1, x < 0), (0, True))\n>>> p > 0\nTrue  <---- should not evaluate since if x >= 0, the value of the Piecewise is 0 which is not gt 0\n```\n",
+      "issue_closed_at": "2017-07-12T13:10:41Z",
+      "base_commit": "3a771edb034c81957c0975ca06f0e0d51ab3741b",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/piecewise.py",
+          "type": "function",
+          "name": "_eval_subs",
+          "class_name": "Piecewise",
+          "code": "def _eval_subs(self, old, new):\n        \"\"\"\n        Piecewise conditions may contain bool which are not of Basic type.\n        \"\"\"\n        args = list(self.args)\n        for i, (e, c) in enumerate(args):\n            if isinstance(c, bool):\n                pass\n            elif isinstance(c, Basic):\n                c = c._subs(old, new)\n            if c != False:\n                e = e._subs(old, new)\n            args[i] = e, c\n            if c == True:\n                return self.func(*args)\n\n        return self.func(*args)"
+        },
+        {
+          "file": "sympy/functions/elementary/piecewise.py",
+          "type": "function",
+          "name": "_eval_template_is_attr",
+          "class_name": "Piecewise",
+          "code": "def _eval_template_is_attr(self, is_attr, when_multiple=None):\n        b = None\n        for expr, _ in self.args:\n            a = getattr(expr, is_attr)\n            if a is None:\n                return None\n            if b is None:\n                b = a\n            elif b is not a:\n                return when_multiple\n        return b"
+        }
+      ]
+    },
+    {
+      "pr_number": 13131,
+      "pr_title": "Fix powsimp issues #9183, #10095, and KeyError",
+      "pr_body": "- Fixed powsimp raising ValueError when base is float and Pow is argument of Mul. Since multiplicity expects integer or rational but powsimp doesn't checks it, it raises ValueError: fixes #9183\r\n- Fixed Pow.as_numer_denom() returning nan when either numerator or denominator of base is 1 and exp is infinite. Since 1**oo is NaN, numerator or denominator becomes NaN: fixes #10095\r\n- Fixed powsimp raising KeyError in common_b[b] = common_b[b] + e, when one base is Float and another is equal Rational(Integer). This seems to be caused by #11707.\r\n\r\n~**Thing(s) to consider:** Should we automatically evaluate k**oo to zero where k is in (-1, 1), i.e., `(1/(2*E))**oo`?~",
+      "issue_id": 10095,
+      "issue_title": "simplify((1/(2*E))**oo) returns `nan`",
+      "issue_body": "```\n>>> (1/(2*E))**oo\n(1/(2*E))**oo\n>>> simplify((1/(2*E))**oo)\nnan\n>>> powsimp((1/(2*E))**oo)\n(1/(2*E))**oo\n```\n",
+      "issue_closed_at": "2017-09-09T23:38:26Z",
+      "base_commit": "dceb708ca035c568c816d9457af1b7ca9e57c0a5",
+      "changes": [
+        {
+          "file": "sympy/core/power.py",
+          "type": "function",
+          "name": "as_numer_denom",
+          "class_name": "Pow",
+          "code": "def as_numer_denom(self):\n        if not self.is_commutative:\n            return self, S.One\n        base, exp = self.as_base_exp()\n        n, d = base.as_numer_denom()\n        # this should be the same as ExpBase.as_numer_denom wrt\n        # exponent handling\n        neg_exp = exp.is_negative\n        if not neg_exp and not (-exp).is_negative:\n            neg_exp = _coeff_isneg(exp)\n        int_exp = exp.is_integer\n        # the denominator cannot be separated from the numerator if\n        # its sign is unknown unless the exponent is an integer, e.g.\n        # sqrt(a/b) != sqrt(a)/sqrt(b) when a=1 and b=-1. But if the\n        # denominator is negative the numerator and denominator can\n        # be negated and the denominator (now positive) separated.\n        if not (d.is_real or int_exp):\n            n = base\n            d = S.One\n        dnonpos = d.is_nonpositive\n        if dnonpos:\n            n, d = -n, -d\n        elif dnonpos is None and not int_exp:\n            n = base\n            d = S.One\n        if neg_exp:\n            n, d = d, n\n            exp = -exp\n        return self.func(n, exp), self.func(d, exp)"
+        },
+        {
+          "file": "sympy/simplify/powsimp.py",
+          "type": "function",
+          "name": "recurse",
+          "class_name": null,
+          "code": "def recurse(arg, **kwargs):\n        _deep = kwargs.get('deep', deep)\n        _combine = kwargs.get('combine', combine)\n        _force = kwargs.get('force', force)\n        _measure = kwargs.get('measure', measure)\n        return powsimp(arg, _deep, _combine, _force, _measure)"
+        },
+        {
+          "file": "sympy/simplify/powsimp.py",
+          "type": "function",
+          "name": "update",
+          "class_name": null,
+          "code": "def update(b):\n            '''Decide what to do with base, b. If its exponent is now an\n            integer multiple of the Rational denominator, then remove it\n            and put the factors of its base in the common_b dictionary or\n            update the existing bases if necessary. If it has been zeroed\n            out, simply remove the base.\n            '''\n            newe, r = divmod(common_b[b], b[1])\n            if not r:\n                common_b.pop(b)\n                if newe:\n                    for m in Mul.make_args(b[0]**newe):\n                        b, e = bkey(m)\n                        if b not in common_b:\n                            common_b[b] = 0\n                        common_b[b] += e\n                        if b[1] != 1:\n                            bases.append(b)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9084,
+      "pr_title": "ignore Symbol names that are already latex; suppress some unicode warnings",
+      "pr_body": "fixes #2934 \ncloses #9048 as replacement\ncloses #9082 as replacement\n",
+      "issue_id": 2934,
+      "issue_title": "incorrect behavior in the latex output",
+      "issue_body": "I am trying to define the representation of a symbol as a latex fraction\n\nIf denominator and numerator of the fraction do not have subscripts, the representation is  correct\n\n   In [1]: print sympy.latex(sympy.Symbol(r'\\frac{a}{b}'))\n   \\frac{a}{b}\n\nBut when you add subscripts the sympy representation breaks down\n\n   In [4]: print sympy.latex(sympy.Symbol(r'\\frac{a_1}{b_1}'))\n   \\frac{a_{1}{b 1}}\n",
+      "issue_closed_at": "2015-03-02T18:34:50Z",
+      "base_commit": "0844595e819e5ea6b161162781df14efd9e81b63",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Symbol",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Symbol(self, expr):\n        if expr in self._settings['symbol_names']:\n            return self._settings['symbol_names'][expr]\n\n        return self._deal_with_super_sub(expr.name)"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty_symbology.py",
+          "type": "function",
+          "name": "pretty_use_unicode",
+          "class_name": null,
+          "code": "def pretty_use_unicode(flag=None):\n    \"\"\"Set whether pretty-printer should use unicode by default\"\"\"\n    global _use_unicode\n    global unicode_warnings\n    if flag is None:\n        return _use_unicode\n\n    if flag and unicode_warnings:\n        # print warnings (if any) on first unicode usage\n        warnings.warn(unicode_warnings)\n        unicode_warnings = ''\n\n    use_unicode_prev = _use_unicode\n    _use_unicode = flag\n    return use_unicode_prev"
+        }
+      ]
+    },
+    {
+      "pr_number": 13624,
+      "pr_title": "Python code printer(pycode) supporting Assignment",
+      "pr_body": "Changed the accessing of `_settings` to use `.get` with a default value of `False`. \r\nReplaced the `NotImplementedError` in `_get_comment` with the codestring. \r\n\r\nFixes #13598 \r\n",
+      "issue_id": 13598,
+      "issue_title": "Python code printer (pycode) should support Assignment",
+      "issue_body": "There is a lookup on 'contract', either we should give it a default in the `PythonCodePrinter` or we should make the code accessing `_settings` use `.get` with a default.\r\n\r\n```\r\nIn [3]: from sympy.printing.pycode import pycode\r\n\r\nIn [4]: from sympy.codegen.ast import Assignment\r\n\r\nIn [5]: pycode(Assignment(x, 3))\r\nKeyError\r\n...\r\n/home/bjorn/vc/sympy/sympy/printing/codeprinter.pyc in _print_Assignment(self, expr)\r\n    309                 lines.append(code0)\r\n    310             return \"\\n\".join(lines)\r\n--> 311         elif self._settings[\"contract\"] and (lhs.has(IndexedBase) or\r\n    312                 rhs.has(IndexedBase)):\r\n    313             # Here we check if there is looping to be done, and if so\r\n\r\nKeyError: 'contract'\r\n```",
+      "issue_closed_at": "2017-11-29T07:32:30Z",
+      "base_commit": "a67e45eecc972b53e95effb09fe503a05325d3f5",
+      "changes": [
+        {
+          "file": "sympy/printing/codeprinter.py",
+          "type": "function",
+          "name": "_print_Assignment",
+          "class_name": "CodePrinter",
+          "code": "def _print_Assignment(self, expr):\n        from sympy.functions.elementary.piecewise import Piecewise\n        from sympy.matrices.expressions.matexpr import MatrixSymbol\n        from sympy.tensor.indexed import IndexedBase\n        lhs = expr.lhs\n        rhs = expr.rhs\n        # We special case assignments that take multiple lines\n        if isinstance(expr.rhs, Piecewise):\n            # Here we modify Piecewise so each expression is now\n            # an Assignment, and then continue on the print.\n            expressions = []\n            conditions = []\n            for (e, c) in rhs.args:\n                expressions.append(Assignment(lhs, e))\n                conditions.append(c)\n            temp = Piecewise(*zip(expressions, conditions))\n            return self._print(temp)\n        elif isinstance(lhs, MatrixSymbol):\n            # Here we form an Assignment for each element in the array,\n            # printing each one.\n            lines = []\n            for (i, j) in self._traverse_matrix_indices(lhs):\n                temp = Assignment(lhs[i, j], rhs[i, j])\n                code0 = self._print(temp)\n                lines.append(code0)\n            return \"\\n\".join(lines)\n        elif self._settings[\"contract\"] and (lhs.has(IndexedBase) or\n                rhs.has(IndexedBase)):\n            # Here we check if there is looping to be done, and if so\n            # print the required loops.\n            return self._doprint_loops(rhs, lhs)\n        else:\n            lhs_code = self._print(lhs)\n            rhs_code = self._print(rhs)\n            return self._get_statement(\"%s = %s\" % (lhs_code, rhs_code))"
+        },
+        {
+          "file": "sympy/printing/pycode.py",
+          "type": "function",
+          "name": "_module_format",
+          "class_name": "PythonCodePrinter",
+          "code": "def _module_format(self, fqn, register=True):\n        parts = fqn.split('.')\n        if register and len(parts) > 1:\n            self.module_imports['.'.join(parts[:-1])].add(parts[-1])\n\n        if self._settings['fully_qualified_modules']:\n            return fqn\n        else:\n            return fqn.split('(')[0].split('[')[0].split('.')[-1]"
+        }
+      ]
+    },
+    {
+      "pr_number": 9009,
+      "pr_title": "MatrixExpr: add MatPow doit(), changes to doit for MatAdd, MatMul, Trace",
+      "pr_body": "I'm been looking at `doit()` support in MatrixExpr.  In particular, I'm interested in cases where these have ImmutableMatrices inside and they could be evaluated (e.g., after a substitution).\n\nHere are some fixes:\n- MatPow: added `doit()`.\n- MatPow: refactor my older `.as_explicit()` code to use the the `doit()`.\n- MatAdd: had rather ineffective `doit()`, improved.\n- MatMul: change the default from `deep=False` to `deep=True`.  I cannot find a reason for it, so I've switched it.\n- MatMul: clean up test code.\n- Trace: change the default to `deep=True`.\n\nThe `deep=True` changes might be controversial: if someone knows why it `deep=False` before, I could always revert that (and add a comment to the code!)\n\nAnyway, here is what it does:\n\n```\nIn [6]: A = Matrix([[1,2],[3,4]])\n\nIn [7]: B = Matrix([[2,3],[4,5]])\n\nIn [8]: n = Symbol('n', integer=True)\n\nIn [9]: w = MatPow(A, n) + MatMul(A, MatPow(B,2*n))\n\nIn [10]: pprint(w)\n               2\u22c5n           n\n\u23a11  2\u23a4\u22c5\u239b\u23a12  3\u23a4\u239e    + \u239b\u23a11  2\u23a4\u239e \n\u23a2    \u23a5 \u239c\u23a2    \u23a5\u239f      \u239c\u23a2    \u23a5\u239f \n\u23a33  4\u23a6 \u239d\u23a34  5\u23a6\u23a0      \u239d\u23a33  4\u23a6\u23a0 \n\nIn [21]: pprint(w.subs(n, 1))\n               2           1\n\u23a11  2\u23a4\u22c5\u239b\u23a12  3\u23a4\u239e  + \u239b\u23a11  2\u23a4\u239e \n\u23a2    \u23a5 \u239c\u23a2    \u23a5\u239f    \u239c\u23a2    \u23a5\u239f \n\u23a33  4\u23a6 \u239d\u23a34  5\u23a6\u23a0    \u239d\u23a33  4\u23a6\u23a0 \n\nIn [22]: pprint(w.subs(n, 1).doit())    % these fixes make this work\n\u23a173   97 \u23a4\n\u23a2        \u23a5\n\u23a3163  215\u23a6\n```\n",
+      "issue_id": 8138,
+      "issue_title": "MatExpr.doit: deep default should be True for Expr (and still False for MatExpr?)",
+      "issue_body": "I notice `MatExpr.doit()` has deep defaulting to False.  I assume that is deliberate (forget where but recall it looked deliberate).\n\nAnyway, deep should probably still default to True for any `Expr` (i.e., non-Matrix) it encounters.  \n\nConsider the following current behaviour:\n\n```\nx = S('x')\nn = S('n')\nA = MatrixSymbol('A', n, n)\nfive = Add(2, 3, evaluate=False)\n\nf = five*x\nG = five*A\n\nf.doit()\n# gives: 5*x\n\nG.doit()\n# gives: (2 + 3)*A\n```\n\nSame for `MatPow` where I saw this.\n",
+      "issue_closed_at": "2015-02-19T04:28:17Z",
+      "base_commit": "cf171b2f088bc6985f5973972425fa0a9fc65f31",
+      "changes": [
+        {
+          "file": "sympy/matrices/expressions/matadd.py",
+          "type": "function",
+          "name": "_eval_trace",
+          "class_name": "MatAdd",
+          "code": "def _eval_trace(self):\n        from trace import Trace\n        return MatAdd(*[Trace(arg) for arg in self.args]).doit()"
+        },
+        {
+          "file": "sympy/matrices/expressions/matmul.py",
+          "type": "function",
+          "name": "_eval_inverse",
+          "class_name": "MatMul",
+          "code": "def _eval_inverse(self):\n        try:\n            return MatMul(*[\n                arg.inverse() if isinstance(arg, MatrixExpr) else arg**-1\n                    for arg in self.args[::-1]]).doit()\n        except ShapeError:\n            from sympy.matrices.expressions.inverse import Inverse\n            return Inverse(self)"
+        },
+        {
+          "file": "sympy/matrices/expressions/matpow.py",
+          "type": "function",
+          "name": "shape",
+          "class_name": "MatPow",
+          "code": "def shape(self):\n        return self.base.shape"
+        },
+        {
+          "file": "sympy/matrices/expressions/trace.py",
+          "type": "function",
+          "name": "arg",
+          "class_name": "Trace",
+          "code": "def arg(self):\n        return self.args[0]"
+        }
+      ]
+    }
+  ]
+}

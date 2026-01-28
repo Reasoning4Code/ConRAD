@@ -1,0 +1,158 @@
+{
+  "instance_id": "django__django-15819",
+  "repo": "django/django",
+  "created_at": "2022-07-04T18:29:53Z",
+  "problem_statement": "inspectdb should generate related_name on same relation links.\nDescription\n\t\nHi!\nAfter models generation with inspectdb command we have issue with relations to same enities\nmodule.Model.field1: (fields.E304) Reverse accessor for 'module.Model.field1' clashes with reverse accessor for 'module.Model.field2'.\nHINT: Add or change a related_name argument to the definition for 'module.Model.field1' or 'module.Model.field2'.\n*\nMaybe we can autogenerate\nrelated_name='attribute_name'\nto all fields in model if related Model was used for this table\n",
+  "patch": "diff --git a/django/core/management/commands/inspectdb.py b/django/core/management/commands/inspectdb.py\n--- a/django/core/management/commands/inspectdb.py\n+++ b/django/core/management/commands/inspectdb.py\n@@ -127,12 +127,14 @@ def table2model(table_name):\n                     yield \"# The error was: %s\" % e\n                     continue\n \n+                model_name = table2model(table_name)\n                 yield \"\"\n                 yield \"\"\n-                yield \"class %s(models.Model):\" % table2model(table_name)\n-                known_models.append(table2model(table_name))\n+                yield \"class %s(models.Model):\" % model_name\n+                known_models.append(model_name)\n                 used_column_names = []  # Holds column names used in the table so far\n                 column_to_field_name = {}  # Maps column names to names of model fields\n+                used_relations = set()  # Holds foreign relations used in the table.\n                 for row in table_description:\n                     comment_notes = (\n                         []\n@@ -186,6 +188,12 @@ def table2model(table_name):\n                             field_type = \"%s(%s\" % (rel_type, rel_to)\n                         else:\n                             field_type = \"%s('%s'\" % (rel_type, rel_to)\n+                        if rel_to in used_relations:\n+                            extra_params[\"related_name\"] = \"%s_%s_set\" % (\n+                                model_name.lower(),\n+                                att_name,\n+                            )\n+                        used_relations.add(rel_to)\n                     else:\n                         # Calling `get_field_type` to get the field type string and any\n                         # additional parameters and notes.\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "I have a model that does not want to use a constraint on a foreign key, but still use a database index:\nclass Category(models.Model):\n    text = models.CharField(max_length=3)\n\nclass Message(models.Model):\n    cat = models.ForeignKey(Category, db_constraint=False)\n\nclass IndexMessage(models.Model):\n    cat = models.ForeignKey(Category, db_constraint=False, db_index=True)\n\nclass StrongMessage(models.Model):\n    cat = models.ForeignKey(Category)\nThe SQLite backend generates an index on the FK column for both models:\n$ python manage.py sqlmigrate boohoo 0001_initial\nBEGIN;\n--\n-- Create model Category\n--\nCREATE TABLE \"boohoo_category\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"text\" varchar(3) NOT NULL);\n--\n-- Create model IndexMessage\n--\nCREATE TABLE \"boohoo_indexmessage\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL);\n--\n-- Create model Message\n--\nCREATE TABLE \"boohoo_message\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL);\n--\n-- Create model StrongMessage\n--\nCREATE TABLE \"boohoo_strongmessage\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL REFERENCES \"boohoo_category\" (\"id\"));\nCREATE INDEX \"boohoo_indexmessage_05e7bb57\" ON \"boohoo_indexmessage\" (\"cat_id\");\nCREATE INDEX \"boohoo_message_05e7bb57\" ON \"boohoo_message\" (\"cat_id\");\nCREATE INDEX \"boohoo_strongmessage_05e7bb57\" ON \"boohoo_strongmessage\" (\"cat_id\");\n\nCOMMIT;\nWith the MySQL backend, this does not create an index on the FK:\n$ python manage.py sqlmigrate boohoo 0001_initial\nBEGIN;\n--\n-- Create model Category\n--\nCREATE TABLE `boohoo_category` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `text` varchar(3) NOT NULL);\n--\n-- Create model IndexMessage\n--\nCREATE TABLE `boohoo_indexmessage` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\n--\n-- Create model Message\n--\nCREATE TABLE `boohoo_message` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\n--\n-- Create model StrongMessage\n--\nCREATE TABLE `boohoo_strongmessage` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\nALTER TABLE `boohoo_strongmessage` ADD CONSTRAINT `boohoo_strongmessage_cat_id_c843b68a_fk_boohoo_category_id` FOREIGN KEY (`cat_id`) REFERENCES `boohoo_category` (`id`);\n\nCOMMIT;\nI would think that specifying db_constraint=false would only leave out the constraint, and not also the index; Especially with <field>.db_index still set to true. Adding db_index=True does not help, probably because that is the default setting on the FK field object.\nThis also applies to earlier django versions.\nA simple workaround is to use\nindex_together = (('cat', ), )\non the models.\nI'm inclined to blame this on django.db.backends.mysql.schema.DatabaseSchemaEditor#_model_indexes_sql,\nwhich may need an extra check for db_constraint being used. This fixes my problem (but changes current django behavior):\n--- django/db/backends/mysql/schema.py.orig     2016-02-03 12:01:10.000000000 +0100\n+++ django/db/backends/mysql/schema.py  2016-02-03 12:00:19.000000000 +0100\n@@ -64,7 +64,7 @@\n         )\n         if storage == \"InnoDB\":\n             for field in model._meta.local_fields:\n-                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\":\n+                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\" and field.db_constraint:\n                     # Temporary setting db_index to False (in memory) to disable\n                     # index creation for FKs (index automatically created by MySQL)\n                     field.db_index = False",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 3265,
+      "pr_title": "Fixed #23538 -- Added SchemaEditor for MySQL GIS.",
+      "pr_body": "",
+      "issue_id": 23538,
+      "issue_title": "MySQL GIS backend missing SchemaEditor",
+      "issue_body": "I think this results in a missing index for GIS fields on apps that have migrations.",
+      "issue_closed_at": "2014-09-25T12:53:52",
+      "base_commit": "215aa4f53b6bbd07d5c1eecfa94e7fcd00da813e",
+      "changes": [
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "line",
+          "name": "line 6",
+          "code": "from django.contrib.gis.db.backends.mysql.creation import MySQLCreation\nfrom django.contrib.gis.db.backends.mysql.introspection import MySQLIntrospection\nfrom django.contrib.gis.db.backends.mysql.operations import MySQLOperations\n\n\nclass DatabaseFeatures(BaseSpatialFeatures, MySQLDatabaseFeatures):"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/base.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "DatabaseWrapper",
+          "code": "def __init__(self, *args, **kwargs):\n        super(DatabaseWrapper, self).__init__(*args, **kwargs)\n        self.features = DatabaseFeatures(self)\n        self.creation = MySQLCreation(self)\n        self.ops = MySQLOperations(self)\n        self.introspection = MySQLIntrospection(self)"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "MySQLIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # In order to get the specific geometry type of the field,\n            # we introspect on the table definition using `DESCRIBE`.\n            cursor.execute('DESCRIBE %s' %\n                           self.connection.ops.quote_name(table_name))\n            # Increment over description info until we get to the geometry\n            # column.\n            for column, typ, null, key, default, extra in cursor.fetchall():\n                if column == geo_col:\n                    # Using OGRGeomType to convert from OGC name to Django field.\n                    # MySQL does not support 3D or SRIDs, so the field params\n                    # are empty.\n                    field_type = OGRGeomType(typ).django\n                    field_params = {}\n                    break\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/contrib/gis/db/backends/spatialite/introspection.py",
+          "type": "function",
+          "name": "get_geometry_type",
+          "class_name": "SpatiaLiteIntrospection",
+          "code": "def get_geometry_type(self, table_name, geo_col):\n        cursor = self.connection.cursor()\n        try:\n            # Querying the `geometry_columns` table to get additional metadata.\n            type_col = 'type' if self.connection.ops.spatial_version < (4, 0, 0) else 'geometry_type'\n            cursor.execute('SELECT coord_dimension, srid, %s '\n                           'FROM geometry_columns '\n                           'WHERE f_table_name=%%s AND f_geometry_column=%%s' % type_col,\n                           (table_name, geo_col))\n            row = cursor.fetchone()\n            if not row:\n                raise Exception('Could not find a geometry column for \"%s\".\"%s\"' %\n                                (table_name, geo_col))\n\n            # OGRGeomType does not require GDAL and makes it easy to convert\n            # from OGC geom type name to Django field.\n            field_type = OGRGeomType(row[2]).django\n\n            # Getting any GeometryField keyword arguments that are not the default.\n            dim = row[0]\n            srid = row[1]\n            field_params = {}\n            if srid != 4326:\n                field_params['srid'] = srid\n            if isinstance(dim, six.string_types) and 'Z' in dim:\n                field_params['dim'] = 3\n        finally:\n            cursor.close()\n\n        return field_type, field_params"
+        },
+        {
+          "file": "django/db/backends/mysql/introspection.py",
+          "type": "function",
+          "name": "get_indexes",
+          "class_name": "DatabaseIntrospection",
+          "code": "def get_indexes(self, cursor, table_name):\n        cursor.execute(\"SHOW INDEX FROM %s\" % self.connection.ops.quote_name(table_name))\n        # Do a two-pass search for indexes: on first pass check which indexes\n        # are multicolumn, on second pass check which single-column indexes\n        # are present.\n        rows = list(cursor.fetchall())\n        multicol_indexes = set()\n        for row in rows:\n            if row[3] > 1:\n                multicol_indexes.add(row[2])\n        indexes = {}\n        for row in rows:\n            if row[2] in multicol_indexes:\n                continue\n            if row[4] not in indexes:\n                indexes[row[4]] = {'primary_key': False, 'unique': False}\n            # It's possible to have the unique and PK constraints in separate indexes.\n            if row[2] == 'PRIMARY':\n                indexes[row[4]]['primary_key'] = True\n            if not row[1]:\n                indexes[row[4]]['unique'] = True\n        return indexes"
+        }
+      ]
+    },
+    {
+      "pr_number": 5437,
+      "pr_title": "Fixed #25560 -- Made empty string related name invalid.",
+      "pr_body": "Thanks to Ali Lotfi for the initial report and patch.\n",
+      "issue_id": 25560,
+      "issue_title": "Empty string related name should be invalid",
+      "issue_body": "The actual model field check is\n​\nskipped\nif the\nrelated_name\nis an empty string when a warning should be raised since it's an invalid Python identifier.",
+      "issue_closed_at": "2015-10-16T13:18:21",
+      "base_commit": "4dcc2a195595f8d7ddad45bc4baf98ffdeec7f41",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "_check_related_name_is_valid",
+          "class_name": "RelatedField",
+          "code": "def _check_related_name_is_valid(self):\n        import re\n        import keyword\n        related_name = self.remote_field.related_name\n        if not related_name:\n            return []\n        is_valid_id = True\n        if keyword.iskeyword(related_name):\n            is_valid_id = False\n        if six.PY3:\n            if not related_name.isidentifier():\n                is_valid_id = False\n        else:\n            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*\\Z', related_name):\n                is_valid_id = False\n        if not (is_valid_id or related_name.endswith('+')):\n            return [\n                checks.Error(\n                    \"The name '%s' is invalid related_name for field %s.%s\" %\n                    (self.remote_field.related_name, self.model._meta.object_name,\n                     self.name),\n                    hint=\"Related name must be a valid Python identifier or end with a '+'\",\n                    obj=self,\n                    id='fields.E306',\n                )\n            ]\n        return []"
+        },
+        {
+          "file": "django/db/models/fields/reverse_related.py",
+          "type": "function",
+          "name": "get_db_prep_lookup",
+          "class_name": "ForeignObjectRel",
+          "code": "def get_db_prep_lookup(self, lookup_type, value, connection, prepared=False):\n        # Defer to the actual field definition for db prep\n        return self.field.get_db_prep_lookup(lookup_type, value, connection=connection, prepared=prepared)"
+        }
+      ]
+    },
+    {
+      "pr_number": 14372,
+      "pr_title": "Fixed #32718 -- Relaxed file name validation in FileField.",
+      "pr_body": "See [comment](https://code.djangoproject.com/ticket/32718#comment:26), ticket-32718.\r\n\r\n- ~~If `filename` passed to the `FileField.generate_filename()` is an absolute path, it will be converted to the `os.path.basename(filename)`.~~\r\n- Validate `filename` returned by `FileField.upload_to()` not a `filename` passed to the `FileField.generate_filename()` (`upload_to()` may completely ignored passed `filename`).\r\n- Allow relative paths (without dot segments) in the generated file name.\r\n\r\nThanks Jakub Kleň for the report.\r\n\r\nRegression in 0b79eb36915d178aef5c6a7bbce71b1e76d376d3.\r\n\r\n- [x] Discuss support for absolute paths.\r\n- [x] Release notes.",
+      "issue_id": 32718,
+      "issue_title": "Saving a FileField raises SuspiciousFileOperation in some scenarios.",
+      "issue_body": "I came across this issue today when I was updating Django from 3.2.0 -> 3.2.1.\nIt's directly caused by:\n​\nhttps://docs.djangoproject.com/en/3.2/releases/3.2.1/#cve-2021-31542-potential-directory-traversal-via-uploaded-files\nStarting from 3.2.1, Django requires that only the basename is passed to\nFieldFile.save\nmethod, because otherwise it raises a new exception:\nSuspiciousFileOperation: File name ... includes path elements\nThe issue is that in\nFileField.pre_save\n, a full path is passed to\nFieldFile.save\n, causing the exception to be raised.\nCorrect me if I'm wrong, but file-like objects always contain the full path to the file in the\nname\nattribute (the built-in Django\nFile\nclass even uses it to reopen the file if it was closed), and so it seems to be a bug in Django itself.\nSteps to reproduce:\nmodel_instance.file_attribute = File(open(path, 'rb'))\nmodel_instance.save()\nI also created a PR with the fix:\n​\nhttps://github.com/django/django/pull/14354",
+      "issue_closed_at": "2021-05-13T01:53:57",
+      "base_commit": "b81c7562fc33f50166d5120138d6398dc42b13c3",
+      "changes": [
+        {
+          "file": "django/core/files/utils.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import os\n\nfrom django.core.exceptions import SuspiciousFileOperation\n\n\ndef validate_file_name(name):\n    if name != os.path.basename(name):\n        raise SuspiciousFileOperation(\"File name '%s' includes path elements\" % name)\n\n    # Remove potentially dangerous names\n    if name in {'', '.', '..'}:\n        raise SuspiciousFileOperation(\"Could not derive file name from '%s'\" % name)\n\n    return name\n\n"
+        },
+        {
+          "file": "django/db/models/fields/files.py",
+          "type": "function",
+          "name": "generate_filename",
+          "class_name": "FileField",
+          "code": "def generate_filename(self, instance, filename):\n        \"\"\"\n        Apply (if callable) or prepend (if a string) upload_to to the filename,\n        then delegate further processing of the name to the storage backend.\n        Until the storage layer, all file paths are expected to be Unix style\n        (with forward slashes).\n        \"\"\"\n        filename = validate_file_name(filename)\n        if callable(self.upload_to):\n            filename = self.upload_to(instance, filename)\n        else:\n            dirname = datetime.datetime.now().strftime(str(self.upload_to))\n            filename = posixpath.join(dirname, filename)\n        return self.storage.generate_filename(filename)"
+        }
+      ]
+    },
+    {
+      "pr_number": 13028,
+      "pr_title": "Fixed #31664 -- Reallowed using non-expressions having filterable attribute as rhs in queryset filters.",
+      "pr_body": "Check if rhs is an expression to be able to use `filterable` as model field name",
+      "issue_id": 31664,
+      "issue_title": "Queryset raises NotSupportedError when RHS has filterable=False attribute.",
+      "issue_body": "I'm migrating my app to django 3.0.7 and I hit a strange behavior using a model class with a field labeled\nfilterable\nclass\nProductMetaDataType\n(\nmodels\n.\nModel\n):\nlabel\n=\nmodels\n.\nCharField\n(\nmax_length\n=\n255\n,\nunique\n=\nTrue\n,\nblank\n=\nFalse\n,\nnull\n=\nFalse\n)\nfilterable\n=\nmodels\n.\nBooleanField\n(\ndefault\n=\nFalse\n,\nverbose_name\n=\n_\n(\n\"filterable\"\n))\nclass\nMeta\n:\napp_label\n=\n\"adminpricing\"\nverbose_name\n=\n_\n(\n\"product meta data type\"\n)\nverbose_name_plural\n=\n_\n(\n\"product meta data types\"\n)\ndef\n__str__\n(\nself\n):\nreturn\nself\n.\nlabel\nclass\nProductMetaData\n(\nmodels\n.\nModel\n):\nid\n=\nmodels\n.\nBigAutoField\n(\nprimary_key\n=\nTrue\n)\nproduct\n=\nmodels\n.\nForeignKey\n(\nProduit\n,\nnull\n=\nFalse\n,\nblank\n=\nFalse\n,\non_delete\n=\nmodels\n.\nCASCADE\n)\nvalue\n=\nmodels\n.\nTextField\n(\nnull\n=\nFalse\n,\nblank\n=\nFalse\n)\nmarketplace\n=\nmodels\n.\nForeignKey\n(\nPlateforme\n,\nnull\n=\nFalse\n,\nblank\n=\nFalse\n,\non_delete\n=\nmodels\n.\nCASCADE\n)\ndate_created\n=\nmodels\n.\nDateTimeField\n(\nnull\n=\nTrue\n,\ndefault\n=\ntimezone\n.\nnow\n)\nmetadata_type\n=\nmodels\n.\nForeignKey\n(\nProductMetaDataType\n,\nnull\n=\nFalse\n,\nblank\n=\nFalse\n,\non_delete\n=\nmodels\n.\nCASCADE\n)\nclass\nMeta\n:\napp_label\n=\n\"adminpricing\"\nverbose_name\n=\n_\n(\n\"product meta data\"\n)\nverbose_name_plural\n=\n_\n(\n\"product meta datas\"\n)\nError happened when filtering ProductMetaData with a metadata_type :\nProductMetaData\n.\nobjects\n.\nfilter\n(\nvalue\n=\n\"Dark Vador\"\n,\nmetadata_type\n=\nself\n.\nbrand_metadata\n)\nError traceback :\nTraceback\n(\nmost\nrecent\ncall\nlast\n):\nFile\n\"/backoffice/backoffice/adminpricing/tests/test_pw.py\"\n,\nline\n481\n,\nin\ntest_checkpolicywarning_by_fields\nfor\np\nin\nProductMetaData\n.\nobjects\n.\nfilter\n(\nFile\n\"/usr/local/lib/python3.8/site-packages/django/db/models/manager.py\"\n,\nline\n82\n,\nin\nmanager_method\nreturn\ngetattr\n(\nself\n.\nget_queryset\n(),\nname\n)(\n*\nargs\n,\n**\nkwargs\n)\nFile\n\"/usr/local/lib/python3.8/site-packages/django/db/models/query.py\"\n,\nline\n904\n,\nin\nfilter\nreturn\nself\n.\n_filter_or_exclude\n(\nFalse\n,\n*\nargs\n,\n**\nkwargs\n)\nFile\n\"/usr/local/lib/python3.8/site-packages/django/db/models/query.py\"\n,\nline\n923\n,\nin\n_filter_or_exclude\nclone\n.\nquery\n.\nadd_q\n(\nQ\n(\n*\nargs\n,\n**\nkwargs\n))\nFile\n\"/usr/local/lib/python3.8/site-packages/django/db/models/sql/query.py\"\n,\nline\n1351\n,\nin\nadd_q\nclause\n,\n_\n=\nself\n.\n_add_q\n(\nq_object\n,\nself\n.\nused_aliases\n)\nFile\n\"/usr/local/lib/python3.8/site-packages/django/db/models/sql/query.py\"\n,\nline\n1378\n,\nin\n_add_q\nchild_clause\n,\nneeded_inner\n=\nself\n.\nbuild_filter\n(\nFile\n\"/usr/local/lib/python3.8/site-packages/django/db/models/sql/query.py\"\n,\nline\n1264\n,\nin\nbuild_filter\nself\n.\ncheck_filterable\n(\nvalue\n)\nFile\n\"/usr/local/lib/python3.8/site-packages/django/db/models/sql/query.py\"\n,\nline\n1131\n,\nin\ncheck_filterable\nraise\nNotSupportedError\n(\ndjango\n.\ndb\n.\nutils\n.\nNotSupportedError\n:\nProductMetaDataType\nis\ndisallowed\nin\nthe\nfilter\nclause\n.\nI changed label to\nfilterable_test\nand it fixed this issue\nThis should be documented or fix.",
+      "issue_closed_at": "2020-06-08T02:18:34",
+      "base_commit": "78ad4b4b0201003792bfdbf1a7781cbc9ee03539",
+      "changes": [
+        {
+          "file": "django/db/models/sql/query.py",
+          "type": "function",
+          "name": "check_related_objects",
+          "class_name": "Query",
+          "code": "def check_related_objects(self, field, value, opts):\n        \"\"\"Check the type of object passed to query relations.\"\"\"\n        if field.is_relation:\n            # Check that the field and the queryset use the same model in a\n            # query like .filter(author=Author.objects.all()). For example, the\n            # opts would be Author's (from the author field) and value.model\n            # would be Author.objects.all() queryset's .model (Author also).\n            # The field is the related field on the lhs side.\n            if (isinstance(value, Query) and not value.has_select_fields and\n                    not check_rel_lookup_compatibility(value.model, opts, field)):\n                raise ValueError(\n                    'Cannot use QuerySet for \"%s\": Use a QuerySet for \"%s\".' %\n                    (value.model._meta.object_name, opts.object_name)\n                )\n            elif hasattr(value, '_meta'):\n                self.check_query_object_type(value, opts, field)\n            elif hasattr(value, '__iter__'):\n                for v in value:\n                    self.check_query_object_type(v, opts, field)"
+        }
+      ]
+    }
+  ]
+}

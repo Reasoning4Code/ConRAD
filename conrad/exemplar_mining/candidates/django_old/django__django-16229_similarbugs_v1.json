@@ -1,0 +1,153 @@
+{
+  "instance_id": "django__django-16229",
+  "repo": "django/django",
+  "created_at": "2022-10-26T11:42:55Z",
+  "problem_statement": "ModelForm fields with callable defaults don't correctly propagate default values\nDescription\n\t\nWhen creating an object via the admin, if an inline contains an ArrayField in error, the validation will be bypassed (and the inline dismissed) if we submit the form a second time (without modification).\ngo to /admin/my_app/thing/add/\ntype anything in plop\nsubmit -> it shows an error on the inline\nsubmit again -> no errors, plop become unfilled\n# models.py\nclass Thing(models.Model):\n\tpass\nclass RelatedModel(models.Model):\n\tthing = models.ForeignKey(Thing, on_delete=models.CASCADE)\n\tplop = ArrayField(\n\t\tmodels.CharField(max_length=42),\n\t\tdefault=list,\n\t)\n# admin.py\nclass RelatedModelForm(forms.ModelForm):\n\tdef clean(self):\n\t\traise ValidationError(\"whatever\")\nclass RelatedModelInline(admin.TabularInline):\n\tform = RelatedModelForm\n\tmodel = RelatedModel\n\textra = 1\n@admin.register(Thing)\nclass ThingAdmin(admin.ModelAdmin):\n\tinlines = [\n\t\tRelatedModelInline\n\t]\nIt seems related to the hidden input containing the initial value:\n<input type=\"hidden\" name=\"initial-relatedmodel_set-0-plop\" value=\"test\" id=\"initial-relatedmodel_set-0-id_relatedmodel_set-0-plop\">\nI can fix the issue locally by forcing show_hidden_initial=False on the field (in the form init)\n",
+  "patch": "diff --git a/django/forms/boundfield.py b/django/forms/boundfield.py\n--- a/django/forms/boundfield.py\n+++ b/django/forms/boundfield.py\n@@ -96,9 +96,17 @@ def as_widget(self, widget=None, attrs=None, only_initial=False):\n             attrs.setdefault(\n                 \"id\", self.html_initial_id if only_initial else self.auto_id\n             )\n+        if only_initial and self.html_initial_name in self.form.data:\n+            # Propagate the hidden initial value.\n+            value = self.form._widget_data_value(\n+                self.field.hidden_widget(),\n+                self.html_initial_name,\n+            )\n+        else:\n+            value = self.value()\n         return widget.render(\n             name=self.html_initial_name if only_initial else self.html_name,\n-            value=self.value(),\n+            value=value,\n             attrs=attrs,\n             renderer=self.form.renderer,\n         )\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 7097,
+      "pr_title": "Fixed #27068 -- Unified form field initial data retrieval.",
+      "pr_body": "https://code.djangoproject.com/ticket/27068\n",
+      "issue_id": 27068,
+      "issue_title": "Acquire form's initial data more consistently",
+      "issue_body": "",
+      "issue_closed_at": "2016-08-18T19:51:32",
+      "base_commit": "13857b45ca54a519a58361238442af84262c0d23",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "value",
+          "class_name": "BoundField",
+          "code": "def value(self):\n        \"\"\"\n        Returns the value for this BoundField, using the initial value if\n        the form is not bound or the data otherwise.\n        \"\"\"\n        if not self.form.is_bound:\n            data = self.initial\n        else:\n            data = self.field.bound_data(\n                self.data, self.form.initial.get(self.name, self.field.initial)\n            )\n        return self.field.prepare_value(data)"
+        },
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "id_for_label",
+          "class_name": "BoundField",
+          "code": "def id_for_label(self):\n        \"\"\"\n        Wrapper around the field widget's `id_for_label` method.\n        Useful, for example, for focusing on this field regardless of whether\n        it has a single widget or a MultiWidget.\n        \"\"\"\n        widget = self.field.widget\n        id_ = widget.attrs.get('id') or self.auto_id\n        return widget.id_for_label(id_)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "_clean_fields",
+          "class_name": "BaseForm",
+          "code": "def _clean_fields(self):\n        for name, field in self.fields.items():\n            # value_from_datadict() gets the data from the data dictionaries.\n            # Each widget type knows how to retrieve its own data, because some\n            # widgets split data over several HTML fields.\n            if field.disabled:\n                value = self.initial.get(name, field.initial)\n            else:\n                value = field.widget.value_from_datadict(self.data, self.files, self.add_prefix(name))\n            try:\n                if isinstance(field, FileField):\n                    initial = self.initial.get(name, field.initial)\n                    value = field.clean(value, initial)\n                else:\n                    value = field.clean(value)\n                self.cleaned_data[name] = value\n                if hasattr(self, 'clean_%s' % name):\n                    value = getattr(self, 'clean_%s' % name)()\n                    self.cleaned_data[name] = value\n            except ValidationError as e:\n                self.add_error(name, e)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "changed_data",
+          "class_name": "BaseForm",
+          "code": "def changed_data(self):\n        data = []\n        for name, field in self.fields.items():\n            prefixed_name = self.add_prefix(name)\n            data_value = field.widget.value_from_datadict(self.data, self.files, prefixed_name)\n            if not field.show_hidden_initial:\n                initial_value = self.initial.get(name, field.initial)\n                if callable(initial_value):\n                    initial_value = initial_value()\n            else:\n                initial_prefixed_name = self.add_initial_prefix(name)\n                hidden_widget = field.hidden_widget()\n                try:\n                    initial_value = field.to_python(hidden_widget.value_from_datadict(\n                        self.data, self.files, initial_prefixed_name))\n                except ValidationError:\n                    # Always assume data has changed if validation fails.\n                    data.append(name)\n                    continue\n            if field.has_changed(initial_value, data_value):\n                data.append(name)\n        return data"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "visible_fields",
+          "class_name": "BaseForm",
+          "code": "def visible_fields(self):\n        \"\"\"\n        Returns a list of BoundField objects that aren't hidden fields.\n        The opposite of the hidden_fields() method.\n        \"\"\"\n        return [field for field in self if not field.is_hidden]"
+        }
+      ]
+    },
+    {
+      "pr_number": 10678,
+      "pr_title": "Fixed #29930 -- Allowed editing in admin with view-only inlines.",
+      "pr_body": "* Uses test from patch provided by Tim Graham on ticket. \r\n* Skips inlines for view-only user in `_create_formsets()`\r\n\r\n~~**Don't merge yet**. this is not 100% right: I want to test that the read-only inline is shown in the right places.~~ \r\n",
+      "issue_id": 29930,
+      "issue_title": "View only permissions on stacked inline result in error",
+      "issue_body": "",
+      "issue_closed_at": "2018-12-03T09:44:45",
+      "base_commit": "950112548e61098f442d37a8ded4ef9f83ff8fda",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "_create_formsets",
+          "class_name": "ModelAdmin",
+          "code": "def _create_formsets(self, request, obj, change):\n        \"Helper function to generate formsets for add/change_view.\"\n        formsets = []\n        inline_instances = []\n        prefixes = {}\n        get_formsets_args = [request]\n        if change:\n            get_formsets_args.append(obj)\n        for FormSet, inline in self.get_formsets_with_inlines(*get_formsets_args):\n            prefix = FormSet.get_default_prefix()\n            prefixes[prefix] = prefixes.get(prefix, 0) + 1\n            if prefixes[prefix] != 1 or not prefix:\n                prefix = \"%s-%s\" % (prefix, prefixes[prefix])\n            formset_params = {\n                'instance': obj,\n                'prefix': prefix,\n                'queryset': inline.get_queryset(request),\n            }\n            if request.method == 'POST':\n                formset_params.update({\n                    'data': request.POST.copy(),\n                    'files': request.FILES,\n                    'save_as_new': '_saveasnew' in request.POST\n                })\n            formsets.append(FormSet(**formset_params))\n            inline_instances.append(inline)\n        return formsets, inline_instances"
+        }
+      ]
+    },
+    {
+      "pr_number": 2896,
+      "pr_title": "Fixed #13794 -- Fixed to_field usage in BaseInlineFormSet.",
+      "pr_body": "",
+      "issue_id": 13794,
+      "issue_title": "Django does not respect to_field's model on an inline model admin",
+      "issue_body": "",
+      "issue_closed_at": "2014-07-09T07:09:02",
+      "base_commit": "5ebf03b7dd2d1c215f5c0b725083d36379a7ac5b",
+      "changes": [
+        {
+          "file": "django/forms/models.py",
+          "type": "function",
+          "name": "_construct_form",
+          "class_name": "BaseInlineFormSet",
+          "code": "def _construct_form(self, i, **kwargs):\n        form = super(BaseInlineFormSet, self)._construct_form(i, **kwargs)\n        if self.save_as_new:\n            # Remove the primary key from the form's data, we are only\n            # creating new instances\n            form.data[form.add_prefix(self._pk_field.name)] = None\n\n            # Remove the foreign key from the form's data\n            form.data[form.add_prefix(self.fk.name)] = None\n\n        # Set the fk value here so that the form can do its validation.\n        setattr(form.instance, self.fk.get_attname(), self.instance.pk)\n        return form"
+        }
+      ]
+    },
+    {
+      "pr_number": 9966,
+      "pr_title": "Fixed #29417 -- Corrected two admin page titles for view-only users.",
+      "pr_body": "The Changelist and 'View object' views still contained the word 'change'\r\nin their title and header.",
+      "issue_id": 29417,
+      "issue_title": "Admin title still says \"Change [model]\" when user has view-only permission",
+      "issue_body": "",
+      "issue_closed_at": "2018-05-23T10:03:08",
+      "base_commit": "40ff93310f03dc89a6281a846b1a1ec4cb672bd0",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "_changeform_view",
+          "class_name": "ModelAdmin",
+          "code": "def _changeform_view(self, request, object_id, form_url, extra_context):\n        to_field = request.POST.get(TO_FIELD_VAR, request.GET.get(TO_FIELD_VAR))\n        if to_field and not self.to_field_allowed(request, to_field):\n            raise DisallowedModelAdminToField(\"The field %s cannot be referenced.\" % to_field)\n\n        model = self.model\n        opts = model._meta\n\n        if request.method == 'POST' and '_saveasnew' in request.POST:\n            object_id = None\n\n        add = object_id is None\n\n        if add:\n            if not self.has_add_permission(request):\n                raise PermissionDenied\n            obj = None\n\n        else:\n            obj = self.get_object(request, unquote(object_id), to_field)\n\n            if not self.has_view_permission(request, obj) and not self.has_change_permission(request, obj):\n                raise PermissionDenied\n\n            if obj is None:\n                return self._get_obj_does_not_exist_redirect(request, opts, object_id)\n\n        ModelForm = self.get_form(request, obj, change=not add)\n        if request.method == 'POST':\n            form = ModelForm(request.POST, request.FILES, instance=obj)\n            form_validated = form.is_valid()\n            if form_validated:\n                new_object = self.save_form(request, form, change=not add)\n            else:\n                new_object = form.instance\n            formsets, inline_instances = self._create_formsets(request, new_object, change=not add)\n            if all_valid(formsets) and form_validated:\n                self.save_model(request, new_object, form, not add)\n                self.save_related(request, form, formsets, not add)\n                change_message = self.construct_change_message(request, form, formsets, add)\n                if add:\n                    self.log_addition(request, new_object, change_message)\n                    return self.response_add(request, new_object)\n                else:\n                    self.log_change(request, new_object, change_message)\n                    return self.response_change(request, new_object)\n            else:\n                form_validated = False\n        else:\n            if add:\n                initial = self.get_changeform_initial_data(request)\n                form = ModelForm(initial=initial)\n                formsets, inline_instances = self._create_formsets(request, form.instance, change=False)\n            else:\n                form = ModelForm(instance=obj)\n                formsets, inline_instances = self._create_formsets(request, obj, change=True)\n\n        if not add and not self.has_change_permission(request):\n            readonly_fields = flatten_fieldsets(self.get_fieldsets(request, obj))\n        else:\n            readonly_fields = self.get_readonly_fields(request, obj)\n        adminForm = helpers.AdminForm(\n            form,\n            list(self.get_fieldsets(request, obj)),\n            self.get_prepopulated_fields(request, obj),\n            readonly_fields,\n            model_admin=self)\n        media = self.media + adminForm.media\n\n        inline_formsets = self.get_inline_formsets(request, formsets, inline_instances, obj)\n        for inline_formset in inline_formsets:\n            media = media + inline_formset.media\n\n        context = {\n            **self.admin_site.each_context(request),\n            'title': (_('Add %s') if add else _('Change %s')) % opts.verbose_name,\n            'adminform': adminForm,\n            'object_id': object_id,\n            'original': obj,\n            'is_popup': IS_POPUP_VAR in request.POST or IS_POPUP_VAR in request.GET,\n            'to_field': to_field,\n            'media': media,\n            'inline_admin_formsets': inline_formsets,\n            'errors': helpers.AdminErrorList(form, formsets),\n            'preserved_filters': self.get_preserved_filters(request),\n        }\n\n        # Hide the \"Save\" and \"Save and continue\" buttons if \"Save as New\" was\n        # previously chosen to prevent the interface from getting confusing.\n        if request.method == 'POST' and not form_validated and \"_saveasnew\" in request.POST:\n            context['show_save'] = False\n            context['show_save_and_continue'] = False\n            # Use the change template instead of the add template.\n            add = False\n\n        context.update(extra_context or {})\n\n        return self.render_change_form(request, context, add=add, change=not add, obj=obj, form_url=form_url)"
+        },
+        {
+          "file": "django/contrib/admin/views/main.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "ChangeList",
+          "code": "def __init__(self, request, model, list_display, list_display_links,\n                 list_filter, date_hierarchy, search_fields, list_select_related,\n                 list_per_page, list_max_show_all, list_editable, model_admin, sortable_by):\n        self.model = model\n        self.opts = model._meta\n        self.lookup_opts = self.opts\n        self.root_queryset = model_admin.get_queryset(request)\n        self.list_display = list_display\n        self.list_display_links = list_display_links\n        self.list_filter = list_filter\n        self.date_hierarchy = date_hierarchy\n        self.search_fields = search_fields\n        self.list_select_related = list_select_related\n        self.list_per_page = list_per_page\n        self.list_max_show_all = list_max_show_all\n        self.model_admin = model_admin\n        self.preserved_filters = model_admin.get_preserved_filters(request)\n        self.sortable_by = sortable_by\n\n        # Get search parameters from the query string.\n        try:\n            self.page_num = int(request.GET.get(PAGE_VAR, 0))\n        except ValueError:\n            self.page_num = 0\n        self.show_all = ALL_VAR in request.GET\n        self.is_popup = IS_POPUP_VAR in request.GET\n        to_field = request.GET.get(TO_FIELD_VAR)\n        if to_field and not model_admin.to_field_allowed(request, to_field):\n            raise DisallowedModelAdminToField(\"The field %s cannot be referenced.\" % to_field)\n        self.to_field = to_field\n        self.params = dict(request.GET.items())\n        if PAGE_VAR in self.params:\n            del self.params[PAGE_VAR]\n        if ERROR_FLAG in self.params:\n            del self.params[ERROR_FLAG]\n\n        if self.is_popup:\n            self.list_editable = ()\n        else:\n            self.list_editable = list_editable\n        self.query = request.GET.get(SEARCH_VAR, '')\n        self.queryset = self.get_queryset(request)\n        self.get_results(request)\n        if self.is_popup:\n            title = gettext('Select %s')\n        else:\n            title = gettext('Select %s to change')\n        self.title = title % self.opts.verbose_name\n        self.pk_attname = self.lookup_opts.pk.attname"
+        }
+      ]
+    },
+    {
+      "pr_number": 9406,
+      "pr_title": "Fixed #28871 -- Fixed initialization of autocomplete widgets in \"Add another\" inlines.",
+      "pr_body": "https://code.djangoproject.com/ticket/28871",
+      "issue_id": 28871,
+      "issue_title": "Autocomplete select for new lines in inline model do not open",
+      "issue_body": "",
+      "issue_closed_at": "2017-12-01T21:42:03",
+      "base_commit": "095c1aaa898bed40568009db836aa8434f1b983d",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "formfield_for_foreignkey",
+          "class_name": "BaseModelAdmin",
+          "code": "def formfield_for_foreignkey(self, db_field, request, **kwargs):\n        \"\"\"\n        Get a form Field for a ForeignKey.\n        \"\"\"\n        db = kwargs.get('using')\n\n        if db_field.name in self.get_autocomplete_fields(request):\n            kwargs['widget'] = AutocompleteSelect(db_field.remote_field, using=db)\n        elif db_field.name in self.raw_id_fields:\n            kwargs['widget'] = widgets.ForeignKeyRawIdWidget(db_field.remote_field, self.admin_site, using=db)\n        elif db_field.name in self.radio_fields:\n            kwargs['widget'] = widgets.AdminRadioSelect(attrs={\n                'class': get_ul_class(self.radio_fields[db_field.name]),\n            })\n            kwargs['empty_label'] = _('None') if db_field.blank else None\n\n        if 'queryset' not in kwargs:\n            queryset = self.get_field_queryset(db, db_field, request)\n            if queryset is not None:\n                kwargs['queryset'] = queryset\n\n        return db_field.formfield(**kwargs)"
+        },
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "formfield_for_manytomany",
+          "class_name": "BaseModelAdmin",
+          "code": "def formfield_for_manytomany(self, db_field, request, **kwargs):\n        \"\"\"\n        Get a form Field for a ManyToManyField.\n        \"\"\"\n        # If it uses an intermediary model that isn't auto created, don't show\n        # a field in admin.\n        if not db_field.remote_field.through._meta.auto_created:\n            return None\n        db = kwargs.get('using')\n\n        autocomplete_fields = self.get_autocomplete_fields(request)\n        if db_field.name in autocomplete_fields:\n            kwargs['widget'] = AutocompleteSelectMultiple(db_field.remote_field, using=db)\n        elif db_field.name in self.raw_id_fields:\n            kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.remote_field, self.admin_site, using=db)\n        elif db_field.name in list(self.filter_vertical) + list(self.filter_horizontal):\n            kwargs['widget'] = widgets.FilteredSelectMultiple(\n                db_field.verbose_name,\n                db_field.name in self.filter_vertical\n            )\n\n        if 'queryset' not in kwargs:\n            queryset = self.get_field_queryset(db, db_field, request)\n            if queryset is not None:\n                kwargs['queryset'] = queryset\n\n        form_field = db_field.formfield(**kwargs)\n        if (isinstance(form_field.widget, SelectMultiple) and\n                not isinstance(form_field.widget, (CheckboxSelectMultiple, AutocompleteSelectMultiple))):\n            msg = _('Hold down \"Control\", or \"Command\" on a Mac, to select more than one.')\n            help_text = form_field.help_text\n            form_field.help_text = format_lazy('{} {}', help_text, msg) if help_text else msg\n        return form_field"
+        },
+        {
+          "file": "django/contrib/admin/widgets.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "AutocompleteMixin",
+          "code": "def __init__(self, rel, attrs=None, choices=(), using=None):\n        self.rel = rel\n        self.db = using\n        self.choices = choices\n        if attrs is not None:\n            self.attrs = attrs.copy()\n        else:\n            self.attrs = {}"
+        }
+      ]
+    }
+  ]
+}

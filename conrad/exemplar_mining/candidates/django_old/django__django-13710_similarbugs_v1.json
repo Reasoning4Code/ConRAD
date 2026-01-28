@@ -1,0 +1,166 @@
+{
+  "instance_id": "django__django-13710",
+  "repo": "django/django",
+  "created_at": "2020-11-23T04:39:05Z",
+  "problem_statement": "Use Admin Inline verbose_name as default for Inline verbose_name_plural\nDescription\n\t\nDjango allows specification of a verbose_name and a verbose_name_plural for Inline classes in admin views. However, verbose_name_plural for an Inline is not currently based on a specified verbose_name. Instead, it continues to be based on the model name, or an a verbose_name specified in the model's Meta class. This was confusing to me initially (I didn't understand why I had to specify both name forms for an Inline if I wanted to overrule the default name), and seems inconsistent with the approach for a model's Meta class (which does automatically base the plural form on a specified verbose_name). I propose that verbose_name_plural for an Inline class should by default be based on the verbose_name for an Inline if that is specified.\nI have written a patch to implement this, including tests. Would be happy to submit that.\n",
+  "patch": "diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py\n--- a/django/contrib/admin/options.py\n+++ b/django/contrib/admin/options.py\n@@ -2037,10 +2037,13 @@ def __init__(self, parent_model, admin_site):\n         self.opts = self.model._meta\n         self.has_registered_model = admin_site.is_registered(self.model)\n         super().__init__()\n+        if self.verbose_name_plural is None:\n+            if self.verbose_name is None:\n+                self.verbose_name_plural = self.model._meta.verbose_name_plural\n+            else:\n+                self.verbose_name_plural = format_lazy('{}s', self.verbose_name)\n         if self.verbose_name is None:\n             self.verbose_name = self.model._meta.verbose_name\n-        if self.verbose_name_plural is None:\n-            self.verbose_name_plural = self.model._meta.verbose_name_plural\n \n     @property\n     def media(self):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 7296,
+      "pr_title": "Fixed #27266 -- Allowed using assertFormError()/assertFormsetError() in admin forms and formsets.",
+      "pr_body": "https://code.djangoproject.com/ticket/27266\n",
+      "issue_id": 27266,
+      "issue_title": "assertFormError fails when trying to check a custom validation in an Admin form",
+      "issue_body": "",
+      "issue_closed_at": "2016-09-27T08:50:50",
+      "base_commit": "85f2bba7ebd98fddaeb7451e733685022aae21cf",
+      "changes": [
+        {
+          "file": "django/contrib/admin/helpers.py",
+          "type": "function",
+          "name": "__iter__",
+          "class_name": "InlineFieldset",
+          "code": "def __iter__(self):\n        fk = getattr(self.formset, \"fk\", None)\n        for field in self.fields:\n            if fk and fk.name == field:\n                continue\n            yield Fieldline(self.form, field, self.readonly_fields, model_admin=self.model_admin)"
+        },
+        {
+          "file": "django/contrib/admin/helpers.py",
+          "type": "function",
+          "name": "inline_formset_data",
+          "class_name": "InlineAdminFormSet",
+          "code": "def inline_formset_data(self):\n        verbose_name = self.opts.verbose_name\n        return json.dumps({\n            'name': '#%s' % self.formset.prefix,\n            'options': {\n                'prefix': self.formset.prefix,\n                'addText': ugettext('Add another %(verbose_name)s') % {\n                    'verbose_name': capfirst(verbose_name),\n                },\n                'deleteText': ugettext('Remove'),\n            }\n        })"
+        }
+      ]
+    },
+    {
+      "pr_number": 10355,
+      "pr_title": " Fixed #29723 -- Fixed crash if InlineModelAdmin.has_add_permission() doesn't accept the obj argument.",
+      "pr_body": "https://code.djangoproject.com/ticket/29723",
+      "issue_id": 29723,
+      "issue_title": "Admin crashes if InlineModelAdmin.has_add_permission() doesn't accept the obj argument",
+      "issue_body": "",
+      "issue_closed_at": "2018-08-30T04:23:35",
+      "base_commit": "54b331451cb22ee354beadf31ee42cbd714877f0",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "get_inline_instances",
+          "class_name": "ModelAdmin",
+          "code": "def get_inline_instances(self, request, obj=None):\n        inline_instances = []\n        for inline_class in self.inlines:\n            inline = inline_class(self.model, self.admin_site)\n            # RemovedInDjango30Warning: obj will be a required argument.\n            args = get_func_args(inline.has_add_permission)\n            if 'obj' in args:\n                inline_has_add_permission = inline.has_add_permission(request, obj)\n            else:\n                inline_has_add_permission = inline.has_add_permission(request)\n            if request:\n                if not (inline.has_view_or_change_permission(request, obj) or\n                        inline_has_add_permission or\n                        inline.has_delete_permission(request, obj)):\n                    continue\n                if not inline_has_add_permission:\n                    inline.max_num = 0\n            inline_instances.append(inline)\n\n        return inline_instances"
+        },
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "get_inline_formsets",
+          "class_name": "ModelAdmin",
+          "code": "def get_inline_formsets(self, request, formsets, inline_instances, obj=None):\n        inline_admin_formsets = []\n        for inline, formset in zip(inline_instances, formsets):\n            fieldsets = list(inline.get_fieldsets(request, obj))\n            readonly = list(inline.get_readonly_fields(request, obj))\n            has_add_permission = inline.has_add_permission(request, obj)\n            has_change_permission = inline.has_change_permission(request, obj)\n            has_delete_permission = inline.has_delete_permission(request, obj)\n            has_view_permission = inline.has_view_permission(request, obj)\n            prepopulated = dict(inline.get_prepopulated_fields(request, obj))\n            inline_admin_formset = helpers.InlineAdminFormSet(\n                inline, formset, fieldsets, prepopulated, readonly, model_admin=self,\n                has_add_permission=has_add_permission, has_change_permission=has_change_permission,\n                has_delete_permission=has_delete_permission, has_view_permission=has_view_permission,\n            )\n            inline_admin_formsets.append(inline_admin_formset)\n        return inline_admin_formsets"
+        },
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "media",
+          "class_name": "InlineModelAdmin",
+          "code": "def media(self):\n        extra = '' if settings.DEBUG else '.min'\n        js = ['vendor/jquery/jquery%s.js' % extra, 'jquery.init.js',\n              'inlines%s.js' % extra]\n        if self.filter_vertical or self.filter_horizontal:\n            js.extend(['SelectBox.js', 'SelectFilter2.js'])\n        if self.classes and 'collapse' in self.classes:\n            js.append('collapse%s.js' % extra)\n        return forms.Media(js=['admin/js/%s' % url for url in js])"
+        },
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "get_formset",
+          "class_name": "InlineModelAdmin",
+          "code": "def get_formset(self, request, obj=None, **kwargs):\n        \"\"\"Return a BaseInlineFormSet class for use in admin add/change views.\"\"\"\n        if 'fields' in kwargs:\n            fields = kwargs.pop('fields')\n        else:\n            fields = flatten_fieldsets(self.get_fieldsets(request, obj))\n        excluded = self.get_exclude(request, obj)\n        exclude = [] if excluded is None else list(excluded)\n        exclude.extend(self.get_readonly_fields(request, obj))\n        if excluded is None and hasattr(self.form, '_meta') and self.form._meta.exclude:\n            # Take the custom ModelForm's Meta.exclude into account only if the\n            # InlineModelAdmin doesn't define its own.\n            exclude.extend(self.form._meta.exclude)\n        # If exclude is an empty list we use None, since that's the actual\n        # default.\n        exclude = exclude or None\n        can_delete = self.can_delete and self.has_delete_permission(request, obj)\n        defaults = {\n            'form': self.form,\n            'formset': self.formset,\n            'fk_name': self.fk_name,\n            'fields': fields,\n            'exclude': exclude,\n            'formfield_callback': partial(self.formfield_for_dbfield, request=request),\n            'extra': self.get_extra(request, obj, **kwargs),\n            'min_num': self.get_min_num(request, obj, **kwargs),\n            'max_num': self.get_max_num(request, obj, **kwargs),\n            'can_delete': can_delete,\n            **kwargs,\n        }\n\n        base_model_form = defaults['form']\n        can_change = self.has_change_permission(request, obj) if request else True\n        can_add = self.has_add_permission(request, obj) if request else True\n\n        class DeleteProtectedModelForm(base_model_form):\n\n            def hand_clean_DELETE(self):\n                \"\"\"\n                We don't validate the 'DELETE' field itself because on\n                templates it's not rendered using the field information, but\n                just using a generic \"deletion_field\" of the InlineModelAdmin.\n                \"\"\"\n                if self.cleaned_data.get(DELETION_FIELD_NAME, False):\n                    using = router.db_for_write(self._meta.model)\n                    collector = NestedObjects(using=using)\n                    if self.instance._state.adding:\n                        return\n                    collector.collect([self.instance])\n                    if collector.protected:\n                        objs = []\n                        for p in collector.protected:\n                            objs.append(\n                                # Translators: Model verbose name and instance representation,\n                                # suitable to be an item in a list.\n                                _('%(class_name)s %(instance)s') % {\n                                    'class_name': p._meta.verbose_name,\n                                    'instance': p}\n                            )\n                        params = {'class_name': self._meta.model._meta.verbose_name,\n                                  'instance': self.instance,\n                                  'related_objects': get_text_list(objs, _('and'))}\n                        msg = _(\"Deleting %(class_name)s %(instance)s would require \"\n                                \"deleting the following protected related objects: \"\n                                \"%(related_objects)s\")\n                        raise ValidationError(msg, code='deleting_protected', params=params)\n\n            def is_valid(self):\n                result = super().is_valid()\n                self.hand_clean_DELETE()\n                return result\n\n            def has_changed(self):\n                # Protect against unauthorized edits.\n                if not can_change and not self.instance._state.adding:\n                    return False\n                if not can_add and self.instance._state.adding:\n                    return False\n                return super().has_changed()\n\n        defaults['form'] = DeleteProtectedModelForm\n\n        if defaults['fields'] is None and not modelform_defines_fields(defaults['form']):\n            defaults['fields'] = forms.ALL_FIELDS\n\n        return inlineformset_factory(self.parent_model, self.model, **defaults)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9255,
+      "pr_title": "Fixed #28719 -- Added a helpful exception if MultipleObjectTemplateResponseMixin doesn't generate any template names.",
+      "pr_body": "https://code.djangoproject.com/ticket/28719",
+      "issue_id": 28719,
+      "issue_title": "Add a helpful exception message when ListView.get_queryset() returns None",
+      "issue_body": "",
+      "issue_closed_at": "2017-11-07T18:04:43",
+      "base_commit": "a2851f204c6431330042d0343ee99f33449f78e0",
+      "changes": [
+        {
+          "file": "django/views/generic/list.py",
+          "type": "function",
+          "name": "get_template_names",
+          "class_name": "MultipleObjectTemplateResponseMixin",
+          "code": "def get_template_names(self):\n        \"\"\"\n        Return a list of template names to be used for the request. Must return\n        a list. May not be called if render_to_response is overridden.\n        \"\"\"\n        try:\n            names = super().get_template_names()\n        except ImproperlyConfigured:\n            # If template_name isn't specified, it's not a problem --\n            # we just start with an empty list.\n            names = []\n\n        # If the list is a queryset, we'll invent a template name based on the\n        # app and model name. This name gets put at the end of the template\n        # name list so that user-supplied names override the automatically-\n        # generated ones.\n        if hasattr(self.object_list, 'model'):\n            opts = self.object_list.model._meta\n            names.append(\"%s/%s%s.html\" % (opts.app_label, opts.model_name, self.template_name_suffix))\n\n        return names"
+        }
+      ]
+    },
+    {
+      "pr_number": 7097,
+      "pr_title": "Fixed #27068 -- Unified form field initial data retrieval.",
+      "pr_body": "https://code.djangoproject.com/ticket/27068\n",
+      "issue_id": 27068,
+      "issue_title": "Acquire form's initial data more consistently",
+      "issue_body": "",
+      "issue_closed_at": "2016-08-18T19:51:32",
+      "base_commit": "13857b45ca54a519a58361238442af84262c0d23",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "value",
+          "class_name": "BoundField",
+          "code": "def value(self):\n        \"\"\"\n        Returns the value for this BoundField, using the initial value if\n        the form is not bound or the data otherwise.\n        \"\"\"\n        if not self.form.is_bound:\n            data = self.initial\n        else:\n            data = self.field.bound_data(\n                self.data, self.form.initial.get(self.name, self.field.initial)\n            )\n        return self.field.prepare_value(data)"
+        },
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "id_for_label",
+          "class_name": "BoundField",
+          "code": "def id_for_label(self):\n        \"\"\"\n        Wrapper around the field widget's `id_for_label` method.\n        Useful, for example, for focusing on this field regardless of whether\n        it has a single widget or a MultiWidget.\n        \"\"\"\n        widget = self.field.widget\n        id_ = widget.attrs.get('id') or self.auto_id\n        return widget.id_for_label(id_)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "_clean_fields",
+          "class_name": "BaseForm",
+          "code": "def _clean_fields(self):\n        for name, field in self.fields.items():\n            # value_from_datadict() gets the data from the data dictionaries.\n            # Each widget type knows how to retrieve its own data, because some\n            # widgets split data over several HTML fields.\n            if field.disabled:\n                value = self.initial.get(name, field.initial)\n            else:\n                value = field.widget.value_from_datadict(self.data, self.files, self.add_prefix(name))\n            try:\n                if isinstance(field, FileField):\n                    initial = self.initial.get(name, field.initial)\n                    value = field.clean(value, initial)\n                else:\n                    value = field.clean(value)\n                self.cleaned_data[name] = value\n                if hasattr(self, 'clean_%s' % name):\n                    value = getattr(self, 'clean_%s' % name)()\n                    self.cleaned_data[name] = value\n            except ValidationError as e:\n                self.add_error(name, e)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "changed_data",
+          "class_name": "BaseForm",
+          "code": "def changed_data(self):\n        data = []\n        for name, field in self.fields.items():\n            prefixed_name = self.add_prefix(name)\n            data_value = field.widget.value_from_datadict(self.data, self.files, prefixed_name)\n            if not field.show_hidden_initial:\n                initial_value = self.initial.get(name, field.initial)\n                if callable(initial_value):\n                    initial_value = initial_value()\n            else:\n                initial_prefixed_name = self.add_initial_prefix(name)\n                hidden_widget = field.hidden_widget()\n                try:\n                    initial_value = field.to_python(hidden_widget.value_from_datadict(\n                        self.data, self.files, initial_prefixed_name))\n                except ValidationError:\n                    # Always assume data has changed if validation fails.\n                    data.append(name)\n                    continue\n            if field.has_changed(initial_value, data_value):\n                data.append(name)\n        return data"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "visible_fields",
+          "class_name": "BaseForm",
+          "code": "def visible_fields(self):\n        \"\"\"\n        Returns a list of BoundField objects that aren't hidden fields.\n        The opposite of the hidden_fields() method.\n        \"\"\"\n        return [field for field in self if not field.is_hidden]"
+        }
+      ]
+    },
+    {
+      "pr_number": 8213,
+      "pr_title": "Refs #27935 -- Fixed BrinIndex.max_name_length if a project's default database isn't PostgreSQL.",
+      "pr_body": "",
+      "issue_id": 27935,
+      "issue_title": "BrinIndex crashes if name  > 30 characters",
+      "issue_body": "",
+      "issue_closed_at": "2017-03-20T10:30:05",
+      "base_commit": "6cb0a3ac2836c044987f7a0cca0d1e99d52e002e",
+      "changes": [
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "from django.db import connection\nfrom django.db.models import Index\nfrom django.utils.functional import cached_property\n\n__all__ = ['BrinIndex', 'GinIndex']\n\n\nclass BrinIndex(Index):\n    suffix = 'brin'\n\n    def __init__(self, fields=[], name=None, pages_per_range=None):\n        if pages_per_range is not None and pages_per_range <= 0:"
+        },
+        {
+          "file": "django/contrib/postgres/indexes.py",
+          "type": "function",
+          "name": "get_sql_create_template_values",
+          "class_name": "BrinIndex",
+          "code": "def get_sql_create_template_values(self, model, schema_editor, using):\n        parameters = super().get_sql_create_template_values(model, schema_editor, using=' USING brin')\n        if self.pages_per_range is not None:\n            parameters['extra'] = ' WITH (pages_per_range={})'.format(\n                schema_editor.quote_value(self.pages_per_range)) + parameters['extra']\n        return parameters"
+        }
+      ]
+    }
+  ]
+}

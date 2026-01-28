@@ -1,0 +1,138 @@
+{
+  "instance_id": "django__django-13933",
+  "repo": "django/django",
+  "created_at": "2021-01-26T03:58:23Z",
+  "problem_statement": "ModelChoiceField does not provide value of invalid choice when raising ValidationError\nDescription\n\t \n\t\t(last modified by Aaron Wiegel)\n\t \nCompared with ChoiceField and others, ModelChoiceField does not show the value of the invalid choice when raising a validation error. Passing in parameters with the invalid value and modifying the default error message for the code invalid_choice should fix this.\nFrom source code:\nclass ModelMultipleChoiceField(ModelChoiceField):\n\t\"\"\"A MultipleChoiceField whose choices are a model QuerySet.\"\"\"\n\twidget = SelectMultiple\n\thidden_widget = MultipleHiddenInput\n\tdefault_error_messages = {\n\t\t'invalid_list': _('Enter a list of values.'),\n\t\t'invalid_choice': _('Select a valid choice. %(value)s is not one of the'\n\t\t\t\t\t\t\t' available choices.'),\n\t\t'invalid_pk_value': _('\u201c%(pk)s\u201d is not a valid value.')\n\t}\n\t...\nclass ModelChoiceField(ChoiceField):\n\t\"\"\"A ChoiceField whose choices are a model QuerySet.\"\"\"\n\t# This class is a subclass of ChoiceField for purity, but it doesn't\n\t# actually use any of ChoiceField's implementation.\n\tdefault_error_messages = {\n\t\t'invalid_choice': _('Select a valid choice. That choice is not one of'\n\t\t\t\t\t\t\t' the available choices.'),\n\t}\n\t...\n",
+  "patch": "diff --git a/django/forms/models.py b/django/forms/models.py\n--- a/django/forms/models.py\n+++ b/django/forms/models.py\n@@ -1284,7 +1284,11 @@ def to_python(self, value):\n                 value = getattr(value, key)\n             value = self.queryset.get(**{key: value})\n         except (ValueError, TypeError, self.queryset.model.DoesNotExist):\n-            raise ValidationError(self.error_messages['invalid_choice'], code='invalid_choice')\n+            raise ValidationError(\n+                self.error_messages['invalid_choice'],\n+                code='invalid_choice',\n+                params={'value': value},\n+            )\n         return value\n \n     def validate(self, value):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 9632,
+      "pr_title": "Fixed #29036 -- Change SelectDateWidget's empty value",
+      "pr_body": "https://code.djangoproject.com/ticket/29036",
+      "issue_id": 29036,
+      "issue_title": "HTML5 required validation for SelectDateWidget doesn't work if the attribute is added by JavaScript",
+      "issue_body": "",
+      "issue_closed_at": "2018-01-30T18:43:14",
+      "base_commit": "5538729e4ec1adf1c79d94c2b47b5dcf591ad94b",
+      "changes": [
+        {
+          "file": "django/forms/widgets.py",
+          "type": "class",
+          "name": "SelectDateWidget",
+          "code": "class SelectDateWidget(Widget):\n    \"\"\"\n    A widget that splits date input into three <select> boxes.\n\n    This also serves as an example of a Widget that has more than one HTML\n    element and hence implements value_from_datadict.\n    \"\"\"\n    none_value = (0, '---')\n    month_field = '%s_month'\n    day_field = '%s_day'\n    year_field = '%s_year'\n    template_name = 'django/forms/widgets/select_date.html'\n    input_type = 'select'\n    select_widget = Select\n    date_re = re.compile(r'(\\d{4}|0)-(\\d\\d?)-(\\d\\d?)$')\n\n    def __init__(self, attrs=None, years=None, months=None, empty_label=None):\n        self.attrs = attrs or {}\n\n        # Optional list or tuple of years to use in the \"year\" select box.\n        if years:\n            self.years = years\n        else:\n            this_year = datetime.date.today().year\n            self.years = range(this_year, this_year + 10)\n\n        # Optional dict of months to use in the \"month\" select box.\n        if months:\n            self.months = months\n        else:\n            self.months = MONTHS\n\n        # Optional string, list, or tuple to use as empty_label.\n        if isinstance(empty_label, (list, tuple)):\n            if not len(empty_label) == 3:\n                raise ValueError('empty_label list/tuple must have 3 elements.')\n\n            self.year_none_value = (0, empty_label[0])\n            self.month_none_value = (0, empty_label[1])\n            self.day_none_value = (0, empty_label[2])\n        else:\n            if empty_label is not None:\n                self.none_value = (0, empty_label)\n\n            self.year_none_value = self.none_value\n            self.month_none_value = self.none_value\n            self.day_none_value = self.none_value\n\n    def get_context(self, name, value, attrs):\n        context = super().get_context(name, value, attrs)\n        date_context = {}\n        year_choices = [(i, str(i)) for i in self.years]\n        if not self.is_required:\n            year_choices.insert(0, self.year_none_value)\n        year_attrs = context['widget']['attrs'].copy()\n        year_name = self.year_field % name\n        year_attrs['id'] = 'id_%s' % year_name\n        date_context['year'] = self.select_widget(attrs, choices=year_choices).get_context(\n            name=year_name,\n            value=context['widget']['value']['year'],\n            attrs=year_attrs,\n        )\n        month_choices = list(self.months.items())\n        if not self.is_required:\n            month_choices.insert(0, self.month_none_value)\n        month_attrs = context['widget']['attrs'].copy()\n        month_name = self.month_field % name\n        month_attrs['id'] = 'id_%s' % month_name\n        date_context['month'] = self.select_widget(attrs, choices=month_choices).get_context(\n            name=month_name,\n            value=context['widget']['value']['month'],\n            attrs=month_attrs,\n        )\n        day_choices = [(i, i) for i in range(1, 32)]\n        if not self.is_required:\n            day_choices.insert(0, self.day_none_value)\n        day_attrs = context['widget']['attrs'].copy()\n        day_name = self.day_field % name\n        day_attrs['id'] = 'id_%s' % day_name\n        date_context['day'] = self.select_widget(attrs, choices=day_choices,).get_context(\n            name=day_name,\n            value=context['widget']['value']['day'],\n            attrs=day_attrs,\n        )\n        subwidgets = []\n        for field in self._parse_date_fmt():\n            subwidgets.append(date_context[field]['widget'])\n        context['widget']['subwidgets'] = subwidgets\n        return context\n\n    def format_value(self, value):\n        \"\"\"\n        Return a dict containing the year, month, and day of the current value.\n        Use dict instead of a datetime to allow invalid dates such as February\n        31 to display correctly.\n        \"\"\"\n        year, month, day = None, None, None\n        if isinstance(value, (datetime.date, datetime.datetime)):\n            year, month, day = value.year, value.month, value.day\n        elif isinstance(value, str):\n            match = self.date_re.match(value)\n            if match:\n                year, month, day = [int(val) for val in match.groups()]\n            elif settings.USE_L10N:\n                input_format = get_format('DATE_INPUT_FORMATS')[0]\n                try:\n                    d = datetime.datetime.strptime(value, input_format)\n                except ValueError:\n                    pass\n                else:\n                    year, month, day = d.year, d.month, d.day\n        return {'year': year, 'month': month, 'day': day}\n\n    @staticmethod\n    def _parse_date_fmt():\n        fmt = get_format('DATE_FORMAT')\n        escaped = False\n        for char in fmt:\n            if escaped:\n                escaped = False\n            elif char == '\\\\':\n                escaped = True\n            elif char in 'Yy':\n                yield 'year'\n            elif char in 'bEFMmNn':\n                yield 'month'\n            elif char in 'dj':\n                yield 'day'\n\n    def id_for_label(self, id_):\n        for first_select in self._parse_date_fmt():\n            return '%s_%s' % (id_, first_select)\n        return '%s_month' % id_\n\n    def value_from_datadict(self, data, files, name):\n        y = data.get(self.year_field % name)\n        m = data.get(self.month_field % name)\n        d = data.get(self.day_field % name)\n        if y == m == d == \"0\":\n            return None\n        if y and m and d:\n            if settings.USE_L10N:\n                input_format = get_format('DATE_INPUT_FORMATS')[0]\n                try:\n                    date_value = datetime.date(int(y), int(m), int(d))\n                except ValueError:\n                    return '%s-%s-%s' % (y, m, d)\n                else:\n                    date_value = datetime_safe.new_date(date_value)\n                    return date_value.strftime(input_format)\n            else:\n                return '%s-%s-%s' % (y, m, d)\n        return data.get(name)\n\n    def value_omitted_from_data(self, data, files, name):\n        return not any(\n            ('{}_{}'.format(name, interval) in data)\n            for interval in ('year', 'month', 'day')\n        )"
+        },
+        {
+          "file": "django/forms/widgets.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "SelectDateWidget",
+          "code": "def __init__(self, attrs=None, years=None, months=None, empty_label=None):\n        self.attrs = attrs or {}\n\n        # Optional list or tuple of years to use in the \"year\" select box.\n        if years:\n            self.years = years\n        else:\n            this_year = datetime.date.today().year\n            self.years = range(this_year, this_year + 10)\n\n        # Optional dict of months to use in the \"month\" select box.\n        if months:\n            self.months = months\n        else:\n            self.months = MONTHS\n\n        # Optional string, list, or tuple to use as empty_label.\n        if isinstance(empty_label, (list, tuple)):\n            if not len(empty_label) == 3:\n                raise ValueError('empty_label list/tuple must have 3 elements.')\n\n            self.year_none_value = (0, empty_label[0])\n            self.month_none_value = (0, empty_label[1])\n            self.day_none_value = (0, empty_label[2])\n        else:\n            if empty_label is not None:\n                self.none_value = (0, empty_label)\n\n            self.year_none_value = self.none_value\n            self.month_none_value = self.none_value\n            self.day_none_value = self.none_value"
+        },
+        {
+          "file": "django/forms/widgets.py",
+          "type": "function",
+          "name": "format_value",
+          "class_name": "SelectDateWidget",
+          "code": "def format_value(self, value):\n        \"\"\"\n        Return a dict containing the year, month, and day of the current value.\n        Use dict instead of a datetime to allow invalid dates such as February\n        31 to display correctly.\n        \"\"\"\n        year, month, day = None, None, None\n        if isinstance(value, (datetime.date, datetime.datetime)):\n            year, month, day = value.year, value.month, value.day\n        elif isinstance(value, str):\n            match = self.date_re.match(value)\n            if match:\n                year, month, day = [int(val) for val in match.groups()]\n            elif settings.USE_L10N:\n                input_format = get_format('DATE_INPUT_FORMATS')[0]\n                try:\n                    d = datetime.datetime.strptime(value, input_format)\n                except ValueError:\n                    pass\n                else:\n                    year, month, day = d.year, d.month, d.day\n        return {'year': year, 'month': month, 'day': day}"
+        },
+        {
+          "file": "django/forms/widgets.py",
+          "type": "function",
+          "name": "value_from_datadict",
+          "class_name": "SelectDateWidget",
+          "code": "def value_from_datadict(self, data, files, name):\n        y = data.get(self.year_field % name)\n        m = data.get(self.month_field % name)\n        d = data.get(self.day_field % name)\n        if y == m == d == \"0\":\n            return None\n        if y and m and d:\n            if settings.USE_L10N:\n                input_format = get_format('DATE_INPUT_FORMATS')[0]\n                try:\n                    date_value = datetime.date(int(y), int(m), int(d))\n                except ValueError:\n                    return '%s-%s-%s' % (y, m, d)\n                else:\n                    date_value = datetime_safe.new_date(date_value)\n                    return date_value.strftime(input_format)\n            else:\n                return '%s-%s-%s' % (y, m, d)\n        return data.get(name)"
+        }
+      ]
+    },
+    {
+      "pr_number": 13109,
+      "pr_title": "Fixed #31596 -- Changed ForeignKey.validate() to use the base manager.",
+      "pr_body": "Follow up from #12923 for which ~~GH seems~~ I seem to have _had a moment_...\r\n\r\n\r\ncc @jdufresne ",
+      "issue_id": 31596,
+      "issue_title": "ForeignKey.validate() should validate using the base manager.",
+      "issue_body": "",
+      "issue_closed_at": "2020-06-25T04:36:37",
+      "base_commit": "fbe82f82555bc25dccb476c749ca062f0b522be3",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "validate",
+          "class_name": "ForeignKey",
+          "code": "def validate(self, value, model_instance):\n        if self.remote_field.parent_link:\n            return\n        super().validate(value, model_instance)\n        if value is None:\n            return\n\n        using = router.db_for_read(self.remote_field.model, instance=model_instance)\n        qs = self.remote_field.model._default_manager.using(using).filter(\n            **{self.remote_field.field_name: value}\n        )\n        qs = qs.complex_filter(self.get_limit_choices_to())\n        if not qs.exists():\n            raise exceptions.ValidationError(\n                self.error_messages['invalid'],\n                code='invalid',\n                params={\n                    'model': self.remote_field.model._meta.verbose_name, 'pk': value,\n                    'field': self.remote_field.field_name, 'value': value,\n                },  # 'pk' is included for backwards compatibility\n            )"
+        }
+      ]
+    },
+    {
+      "pr_number": 12193,
+      "pr_title": "Fixed #31073 -- Prevented CheckboxInput.get_context() from mutating attrs.",
+      "pr_body": "[Ticket 31073](https://code.djangoproject.com/ticket/31073)\r\n\r\nI chose modifying the SplitArrayWidget over the CheckboxInput to keep the potential negative impact to a minimum, but would appreciate guidance if that was the correct choice. I'm unsure because no other widget modifies the passed-in attrs dictionary, so avoiding that in CheckboxInput may be preferable instead.",
+      "issue_id": 31073,
+      "issue_title": "SplitArrayField with BooleanField always has widgets checked after the first True value.",
+      "issue_body": "",
+      "issue_closed_at": "2019-12-10T05:51:11",
+      "base_commit": "3fb7c12158a2402f0f80824f6778112071235803",
+      "changes": [
+        {
+          "file": "django/forms/widgets.py",
+          "type": "function",
+          "name": "format_value",
+          "class_name": "SelectDateWidget",
+          "code": "def format_value(self, value):\n        \"\"\"\n        Return a dict containing the year, month, and day of the current value.\n        Use dict instead of a datetime to allow invalid dates such as February\n        31 to display correctly.\n        \"\"\"\n        year, month, day = None, None, None\n        if isinstance(value, (datetime.date, datetime.datetime)):\n            year, month, day = value.year, value.month, value.day\n        elif isinstance(value, str):\n            match = self.date_re.match(value)\n            if match:\n                # Convert any zeros in the date to empty strings to match the\n                # empty option value.\n                year, month, day = [int(val) or '' for val in match.groups()]\n            elif settings.USE_L10N:\n                input_format = get_format('DATE_INPUT_FORMATS')[0]\n                try:\n                    d = datetime.datetime.strptime(value, input_format)\n                except ValueError:\n                    pass\n                else:\n                    year, month, day = d.year, d.month, d.day\n        return {'year': year, 'month': month, 'day': day}"
+        }
+      ]
+    },
+    {
+      "pr_number": 4352,
+      "pr_title": "Fixed #24508 -- Made annotations reflective",
+      "pr_body": "We should backport this to 1.8 to be consistent with `filter(a=2+F())`.\n",
+      "issue_id": 24508,
+      "issue_title": "F() object operations do not correcly reflect with annotate",
+      "issue_body": "",
+      "issue_closed_at": "2015-03-22T01:34:12",
+      "base_commit": "a6bada1ee0c3756e4b8d6bd4b4346dd5235c78ce",
+      "changes": [
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempts to infer the output type of the expression. If the output\n        fields of all source fields match then we can simply infer the same\n        type here.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                self._output_field = sources[0]\n                for source in sources:\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        },
+        {
+          "file": "django/db/models/expressions.py",
+          "type": "function",
+          "name": "_resolve_output_field",
+          "class_name": "BaseExpression",
+          "code": "def _resolve_output_field(self):\n        \"\"\"\n        Attempts to infer the output type of the expression. If the output\n        fields of all source fields match then we can simply infer the same\n        type here.\n        \"\"\"\n        if self._output_field is None:\n            sources = self.get_source_fields()\n            num_sources = len(sources)\n            if num_sources == 0:\n                self._output_field = None\n            else:\n                self._output_field = sources[0]\n                for source in sources:\n                    if source is not None and not isinstance(self._output_field, source.__class__):\n                        raise FieldError(\n                            \"Expression contains mixed types. You must set output_field\")"
+        }
+      ]
+    },
+    {
+      "pr_number": 5437,
+      "pr_title": "Fixed #25560 -- Made empty string related name invalid.",
+      "pr_body": "Thanks to Ali Lotfi for the initial report and patch.\n",
+      "issue_id": 25560,
+      "issue_title": "Empty string related name should be invalid",
+      "issue_body": "",
+      "issue_closed_at": "2015-10-16T13:18:21",
+      "base_commit": "4dcc2a195595f8d7ddad45bc4baf98ffdeec7f41",
+      "changes": [
+        {
+          "file": "django/db/models/fields/related.py",
+          "type": "function",
+          "name": "_check_related_name_is_valid",
+          "class_name": "RelatedField",
+          "code": "def _check_related_name_is_valid(self):\n        import re\n        import keyword\n        related_name = self.remote_field.related_name\n        if not related_name:\n            return []\n        is_valid_id = True\n        if keyword.iskeyword(related_name):\n            is_valid_id = False\n        if six.PY3:\n            if not related_name.isidentifier():\n                is_valid_id = False\n        else:\n            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*\\Z', related_name):\n                is_valid_id = False\n        if not (is_valid_id or related_name.endswith('+')):\n            return [\n                checks.Error(\n                    \"The name '%s' is invalid related_name for field %s.%s\" %\n                    (self.remote_field.related_name, self.model._meta.object_name,\n                     self.name),\n                    hint=\"Related name must be a valid Python identifier or end with a '+'\",\n                    obj=self,\n                    id='fields.E306',\n                )\n            ]\n        return []"
+        },
+        {
+          "file": "django/db/models/fields/reverse_related.py",
+          "type": "function",
+          "name": "get_db_prep_lookup",
+          "class_name": "ForeignObjectRel",
+          "code": "def get_db_prep_lookup(self, lookup_type, value, connection, prepared=False):\n        # Defer to the actual field definition for db prep\n        return self.field.get_db_prep_lookup(lookup_type, value, connection=connection, prepared=prepared)"
+        }
+      ]
+    }
+  ]
+}

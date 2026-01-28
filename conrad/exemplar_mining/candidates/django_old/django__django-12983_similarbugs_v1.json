@@ -1,0 +1,171 @@
+{
+  "instance_id": "django__django-12983",
+  "repo": "django/django",
+  "created_at": "2020-05-26T22:02:40Z",
+  "problem_statement": "Make django.utils.text.slugify() strip dashes and underscores\nDescription\n\t \n\t\t(last modified by Elinaldo do Nascimento Monteiro)\n\t \nBug generation slug\nExample:\nfrom django.utils import text\ntext.slugify(\"___This is a test ---\")\noutput: ___this-is-a-test-\nImprovement after correction\nfrom django.utils import text\ntext.slugify(\"___This is a test ---\")\noutput: this-is-a-test\n\u200bPR\n",
+  "patch": "diff --git a/django/utils/text.py b/django/utils/text.py\n--- a/django/utils/text.py\n+++ b/django/utils/text.py\n@@ -393,17 +393,18 @@ def unescape_string_literal(s):\n @keep_lazy_text\n def slugify(value, allow_unicode=False):\n     \"\"\"\n-    Convert to ASCII if 'allow_unicode' is False. Convert spaces to hyphens.\n-    Remove characters that aren't alphanumerics, underscores, or hyphens.\n-    Convert to lowercase. Also strip leading and trailing whitespace.\n+    Convert to ASCII if 'allow_unicode' is False. Convert spaces or repeated\n+    dashes to single dashes. Remove characters that aren't alphanumerics,\n+    underscores, or hyphens. Convert to lowercase. Also strip leading and\n+    trailing whitespace, dashes, and underscores.\n     \"\"\"\n     value = str(value)\n     if allow_unicode:\n         value = unicodedata.normalize('NFKC', value)\n     else:\n         value = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode('ascii')\n-    value = re.sub(r'[^\\w\\s-]', '', value.lower()).strip()\n-    return re.sub(r'[-\\s]+', '-', value)\n+    value = re.sub(r'[^\\w\\s-]', '', value.lower())\n+    return re.sub(r'[-\\s]+', '-', value).strip('-_')\n \n \n def camel_case_to_spaces(value):\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 8396,
+      "pr_title": "Fixed #28116 -- Used error code filtering in PostgreSQL test database creation.",
+      "pr_body": "Ticket [28116](https://code.djangoproject.com/ticket/28116).",
+      "issue_id": 28116,
+      "issue_title": "Filtering PostgreSQL exception based on message is too brittle",
+      "issue_body": "",
+      "issue_closed_at": "2017-04-24T23:01:44",
+      "base_commit": "8ef35468b660e1c25af67a8299202b8bc108679f",
+      "changes": [
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import sys\n\nfrom django.db.backends.base.creation import BaseDatabaseCreation\n\n"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "_execute_create_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _execute_create_test_db(self, cursor, parameters, keepdb=False):\n        try:\n            super()._execute_create_test_db(cursor, parameters, keepdb)\n        except Exception as e:\n            exc_msg = 'database %s already exists' % parameters['dbname']\n            if exc_msg not in str(e):\n                # All errors except \"database already exists\" cancel tests\n                sys.stderr.write('Got an error creating the test database: %s\\n' % e)\n                sys.exit(2)\n            elif not keepdb:\n                # If the database should be kept, ignore \"database already\n                # exists\".\n                raise e"
+        }
+      ]
+    },
+    {
+      "pr_number": 6754,
+      "pr_title": "Fixed #26736 -- Improved unicode handling for SpatialReference.",
+      "pr_body": "https://code.djangoproject.com/ticket/26736\n",
+      "issue_id": 26736,
+      "issue_title": "SpatialReference crashes when initialized with WKT containining unicode characters",
+      "issue_body": "",
+      "issue_closed_at": "2016-06-11T20:00:40",
+      "base_commit": "0451dcc2eb2449a988ade8e603846f0508ce76b4",
+      "changes": [
+        {
+          "file": "django/contrib/gis/gdal/prototypes/srs.py",
+          "type": "function",
+          "name": "units_func",
+          "class_name": null,
+          "code": "def units_func(f):\n    \"\"\"\n    Creates a ctypes function prototype for OSR units functions, e.g.,\n    OSRGetAngularUnits, OSRGetLinearUnits.\n    \"\"\"\n    return double_output(f, [c_void_p, POINTER(c_char_p)], strarg=True)"
+        },
+        {
+          "file": "django/contrib/gis/gdal/srs.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "CoordTransform",
+          "code": "def __init__(self, source, target):\n        \"Initializes on a source and target SpatialReference objects.\"\n        if not isinstance(source, SpatialReference) or not isinstance(target, SpatialReference):\n            raise TypeError('source and target must be of type SpatialReference')\n        self.ptr = capi.new_ct(source._ptr, target._ptr)\n        self._srs1_name = source.name\n        self._srs2_name = target.name"
+        },
+        {
+          "file": "django/contrib/gis/gdal/srs.py",
+          "type": "function",
+          "name": "import_user_input",
+          "class_name": "SpatialReference",
+          "code": "def import_user_input(self, user_input):\n        \"Imports the Spatial Reference from the given user input string.\"\n        capi.from_user_input(self.ptr, force_bytes(user_input))"
+        },
+        {
+          "file": "django/contrib/gis/gdal/srs.py",
+          "type": "function",
+          "name": "proj4",
+          "class_name": "SpatialReference",
+          "code": "def proj4(self):\n        \"Alias for proj().\"\n        return self.proj"
+        }
+      ]
+    },
+    {
+      "pr_number": 4660,
+      "pr_title": "Fixed #24791 -- Added fallback when 'postgres' database isn't available",
+      "pr_body": "",
+      "issue_id": 24791,
+      "issue_title": "Cannot run tests without access to postgres database",
+      "issue_body": "",
+      "issue_closed_at": "2015-05-15T11:43:40",
+      "base_commit": "2dee853ed4def42b7ef1b3b472b395055543cc00",
+      "changes": [
+        {
+          "file": "django/db/backends/base/creation.py",
+          "type": "function",
+          "name": "_destroy_test_db",
+          "class_name": "BaseDatabaseCreation",
+          "code": "def _destroy_test_db(self, test_database_name, verbosity):\n        \"\"\"\n        Internal implementation - remove the test db tables.\n        \"\"\"\n        # Remove the test database to clean up after\n        # ourselves. Connect to the previous database (not the test database)\n        # to do so, because it's not allowed to delete a database while being\n        # connected to it.\n        with self._nodb_connection.cursor() as cursor:\n            # Wait to avoid \"database is being accessed by other users\" errors.\n            time.sleep(1)\n            cursor.execute(\"DROP DATABASE %s\"\n                           % self.connection.ops.quote_name(test_database_name))"
+        },
+        {
+          "file": "django/db/backends/postgresql_psycopg2/base.py",
+          "type": "line",
+          "name": "line 4",
+          "code": "Requires psycopg 2: http://initd.org/projects/psycopg2\n\"\"\"\n\nfrom django.conf import settings\nfrom django.core.exceptions import ImproperlyConfigured\nfrom django.db.backends.base.base import BaseDatabaseWrapper\nfrom django.db.backends.base.validation import BaseDatabaseValidation\nfrom django.utils.encoding import force_str\nfrom django.utils.functional import cached_property\nfrom django.utils.safestring import SafeBytes, SafeText"
+        },
+        {
+          "file": "django/db/backends/postgresql_psycopg2/base.py",
+          "type": "function",
+          "name": "is_usable",
+          "class_name": "DatabaseWrapper",
+          "code": "def is_usable(self):\n        try:\n            # Use a psycopg cursor directly, bypassing Django's utilities.\n            self.connection.cursor().execute(\"SELECT 1\")\n        except Database.Error:\n            return False\n        else:\n            return True"
+        }
+      ]
+    },
+    {
+      "pr_number": 10468,
+      "pr_title": "Fixed #29827 -- Fixed reuse of existing test DBs with --keepdb on MySQL.",
+      "pr_body": "https://code.djangoproject.com/ticket/29827",
+      "issue_id": 29827,
+      "issue_title": "cloned DBs are not reused during tests on MySQL",
+      "issue_body": "",
+      "issue_closed_at": "2018-10-25T18:38:15",
+      "base_commit": "76b3367035889d87ffef7a52cd44d70e30537f6f",
+      "changes": [
+        {
+          "file": "django/db/backends/mysql/creation.py",
+          "type": "function",
+          "name": "sql_table_creation_suffix",
+          "class_name": "DatabaseCreation",
+          "code": "def sql_table_creation_suffix(self):\n        suffix = []\n        test_settings = self.connection.settings_dict['TEST']\n        if test_settings['CHARSET']:\n            suffix.append('CHARACTER SET %s' % test_settings['CHARSET'])\n        if test_settings['COLLATION']:\n            suffix.append('COLLATE %s' % test_settings['COLLATION'])\n        return ' '.join(suffix)"
+        },
+        {
+          "file": "django/db/backends/mysql/creation.py",
+          "type": "function",
+          "name": "_clone_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _clone_test_db(self, suffix, verbosity, keepdb=False):\n        source_database_name = self.connection.settings_dict['NAME']\n        target_database_name = self.get_test_db_clone_settings(suffix)['NAME']\n        test_db_params = {\n            'dbname': self.connection.ops.quote_name(target_database_name),\n            'suffix': self.sql_table_creation_suffix(),\n        }\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                self._execute_create_test_db(cursor, test_db_params, keepdb)\n            except Exception:\n                try:\n                    if verbosity >= 1:\n                        self.log('Destroying old test database for alias %s\u2026' % (\n                            self._get_database_display_str(verbosity, target_database_name),\n                        ))\n                    cursor.execute('DROP DATABASE %(dbname)s' % test_db_params)\n                    self._execute_create_test_db(cursor, test_db_params, keepdb)\n                except Exception as e:\n                    self.log('Got an error recreating the test database: %s' % e)\n                    sys.exit(2)\n\n        dump_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        dump_cmd[0] = 'mysqldump'\n        dump_cmd[-1] = source_database_name\n        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        load_cmd[-1] = target_database_name\n\n        with subprocess.Popen(dump_cmd, stdout=subprocess.PIPE) as dump_proc:\n            with subprocess.Popen(load_cmd, stdin=dump_proc.stdout, stdout=subprocess.DEVNULL):\n                # Allow dump_proc to receive a SIGPIPE if the load process exits.\n                dump_proc.stdout.close()"
+        },
+        {
+          "file": "django/db/backends/mysql/creation.py",
+          "type": "function",
+          "name": "_clone_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _clone_test_db(self, suffix, verbosity, keepdb=False):\n        source_database_name = self.connection.settings_dict['NAME']\n        target_database_name = self.get_test_db_clone_settings(suffix)['NAME']\n        test_db_params = {\n            'dbname': self.connection.ops.quote_name(target_database_name),\n            'suffix': self.sql_table_creation_suffix(),\n        }\n        with self._nodb_connection.cursor() as cursor:\n            try:\n                self._execute_create_test_db(cursor, test_db_params, keepdb)\n            except Exception:\n                try:\n                    if verbosity >= 1:\n                        self.log('Destroying old test database for alias %s\u2026' % (\n                            self._get_database_display_str(verbosity, target_database_name),\n                        ))\n                    cursor.execute('DROP DATABASE %(dbname)s' % test_db_params)\n                    self._execute_create_test_db(cursor, test_db_params, keepdb)\n                except Exception as e:\n                    self.log('Got an error recreating the test database: %s' % e)\n                    sys.exit(2)\n\n        dump_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        dump_cmd[0] = 'mysqldump'\n        dump_cmd[-1] = source_database_name\n        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)\n        load_cmd[-1] = target_database_name\n\n        with subprocess.Popen(dump_cmd, stdout=subprocess.PIPE) as dump_proc:\n            with subprocess.Popen(load_cmd, stdin=dump_proc.stdout, stdout=subprocess.DEVNULL):\n                # Allow dump_proc to receive a SIGPIPE if the load process exits.\n                dump_proc.stdout.close()"
+        }
+      ]
+    },
+    {
+      "pr_number": 10653,
+      "pr_title": "Fixed #29959 -- Cached GEOS version in WKBWriter class",
+      "pr_body": "https://code.djangoproject.com/ticket/29959",
+      "issue_id": 29959,
+      "issue_title": "Random LooseVersion errors while getting multiple wkb values",
+      "issue_body": "",
+      "issue_closed_at": "2018-11-16T14:12:45",
+      "base_commit": "97cec6f75d9d9b86892829f784e5e9dabfd1242a",
+      "changes": [
+        {
+          "file": "django/contrib/gis/geos/prototypes/io.py",
+          "type": "class",
+          "name": "WKBWriter",
+          "code": "class WKBWriter(IOBase):\n    _constructor = wkb_writer_create\n    ptr_type = WKB_WRITE_PTR\n    destructor = wkb_writer_destroy\n\n    def __init__(self, dim=2):\n        super().__init__()\n        self.outdim = dim\n\n    def _handle_empty_point(self, geom):\n        from django.contrib.gis.geos import Point\n        if isinstance(geom, Point) and geom.empty:\n            if self.srid:\n                # PostGIS uses POINT(NaN NaN) for WKB representation of empty\n                # points. Use it for EWKB as it's a PostGIS specific format.\n                # https://trac.osgeo.org/postgis/ticket/3181\n                geom = Point(float('NaN'), float('NaN'), srid=geom.srid)\n            else:\n                raise ValueError('Empty point is not representable in WKB.')\n        return geom\n\n    def write(self, geom):\n        \"Return the WKB representation of the given geometry.\"\n        from django.contrib.gis.geos import Polygon\n        geom = self._handle_empty_point(geom)\n        wkb = wkb_writer_write(self.ptr, geom.ptr, byref(c_size_t()))\n        if geos_version_tuple() < (3, 6, 1) and isinstance(geom, Polygon) and geom.empty:\n            # Fix GEOS output for empty polygon.\n            # See https://trac.osgeo.org/geos/ticket/680.\n            wkb = wkb[:-8] + b'\\0' * 4\n        return memoryview(wkb)\n\n    def write_hex(self, geom):\n        \"Return the HEXEWKB representation of the given geometry.\"\n        from django.contrib.gis.geos.polygon import Polygon\n        geom = self._handle_empty_point(geom)\n        wkb = wkb_writer_write_hex(self.ptr, geom.ptr, byref(c_size_t()))\n        if geos_version_tuple() < (3, 6, 1) and isinstance(geom, Polygon) and geom.empty:\n            wkb = wkb[:-16] + b'0' * 8\n        return wkb\n\n    # ### WKBWriter Properties ###\n\n    # Property for getting/setting the byteorder.\n    def _get_byteorder(self):\n        return wkb_writer_get_byteorder(self.ptr)\n\n    def _set_byteorder(self, order):\n        if order not in (0, 1):\n            raise ValueError('Byte order parameter must be 0 (Big Endian) or 1 (Little Endian).')\n        wkb_writer_set_byteorder(self.ptr, order)\n\n    byteorder = property(_get_byteorder, _set_byteorder)\n\n    # Property for getting/setting the output dimension.\n    @property\n    def outdim(self):\n        return wkb_writer_get_outdim(self.ptr)\n\n    @outdim.setter\n    def outdim(self, new_dim):\n        if new_dim not in (2, 3):\n            raise ValueError('WKB output dimension must be 2 or 3')\n        wkb_writer_set_outdim(self.ptr, new_dim)\n\n    # Property for getting/setting the include srid flag.\n    @property\n    def srid(self):\n        return bool(wkb_writer_get_include_srid(self.ptr))\n\n    @srid.setter\n    def srid(self, include):\n        wkb_writer_set_include_srid(self.ptr, bool(include))"
+        },
+        {
+          "file": "django/contrib/gis/geos/prototypes/io.py",
+          "type": "function",
+          "name": "write",
+          "class_name": "WKBWriter",
+          "code": "def write(self, geom):\n        \"Return the WKB representation of the given geometry.\"\n        from django.contrib.gis.geos import Polygon\n        geom = self._handle_empty_point(geom)\n        wkb = wkb_writer_write(self.ptr, geom.ptr, byref(c_size_t()))\n        if geos_version_tuple() < (3, 6, 1) and isinstance(geom, Polygon) and geom.empty:\n            # Fix GEOS output for empty polygon.\n            # See https://trac.osgeo.org/geos/ticket/680.\n            wkb = wkb[:-8] + b'\\0' * 4\n        return memoryview(wkb)"
+        },
+        {
+          "file": "django/contrib/gis/geos/prototypes/io.py",
+          "type": "function",
+          "name": "write_hex",
+          "class_name": "WKBWriter",
+          "code": "def write_hex(self, geom):\n        \"Return the HEXEWKB representation of the given geometry.\"\n        from django.contrib.gis.geos.polygon import Polygon\n        geom = self._handle_empty_point(geom)\n        wkb = wkb_writer_write_hex(self.ptr, geom.ptr, byref(c_size_t()))\n        if geos_version_tuple() < (3, 6, 1) and isinstance(geom, Polygon) and geom.empty:\n            wkb = wkb[:-16] + b'0' * 8\n        return wkb"
+        }
+      ]
+    }
+  ]
+}

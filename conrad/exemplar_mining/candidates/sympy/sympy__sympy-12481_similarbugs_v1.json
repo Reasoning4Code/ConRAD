@@ -1,0 +1,138 @@
+{
+  "instance_id": "sympy__sympy-12481",
+  "repo": "sympy/sympy",
+  "created_at": "2017-04-03T01:52:33Z",
+  "problem_statement": "`Permutation` constructor fails with non-disjoint cycles\nCalling `Permutation([[0,1],[0,1]])` raises a `ValueError` instead of constructing the identity permutation.  If the cycles passed in are non-disjoint, they should be applied in left-to-right order and the resulting permutation should be returned.\r\n\r\nThis should be easy to compute.  I don't see a reason why non-disjoint cycles should be forbidden.\n",
+  "patch": "diff --git a/sympy/combinatorics/permutations.py b/sympy/combinatorics/permutations.py\n--- a/sympy/combinatorics/permutations.py\n+++ b/sympy/combinatorics/permutations.py\n@@ -895,12 +895,8 @@ def __new__(cls, *args, **kwargs):\n         # counting starts from 1.\n \n         temp = flatten(args)\n-        if has_dups(temp):\n-            if is_cycle:\n-                raise ValueError('there were repeated elements; to resolve '\n-                'cycles use Cycle%s.' % ''.join([str(tuple(c)) for c in args]))\n-            else:\n-                raise ValueError('there were repeated elements.')\n+        if has_dups(temp) and not is_cycle:\n+            raise ValueError('there were repeated elements.')\n         temp = set(temp)\n \n         if not is_cycle and \\\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 12236,
+      "pr_title": "Fixed apart() producing wrong answer",
+      "pr_body": "apart() produced a wrong result when given multivariate polynomial with fractional coefficients in a result. Division was done correctly, but the domain wasn't properly converted to a field. Now the default parameter `field=True` is set explicitly before conversion to polynomial.\r\n\r\nPreviously:\r\n`In [1]: apart(x/2, y)`\r\n`Out[1]: 0`\r\n\r\nNow:\r\n`In [1]: apart(x/2, y)`\r\n`Out[1]:`\r\nx\r\n\u2500\r\n2\r\n\r\nThis fixes #12177, #9123.",
+      "issue_id": 12177,
+      "issue_title": "Wrong result with apart",
+      "issue_body": "```\r\nPython 3.6.0 |Continuum Analytics, Inc.| (default, Dec 23 2016, 12:22:00) \r\nType \"copyright\", \"credits\" or \"license\" for more information.\r\n\r\nIPython 5.1.0 -- An enhanced Interactive Python.\r\n?         -> Introduction and overview of IPython's features.\r\n%quickref -> Quick reference.\r\nhelp      -> Python's own help system.\r\nobject?   -> Details about 'object', use 'object??' for extra details.\r\n\r\nIn [1]: from sympy import symbols\r\n\r\nIn [2]: a = symbols('a', real=True)\r\n\r\nIn [3]: t = symbols('t', real=True, negative=False)\r\n\r\nIn [4]: bug = a * (-t + (-t + 1) * (2 * t - 1)) / (2 * t - 1)\r\n\r\nIn [5]: bug.subs(a, 1)\r\nOut[5]: (-t + (-t + 1)*(2*t - 1))/(2*t - 1)\r\n\r\nIn [6]: bug.subs(a, 1).apart()\r\nOut[6]: -t + 1/2 - 1/(2*(2*t - 1))\r\n\r\nIn [7]: bug.subs(a, 1).apart(t)\r\nOut[7]: -t + 1/2 - 1/(2*(2*t - 1))\r\n\r\nIn [8]: bug.apart(t)\r\nOut[8]: -a*t\r\n\r\nIn [9]: import sympy; sympy.__version__\r\nOut[9]: '1.0'\r\n```",
+      "issue_closed_at": "2017-03-06T12:58:04Z",
+      "base_commit": "d60497958f6dea7f5e25bc41e9107a6a63694d01",
+      "changes": [
+        {
+          "file": "sympy/polys/domains/polynomialring.py",
+          "type": "function",
+          "name": "from_PolynomialRing",
+          "class_name": "PolynomialRing",
+          "code": "def from_PolynomialRing(K1, a, K0):\n        \"\"\"Convert a polynomial to ``dtype``. \"\"\"\n        try:\n            return a.set_ring(K1.ring)\n        except (CoercionFailed, GeneratorsError):\n            return None"
+        }
+      ]
+    },
+    {
+      "pr_number": 8707,
+      "pr_title": "Fix real assumption for gamma function.",
+      "pr_body": "- [x] Updated code as suggested by Sergey.\n\n@pelegm @skirpichev \n",
+      "issue_id": 8657,
+      "issue_title": "gamma(x) is assumed (wrongly) to be real when x is real",
+      "issue_body": "It may be that `x` is -1, for example, where `gamma` is not defined (or rather is `zoo`). So, unless it is known that `x` is not a nonpositive integer, `gamma(x).is_real` should return `None` (currently it returns `True`).\n",
+      "issue_closed_at": "2014-12-31T11:14:57Z",
+      "base_commit": "ed054cc55f714dab9e809036151f0ca136397604",
+      "changes": [
+        {
+          "file": "sympy/functions/special/gamma_functions.py",
+          "type": "function",
+          "name": "_eval_conjugate",
+          "class_name": "loggamma",
+          "code": "def _eval_conjugate(self):\n        z = self.args[0]\n        if not z in (S.Zero, S.NegativeInfinity):\n            return self.func(z.conjugate())"
+        }
+      ]
+    },
+    {
+      "pr_number": 9009,
+      "pr_title": "MatrixExpr: add MatPow doit(), changes to doit for MatAdd, MatMul, Trace",
+      "pr_body": "I'm been looking at `doit()` support in MatrixExpr.  In particular, I'm interested in cases where these have ImmutableMatrices inside and they could be evaluated (e.g., after a substitution).\n\nHere are some fixes:\n- MatPow: added `doit()`.\n- MatPow: refactor my older `.as_explicit()` code to use the the `doit()`.\n- MatAdd: had rather ineffective `doit()`, improved.\n- MatMul: change the default from `deep=False` to `deep=True`.  I cannot find a reason for it, so I've switched it.\n- MatMul: clean up test code.\n- Trace: change the default to `deep=True`.\n\nThe `deep=True` changes might be controversial: if someone knows why it `deep=False` before, I could always revert that (and add a comment to the code!)\n\nAnyway, here is what it does:\n\n```\nIn [6]: A = Matrix([[1,2],[3,4]])\n\nIn [7]: B = Matrix([[2,3],[4,5]])\n\nIn [8]: n = Symbol('n', integer=True)\n\nIn [9]: w = MatPow(A, n) + MatMul(A, MatPow(B,2*n))\n\nIn [10]: pprint(w)\n               2\u22c5n           n\n\u23a11  2\u23a4\u22c5\u239b\u23a12  3\u23a4\u239e    + \u239b\u23a11  2\u23a4\u239e \n\u23a2    \u23a5 \u239c\u23a2    \u23a5\u239f      \u239c\u23a2    \u23a5\u239f \n\u23a33  4\u23a6 \u239d\u23a34  5\u23a6\u23a0      \u239d\u23a33  4\u23a6\u23a0 \n\nIn [21]: pprint(w.subs(n, 1))\n               2           1\n\u23a11  2\u23a4\u22c5\u239b\u23a12  3\u23a4\u239e  + \u239b\u23a11  2\u23a4\u239e \n\u23a2    \u23a5 \u239c\u23a2    \u23a5\u239f    \u239c\u23a2    \u23a5\u239f \n\u23a33  4\u23a6 \u239d\u23a34  5\u23a6\u23a0    \u239d\u23a33  4\u23a6\u23a0 \n\nIn [22]: pprint(w.subs(n, 1).doit())    % these fixes make this work\n\u23a173   97 \u23a4\n\u23a2        \u23a5\n\u23a3163  215\u23a6\n```\n",
+      "issue_id": 8138,
+      "issue_title": "MatExpr.doit: deep default should be True for Expr (and still False for MatExpr?)",
+      "issue_body": "I notice `MatExpr.doit()` has deep defaulting to False.  I assume that is deliberate (forget where but recall it looked deliberate).\n\nAnyway, deep should probably still default to True for any `Expr` (i.e., non-Matrix) it encounters.  \n\nConsider the following current behaviour:\n\n```\nx = S('x')\nn = S('n')\nA = MatrixSymbol('A', n, n)\nfive = Add(2, 3, evaluate=False)\n\nf = five*x\nG = five*A\n\nf.doit()\n# gives: 5*x\n\nG.doit()\n# gives: (2 + 3)*A\n```\n\nSame for `MatPow` where I saw this.\n",
+      "issue_closed_at": "2015-02-19T04:28:17Z",
+      "base_commit": "cf171b2f088bc6985f5973972425fa0a9fc65f31",
+      "changes": [
+        {
+          "file": "sympy/matrices/expressions/matadd.py",
+          "type": "function",
+          "name": "_eval_trace",
+          "class_name": "MatAdd",
+          "code": "def _eval_trace(self):\n        from trace import Trace\n        return MatAdd(*[Trace(arg) for arg in self.args]).doit()"
+        },
+        {
+          "file": "sympy/matrices/expressions/matmul.py",
+          "type": "function",
+          "name": "_eval_inverse",
+          "class_name": "MatMul",
+          "code": "def _eval_inverse(self):\n        try:\n            return MatMul(*[\n                arg.inverse() if isinstance(arg, MatrixExpr) else arg**-1\n                    for arg in self.args[::-1]]).doit()\n        except ShapeError:\n            from sympy.matrices.expressions.inverse import Inverse\n            return Inverse(self)"
+        },
+        {
+          "file": "sympy/matrices/expressions/matpow.py",
+          "type": "function",
+          "name": "shape",
+          "class_name": "MatPow",
+          "code": "def shape(self):\n        return self.base.shape"
+        },
+        {
+          "file": "sympy/matrices/expressions/trace.py",
+          "type": "function",
+          "name": "arg",
+          "class_name": "Trace",
+          "code": "def arg(self):\n        return self.args[0]"
+        }
+      ]
+    },
+    {
+      "pr_number": 7928,
+      "pr_title": "give MaxMinBase an evalf routine",
+      "pr_body": "Although Or, And, etc... will not have a number as an\nargument, Min and Max can. When the operations version\nof _eval_evalf is called a call to as_independent is\nmade. This creates an x (=1) that is assumed to be an\nargument of the object so Max(0,y).n() becomes Max(1, 0, y) -> Max(1, y).\nTo avoid this an evalf routine was added to handle MaxMinBase separately.\n\nfixes #7233\n",
+      "issue_id": 7233,
+      "issue_title": "N(Max(0.0, n + m)) returns Max(1.0, n + m)",
+      "issue_body": "```\nThe following code does not return what is expected,\n\nn = sympy.Symbol('n')\nm = sympy.Symbol('m')\na = sympy.Max(0.0, n + m)\nprint a\nprint sympy.N(a)\n\noutputs:\n>> Max(0.0, m + n)\n>> Max(1.0, m + n)\n```\n\nOriginal issue for #7233: http://code.google.com/p/sympy/issues/detail?id=4134\nOriginal author: https://code.google.com/u/100679098312105897492/\n",
+      "issue_closed_at": "2014-08-29T23:58:03Z",
+      "base_commit": "d365f932a26c28c4c57b2b9f6dddee2ca94a5c66",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/miscellaneous.py",
+          "type": "function",
+          "name": "_eval_derivative",
+          "class_name": "MinMaxBase",
+          "code": "def _eval_derivative(self, s):\n        # f(x).diff(s) -> x.diff(s) * f.fdiff(1)(s)\n        i = 0\n        l = []\n        for a in self.args:\n            i += 1\n            da = a.diff(s)\n            if da is S.Zero:\n                continue\n            try:\n                df = self.fdiff(i)\n            except ArgumentIndexError:\n                df = Function.fdiff(self, i)\n            l.append(df * da)\n        return Add(*l)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8654,
+      "pr_title": "Fix TrigonometricFunction._eval_is_rational for rational args",
+      "pr_body": "closes #8653\n",
+      "issue_id": 8653,
+      "issue_title": "sin(n) is assumed (wrongly) to be irrational for an integer n",
+      "issue_body": "Check this:\n\n``` python\n>>> n = Symbol('n', integer=True)  # may be 0\n>>> sin(n).is_irrational\nTrue\n```\n\nwhile `sin(0)` is clearly rational.\n",
+      "issue_closed_at": "2014-12-21T11:20:39Z",
+      "base_commit": "2e4e90b1b0243c85949eb1633f0546466b00829f",
+      "changes": [
+        {
+          "file": "sympy/functions/elementary/exponential.py",
+          "type": "function",
+          "name": "_eval_is_rational",
+          "class_name": "log",
+          "code": "def _eval_is_rational(self):\n        s = self.func(*self.args)\n        if s.func == self.func:\n            if (self.args[0] - 1).is_zero:\n                return True\n            if s.args[0].is_rational:\n                return False\n        else:\n            return s.is_rational"
+        },
+        {
+          "file": "sympy/functions/elementary/exponential.py",
+          "type": "function",
+          "name": "_eval_is_rational",
+          "class_name": "log",
+          "code": "def _eval_is_rational(self):\n        s = self.func(*self.args)\n        if s.func == self.func:\n            if (self.args[0] - 1).is_zero:\n                return True\n            if s.args[0].is_rational:\n                return False\n        else:\n            return s.is_rational"
+        },
+        {
+          "file": "sympy/functions/elementary/trigonometric.py",
+          "type": "class",
+          "name": "TrigonometricFunction",
+          "code": "class TrigonometricFunction(Function):\n    \"\"\"Base class for trigonometric functions. \"\"\"\n\n    unbranched = True\n\n    def _eval_is_rational(self):\n        s = self.func(*self.args)\n        if s.func == self.func:\n            if s.args[0].is_rational:\n                return False\n        else:\n            return s.is_rational\n\n    def _eval_is_algebraic(self):\n        s = self.func(*self.args)\n        if s.func == self.func:\n            if self.args[0].is_nonzero and self.args[0].is_algebraic:\n                return False\n            pi_coeff = _pi_coeff(self.args[0])\n            if pi_coeff is not None and pi_coeff.is_rational:\n                return True\n        else:\n            return s.is_algebraic\n\n    def _eval_expand_complex(self, deep=True, **hints):\n        re_part, im_part = self.as_real_imag(deep=deep, **hints)\n        return re_part + im_part*S.ImaginaryUnit\n\n    def _as_real_imag(self, deep=True, **hints):\n        if self.args[0].is_real:\n            if deep:\n                hints['complex'] = False\n                return (self.args[0].expand(deep, **hints), S.Zero)\n            else:\n                return (self.args[0], S.Zero)\n        if deep:\n            re, im = self.args[0].expand(deep, **hints).as_real_imag()\n        else:\n            re, im = self.args[0].as_real_imag()\n        return (re, im)"
+        }
+      ]
+    }
+  ]
+}

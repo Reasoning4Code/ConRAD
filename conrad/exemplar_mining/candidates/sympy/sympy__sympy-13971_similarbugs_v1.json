@@ -1,0 +1,139 @@
+{
+  "instance_id": "sympy__sympy-13971",
+  "repo": "sympy/sympy",
+  "created_at": "2018-01-20T10:03:44Z",
+  "problem_statement": "Display of SeqFormula()\n```\r\nimport sympy as sp\r\nk, m, n = sp.symbols('k m n', integer=True)\r\nsp.init_printing()\r\n\r\nsp.SeqFormula(n**2, (n,0,sp.oo))\r\n```\r\n\r\nThe Jupyter rendering of this command backslash-escapes the brackets producing:\r\n\r\n`\\left\\[0, 1, 4, 9, \\ldots\\right\\]`\r\n\r\nCopying this output to a markdown cell this does not render properly.  Whereas:\r\n\r\n`[0, 1, 4, 9, \\ldots ]`\r\n\r\ndoes render just fine.  \r\n\r\nSo - sequence output should not backslash-escape square brackets, or, `\\]` should instead render?\n",
+  "patch": "diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py\n--- a/sympy/printing/latex.py\n+++ b/sympy/printing/latex.py\n@@ -1657,9 +1657,9 @@ def _print_SeqFormula(self, s):\n         else:\n             printset = tuple(s)\n \n-        return (r\"\\left\\[\"\n+        return (r\"\\left[\"\n               + r\", \".join(self._print(el) for el in printset)\n-              + r\"\\right\\]\")\n+              + r\"\\right]\")\n \n     _print_SeqPer = _print_SeqFormula\n     _print_SeqAdd = _print_SeqFormula\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 13564,
+      "pr_title": "Resolves RecursionError in latex representation",
+      "pr_body": "fixes #13559. It was due to factor of `1/1`  \r\n```python\r\nexpr = parse_expr('5/1', evaluate=False)\r\nexpr.args\r\n```\r\nit gives `(5 , 1/1)` , which was not handled properly in latex conversion . So everytime an expression was divided by 1 , it resulted in RecursionError",
+      "issue_id": 13559,
+      "issue_title": "LaTeX representation raises RecursionError",
+      "issue_body": "LaTeX representation of an expression that has division by 1 causes `RecursionError`. SymPy version: 1.1.1.\r\n\r\nCode to reproduce the bug:\r\n```python\r\nfrom sympy import latex\r\nfrom sympy.parsing.sympy_parser import parse_expr\r\n\r\nexpr = parse_expr('2/1', evaluate=False)\r\nlatex(expr)\r\n```\r\nOutput:\r\n```\r\n...\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/printer.py in _print(self, expr, *args, **kwargs)\r\n    255                 printmethod = '_print_' + cls.__name__\r\n    256                 if hasattr(self, printmethod):\r\n--> 257                     return getattr(self, printmethod)(expr, *args, **kwargs)\r\n    258             # Unknown object, fall back to the emptyPrinter.\r\n    259             return self.emptyPrinter(expr)\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/latex.py in _print_Pow(self, expr)\r\n    466         elif expr.exp.is_Rational and expr.exp.is_negative and expr.base.is_commutative:\r\n    467             # Things like 1/x\r\n--> 468             return self._print_Mul(expr)\r\n    469         else:\r\n    470             if expr.base.is_Function:\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/latex.py in _print_Mul(self, expr)\r\n    396             # use the original expression here, since fraction() may have\r\n    397             # altered it when producing numer and denom\r\n--> 398             tex += convert(expr)\r\n    399         else:\r\n    400             snumer = convert(numer)\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/latex.py in convert(expr)\r\n    366         def convert(expr):\r\n    367             if not expr.is_Mul:\r\n--> 368                 return str(self._print(expr))\r\n    369             else:\r\n    370                 _tex = last_term_tex = \"\"\r\n\r\n... last 4 frames repeated, from the frame below ...\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/printer.py in _print(self, expr, *args, **kwargs)\r\n    255                 printmethod = '_print_' + cls.__name__\r\n    256                 if hasattr(self, printmethod):\r\n--> 257                     return getattr(self, printmethod)(expr, *args, **kwargs)\r\n    258             # Unknown object, fall back to the emptyPrinter.\r\n    259             return self.emptyPrinter(expr)\r\n\r\nRecursionError: maximum recursion depth exceeded in comparison\r\n```\r\n",
+      "issue_closed_at": "2017-11-09T16:49:04Z",
+      "base_commit": "36d9c850c642bec047e2cbad0a07c48f4fc7c779",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Gradient",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Gradient(self, expr):\n        func = expr._expr\n        return r\"\\nabla\\cdot %s\" % self.parenthesize(func, PRECEDENCE['Mul'])"
+        },
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "convert",
+          "class_name": "LatexPrinter",
+          "code": "def convert(expr):\n            if not expr.is_Mul:\n                return str(self._print(expr))\n            else:\n                _tex = last_term_tex = \"\"\n\n                if self.order not in ('old', 'none'):\n                    args = expr.as_ordered_factors()\n                else:\n                    args = expr.args\n\n                for i, term in enumerate(args):\n                    term_tex = self._print(term)\n\n                    if self._needs_mul_brackets(term, first=(i == 0),\n                                                last=(i == len(args) - 1)):\n                        term_tex = r\"\\left(%s\\right)\" % term_tex\n\n                    if _between_two_numbers_p[0].search(last_term_tex) and \\\n                            _between_two_numbers_p[1].match(term_tex):\n                        # between two numbers\n                        _tex += numbersep\n                    elif _tex:\n                        _tex += separator\n\n                    _tex += term_tex\n                    last_term_tex = term_tex\n                return _tex"
+        }
+      ]
+    },
+    {
+      "pr_number": 13437,
+      "pr_title": "Fix bell(n) for n=oo, and negative/non-integer 'n'",
+      "pr_body": "This PR uses commits of #9198 (maintaining ownership to original author). And tries to address the requested changes on PR #9198 .\r\nFixes #9184",
+      "issue_id": 9184,
+      "issue_title": "bell(n).limit(n, oo) should be oo rather than bell(oo)",
+      "issue_body": "`bell(n).limit(n,oo)` should take the value infinity, but the current output is `bell(oo)`. As the Bell numbers represent the number of partitions of a set, it seems natural that `bell(oo)` should be able to be evaluated rather than be returned unevaluated. This issue is also in line with the recent fixes to the corresponding limit for the Fibonacci numbers and Lucas numbers.\n\n```\nfrom sympy import *\nn = symbols('n')\nbell(n).limit(n,oo)\n\nOutput:\nbell(oo)\n```\n\nI'm new to Sympy, so I'd appreciate the opportunity to fix this bug myself if that's alright.\n",
+      "issue_closed_at": "2017-10-13T04:35:13Z",
+      "base_commit": "674afc619d7f5c519b6a5393a8b0532a131e57e0",
+      "changes": [
+        {
+          "file": "sympy/functions/combinatorial/numbers.py",
+          "type": "function",
+          "name": "_bell_incomplete_poly",
+          "class_name": "bell",
+          "code": "def _bell_incomplete_poly(n, k, symbols):\n        r\"\"\"\n        The second kind of Bell polynomials (incomplete Bell polynomials).\n\n        Calculated by recurrence formula:\n\n        .. math:: B_{n,k}(x_1, x_2, \\dotsc, x_{n-k+1}) =\n                \\sum_{m=1}^{n-k+1}\n                \\x_m \\binom{n-1}{m-1} B_{n-m,k-1}(x_1, x_2, \\dotsc, x_{n-m-k})\n\n        where\n            B_{0,0} = 1;\n            B_{n,0} = 0; for n>=1\n            B_{0,k} = 0; for k>=1\n\n        \"\"\"\n        if (n == 0) and (k == 0):\n            return S.One\n        elif (n == 0) or (k == 0):\n            return S.Zero\n        s = S.Zero\n        a = S.One\n        for m in range(1, n - k + 2):\n            s += a * bell._bell_incomplete_poly(\n                n - m, k - 1, symbols) * symbols[m - 1]\n            a = a * (n - m) / m\n        return expand_mul(s)"
+        }
+      ]
+    },
+    {
+      "pr_number": 11947,
+      "pr_title": "aligned middle of matrix with baseline",
+      "pr_body": "**Previous Output**: \r\n\r\n```\r\n>>> Z = Matrix(5,5, lambda i,j: i+j)\r\n>>> pprint(MatMul(2,Z))\r\n2\u22c5\u23a10  1  2  3  4\u23a4\r\n  \u23a2             \u23a5\r\n  \u23a21  2  3  4  5\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a22  3  4  5  6\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a23  4  5  6  7\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a34  5  6  7  8\u23a6\r\n```\r\n\r\n**Output after this PR**:\r\n```\r\n>>> Z = Matrix(5,5, lambda i,j: i+j)\r\n>>> pprint(MatMul(2,Z))\r\n  \u23a10  1  2  3  4\u23a4\r\n  \u23a2             \u23a5\r\n  \u23a21  2  3  4  5\u23a5\r\n  \u23a2             \u23a5\r\n2.\u23a22  3  4  5  6\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a23  4  5  6  7\u23a5\r\n  \u23a2             \u23a5\r\n  \u23a34  5  6  7  8\u23a6\r\n```\r\nFixes #10472 . ",
+      "issue_id": 10472,
+      "issue_title": "pprint should align the middle of the matrix to the baseline?",
+      "issue_body": "Consider the current behaviour, where operators align with the top of the matrix:\n\n```\n>>> Z = Matrix(5,5, lambda i,j: i+j)\n>>> pprint(MatMul(2,Z))\n2\u22c5\u23a10  1  2  3  4\u23a4\n  \u23a2             \u23a5\n  \u23a21  2  3  4  5\u23a5\n  \u23a2             \u23a5\n  \u23a22  3  4  5  6\u23a5\n  \u23a2             \u23a5\n  \u23a23  4  5  6  7\u23a5\n  \u23a2             \u23a5\n  \u23a34  5  6  7  8\u23a6\n>>> pprint(MatAdd(Z,Z))\n\u23a10  1  2  3  4\u23a4 + \u23a10  1  2  3  4\u23a4\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a21  2  3  4  5\u23a5   \u23a21  2  3  4  5\u23a5\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a22  3  4  5  6\u23a5   \u23a22  3  4  5  6\u23a5\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a23  4  5  6  7\u23a5   \u23a23  4  5  6  7\u23a5\n\u23a2             \u23a5   \u23a2             \u23a5\n\u23a34  5  6  7  8\u23a6   \u23a34  5  6  7  8\u23a6\n```\n\nThis looks poor, but I figured it might be the desired behaviour...\n\nHere's the example that makes me think its wrong:\n\n```\n>>> pprint(sin((1+1/x)/(1+1/y)) + det(MatMul(2,Z)))\n   \u239b    1\u239e                       \n   \u239c1 + \u2500\u239f                       \n   \u239c    x\u239f                       \nsin\u239c\u2500\u2500\u2500\u2500\u2500\u239f + 32\u22c5\u2502\u23a10  1  2  3  4\u23a4\u2502\n   \u239c    1\u239f      \u2502\u23a2             \u23a5\u2502\n   \u239c1 + \u2500\u239f      \u2502\u23a21  2  3  4  5\u23a5\u2502\n   \u239d    y\u23a0      \u2502\u23a2             \u23a5\u2502\n                \u2502\u23a22  3  4  5  6\u23a5\u2502\n                \u2502\u23a2             \u23a5\u2502\n                \u2502\u23a23  4  5  6  7\u23a5\u2502\n                \u2502\u23a2             \u23a5\u2502\n                \u2502\u23a34  5  6  7  8\u23a6\u2502\n```\n\nHere's how I think it should work, using the proposed #10423:\n\n```\npprint(sin((1+1/x)/y) + Trace(Z))\n               \u239b\u23a10  1  2  3  4\u23a4\u239e\n   \u239b    1\u239e     \u239c\u23a2             \u23a5\u239f\n   \u239c1 + \u2500\u239f     \u239c\u23a21  2  3  4  5\u23a5\u239f\n   \u239c    x\u239f     \u239c\u23a2             \u23a5\u239f\nsin\u239c\u2500\u2500\u2500\u2500\u2500\u239f + tr\u239c\u23a22  3  4  5  6\u23a5\u239f\n   \u239d  y  \u23a0     \u239c\u23a2             \u23a5\u239f\n               \u239c\u23a23  4  5  6  7\u23a5\u239f\n               \u239c\u23a2             \u23a5\u239f\n               \u239d\u23a34  5  6  7  8\u23a6\u23a0\n```\n\nwhere note the `sin` alignment is by-design, and (relevant to this bug) the `+` and `tr` operator line up with `sin`.\n\nAt least, det, MatAdd, MatMul, MatPow would need fixed, maybe others I haven't thought of.\n",
+      "issue_closed_at": "2016-12-22T06:52:11Z",
+      "base_commit": "9a724a42c033c1aae97064947a0f44ec3b922d73",
+      "changes": [
+        {
+          "file": "sympy/matrices/expressions/matadd.py",
+          "type": "function",
+          "name": "merge_explicit",
+          "class_name": null,
+          "code": "def merge_explicit(matadd):\n    \"\"\" Merge explicit MatrixBase arguments\n\n    >>> from sympy import MatrixSymbol, eye, Matrix, MatAdd, pprint\n    >>> from sympy.matrices.expressions.matadd import merge_explicit\n    >>> A = MatrixSymbol('A', 2, 2)\n    >>> B = eye(2)\n    >>> C = Matrix([[1, 2], [3, 4]])\n    >>> X = MatAdd(A, B, C)\n    >>> pprint(X)\n    A + [1  0] + [1  2]\n        [    ]   [    ]\n        [0  1]   [3  4]\n    >>> pprint(merge_explicit(X))\n    A + [2  2]\n        [    ]\n        [3  5]\n    \"\"\"\n    groups = sift(matadd.args, lambda arg: isinstance(arg, MatrixBase))\n    if len(groups[True]) > 1:\n        return MatAdd(*(groups[False] + [reduce(add, groups[True])]))\n    else:\n        return matadd"
+        },
+        {
+          "file": "sympy/matrices/expressions/matmul.py",
+          "type": "function",
+          "name": "merge_explicit",
+          "class_name": null,
+          "code": "def merge_explicit(matmul):\n    \"\"\" Merge explicit MatrixBase arguments\n\n    >>> from sympy import MatrixSymbol, eye, Matrix, MatMul, pprint\n    >>> from sympy.matrices.expressions.matmul import merge_explicit\n    >>> A = MatrixSymbol('A', 2, 2)\n    >>> B = Matrix([[1, 1], [1, 1]])\n    >>> C = Matrix([[1, 2], [3, 4]])\n    >>> X = MatMul(A, B, C)\n    >>> pprint(X)\n    A*[1  1]*[1  2]\n      [    ] [    ]\n      [1  1] [3  4]\n    >>> pprint(merge_explicit(X))\n    A*[4  6]\n      [    ]\n      [4  6]\n\n    >>> X = MatMul(B, A, C)\n    >>> pprint(X)\n    [1  1]*A*[1  2]\n    [    ]   [    ]\n    [1  1]   [3  4]\n    >>> pprint(merge_explicit(X))\n    [1  1]*A*[1  2]\n    [    ]   [    ]\n    [1  1]   [3  4]\n    \"\"\"\n    if not any(isinstance(arg, MatrixBase) for arg in matmul.args):\n        return matmul\n    newargs = []\n    last = matmul.args[0]\n    for arg in matmul.args[1:]:\n        if isinstance(arg, (MatrixBase, Number)) and isinstance(last, (MatrixBase, Number)):\n            last = last * arg\n        else:\n            newargs.append(last)\n            last = arg\n    newargs.append(last)\n\n    return MatMul(*newargs)"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_matrix_contents",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_matrix_contents(self, e):\n        \"\"\"\n        This method factors out what is essentially grid printing.\n        \"\"\"\n        M = e   # matrix\n        Ms = {}  # i,j -> pretty(M[i,j])\n        for i in range(M.rows):\n            for j in range(M.cols):\n                Ms[i, j] = self._print(M[i, j])\n\n        # h- and v- spacers\n        hsep = 2\n        vsep = 1\n\n        # max width for columns\n        maxw = [-1] * M.cols\n\n        for j in range(M.cols):\n            maxw[j] = max([Ms[i, j].width() for i in range(M.rows)] or [0])\n\n        # drawing result\n        D = None\n\n        for i in range(M.rows):\n\n            D_row = None\n            for j in range(M.cols):\n                s = Ms[i, j]\n\n                # reshape s to maxw\n                # XXX this should be generalized, and go to stringPict.reshape ?\n                assert s.width() <= maxw[j]\n\n                # hcenter it, +0.5 to the right                        2\n                # ( it's better to align formula starts for say 0 and r )\n                # XXX this is not good in all cases -- maybe introduce vbaseline?\n                wdelta = maxw[j] - s.width()\n                wleft = wdelta // 2\n                wright = wdelta - wleft\n\n                s = prettyForm(*s.right(' '*wright))\n                s = prettyForm(*s.left(' '*wleft))\n\n                # we don't need vcenter cells -- this is automatically done in\n                # a pretty way because when their baselines are taking into\n                # account in .right()\n\n                if D_row is None:\n                    D_row = s   # first box in a row\n                    continue\n\n                D_row = prettyForm(*D_row.right(' '*hsep))  # h-spacer\n                D_row = prettyForm(*D_row.right(s))\n\n            if D is None:\n                D = D_row       # first row in a picture\n                continue\n\n            # v-spacer\n            for _ in range(vsep):\n                D = prettyForm(*D.below(' '))\n\n            D = prettyForm(*D.below(D_row))\n\n        if D is None:\n            D = prettyForm('')  # Empty Matrix\n\n        return D"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_MatrixElement",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_MatrixElement(self, expr):\n        from sympy.matrices import MatrixSymbol\n        from sympy import Symbol\n        if (isinstance(expr.parent, MatrixSymbol)\n                and expr.i.is_number and expr.j.is_number):\n            return self._print(\n                    Symbol(expr.parent.name + '_%d%d'%(expr.i, expr.j)))\n        else:\n            prettyFunc = self._print(expr.parent)\n            prettyIndices = self._print_seq((expr.i, expr.j), delimiter=', '\n                    ).parens(left='[', right=']')[0]\n            pform = prettyForm(binding=prettyForm.FUNC,\n                    *stringPict.next(prettyFunc, prettyIndices))\n\n            # store pform parts so it can be reassembled e.g. when powered\n            pform.prettyFunc = prettyFunc\n            pform.prettyArgs = prettyIndices\n\n            return pform"
+        }
+      ]
+    },
+    {
+      "pr_number": 8627,
+      "pr_title": "Bug Fix #8626",
+      "pr_body": "Let me know if a test case is needed\n",
+      "issue_id": 8626,
+      "issue_title": "bug in physics/mechanics/lagrange.py",
+      "issue_body": "When providing a `forcelist` with more than one force, not all terms are computed,\nthis comes from the fact that the iterator `flist = zip(*_f_list_parser(self.forcelist, N))` is consumed in the first iteration of the loop.\n\nI propose a following PR that fixes the bug, let me know if I need to also provide a test case.\n\nBest,\nGuillaume\n",
+      "issue_closed_at": "2015-01-06T16:57:16Z",
+      "base_commit": "65f7c8c2c9c1927eaa8520c4ce06864f93a20ad1",
+      "changes": [
+        {
+          "file": "sympy/physics/mechanics/lagrange.py",
+          "type": "function",
+          "name": "form_lagranges_equations",
+          "class_name": "LagrangesMethod",
+          "code": "def form_lagranges_equations(self):\n        \"\"\"Method to form Lagrange's equations of motion.\n\n        Returns a vector of equations of motion using Lagrange's equations of\n        the second kind.\n        \"\"\"\n\n        qds = self._qdots\n        qdd_zero = dict((i, 0) for i in self._qdoubledots)\n        n = len(self.q)\n\n        # Internally we represent the EOM as four terms:\n        # EOM = term1 - term2 - term3 - term4 = 0\n\n        # First term\n        self._term1 = self._L.jacobian(qds)\n        self._term1 = self._term1.diff(dynamicsymbols._t).T\n\n        # Second term\n        self._term2 = self._L.jacobian(self.q).T\n\n        # Third term\n        if self.coneqs:\n            coneqs = self.coneqs\n            m = len(coneqs)\n            # Creating the multipliers\n            self.lam_vec = Matrix(dynamicsymbols('lam1:' + str(m + 1)))\n            self.lam_coeffs = -coneqs.jacobian(qds)\n            self._term3 = self.lam_coeffs.T * self.lam_vec\n            # Extracting the coeffecients of the qdds from the diff coneqs\n            diffconeqs = coneqs.diff(dynamicsymbols._t)\n            self._m_cd = diffconeqs.jacobian(self._qdoubledots)\n            # The remaining terms i.e. the 'forcing' terms in diff coneqs\n            self._f_cd = -diffconeqs.subs(qdd_zero)\n        else:\n            self._term3 = zeros(n, 1)\n\n        # Fourth term\n        if self.forcelist:\n            N = self.inertial\n            self._term4 = zeros(n, 1)\n            flist = zip(*_f_list_parser(self.forcelist, N))\n            for i, qd in enumerate(qds):\n                for obj, force in self.forcelist:\n                    self._term4[i] = sum(v.diff(qd, N) & f for (v, f) in flist)\n        else:\n            self._term4 = zeros(n, 1)\n\n        # Form the dynamic mass and forcing matrices\n        without_lam = self._term1 - self._term2 - self._term4\n        self._m_d = without_lam.jacobian(self._qdoubledots)\n        self._f_d = -without_lam.subs(qdd_zero)\n\n        # Form the EOM\n        self.eom = without_lam - self._term3\n        return self.eom"
+        }
+      ]
+    },
+    {
+      "pr_number": 13624,
+      "pr_title": "Python code printer(pycode) supporting Assignment",
+      "pr_body": "Changed the accessing of `_settings` to use `.get` with a default value of `False`. \r\nReplaced the `NotImplementedError` in `_get_comment` with the codestring. \r\n\r\nFixes #13598 \r\n",
+      "issue_id": 13598,
+      "issue_title": "Python code printer (pycode) should support Assignment",
+      "issue_body": "There is a lookup on 'contract', either we should give it a default in the `PythonCodePrinter` or we should make the code accessing `_settings` use `.get` with a default.\r\n\r\n```\r\nIn [3]: from sympy.printing.pycode import pycode\r\n\r\nIn [4]: from sympy.codegen.ast import Assignment\r\n\r\nIn [5]: pycode(Assignment(x, 3))\r\nKeyError\r\n...\r\n/home/bjorn/vc/sympy/sympy/printing/codeprinter.pyc in _print_Assignment(self, expr)\r\n    309                 lines.append(code0)\r\n    310             return \"\\n\".join(lines)\r\n--> 311         elif self._settings[\"contract\"] and (lhs.has(IndexedBase) or\r\n    312                 rhs.has(IndexedBase)):\r\n    313             # Here we check if there is looping to be done, and if so\r\n\r\nKeyError: 'contract'\r\n```",
+      "issue_closed_at": "2017-11-29T07:32:30Z",
+      "base_commit": "a67e45eecc972b53e95effb09fe503a05325d3f5",
+      "changes": [
+        {
+          "file": "sympy/printing/codeprinter.py",
+          "type": "function",
+          "name": "_print_Assignment",
+          "class_name": "CodePrinter",
+          "code": "def _print_Assignment(self, expr):\n        from sympy.functions.elementary.piecewise import Piecewise\n        from sympy.matrices.expressions.matexpr import MatrixSymbol\n        from sympy.tensor.indexed import IndexedBase\n        lhs = expr.lhs\n        rhs = expr.rhs\n        # We special case assignments that take multiple lines\n        if isinstance(expr.rhs, Piecewise):\n            # Here we modify Piecewise so each expression is now\n            # an Assignment, and then continue on the print.\n            expressions = []\n            conditions = []\n            for (e, c) in rhs.args:\n                expressions.append(Assignment(lhs, e))\n                conditions.append(c)\n            temp = Piecewise(*zip(expressions, conditions))\n            return self._print(temp)\n        elif isinstance(lhs, MatrixSymbol):\n            # Here we form an Assignment for each element in the array,\n            # printing each one.\n            lines = []\n            for (i, j) in self._traverse_matrix_indices(lhs):\n                temp = Assignment(lhs[i, j], rhs[i, j])\n                code0 = self._print(temp)\n                lines.append(code0)\n            return \"\\n\".join(lines)\n        elif self._settings[\"contract\"] and (lhs.has(IndexedBase) or\n                rhs.has(IndexedBase)):\n            # Here we check if there is looping to be done, and if so\n            # print the required loops.\n            return self._doprint_loops(rhs, lhs)\n        else:\n            lhs_code = self._print(lhs)\n            rhs_code = self._print(rhs)\n            return self._get_statement(\"%s = %s\" % (lhs_code, rhs_code))"
+        },
+        {
+          "file": "sympy/printing/pycode.py",
+          "type": "function",
+          "name": "_module_format",
+          "class_name": "PythonCodePrinter",
+          "code": "def _module_format(self, fqn, register=True):\n        parts = fqn.split('.')\n        if register and len(parts) > 1:\n            self.module_imports['.'.join(parts[:-1])].add(parts[-1])\n\n        if self._settings['fully_qualified_modules']:\n            return fqn\n        else:\n            return fqn.split('(')[0].split('[')[0].split('.')[-1]"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "instance_id": "django__django-14608",
+  "repo": "django/django",
+  "created_at": "2021-07-07T19:51:30Z",
+  "problem_statement": "Add `nonform` CSS class for non form errors in FormSets\nDescription\n\t \n\t\t(last modified by Ties Jan Hefting)\n\t \nForms add the nonfield CSS class for non field errors in ErrorList instances. This is documented in a section on ​rendering form error messages. Similarly, in FormSets I'd expect to see the nonform CSS class added for non form errors. This would allow a custom ErrorList to make a distinction in form field errors, non field errors (forms) and non form errors (FormSets) when rendering error messages. Therefore I'd suggest to add this nonform CSS class and document it for developers to use.\n",
+  "patch": "diff --git a/django/forms/formsets.py b/django/forms/formsets.py\n--- a/django/forms/formsets.py\n+++ b/django/forms/formsets.py\n@@ -333,7 +333,7 @@ def full_clean(self):\n         self._non_form_errors.\n         \"\"\"\n         self._errors = []\n-        self._non_form_errors = self.error_class()\n+        self._non_form_errors = self.error_class(error_class='nonform')\n         empty_forms_count = 0\n \n         if not self.is_bound:  # Stop further processing.\n@@ -380,7 +380,10 @@ def full_clean(self):\n             # Give self.clean() a chance to do cross-form validation.\n             self.clean()\n         except ValidationError as e:\n-            self._non_form_errors = self.error_class(e.error_list)\n+            self._non_form_errors = self.error_class(\n+                e.error_list,\n+                error_class='nonform'\n+            )\n \n     def clean(self):\n         \"\"\"\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 9404,
+      "pr_title": "Fixed #28866 -- Made InlineAdminFormSet include InlineModelAdmin's Media before its formset's Media.",
+      "pr_body": "This provides better backwards compatibility following refs #28377.\r\nhttps://code.djangoproject.com/ticket/28866",
+      "issue_id": 28866,
+      "issue_title": "InlineAdminFormSet should include InlineModelAdmin's Media before its formset's Media",
+      "issue_body": "I was trying to use django-map-widgets with django2.0rc1 and it didn't show the widget. The problem is that widget js-files were included before django-admin jquery's files which it relies on.\nI went deeper and found that Media.merge method are pretty much implicit which breaks Python zen guidelines. The implicity caused by MediaOrderConflictWarning check, without that check code might be way more simplier. More than that, the realization of that check is not working. I got few ideas how to solve it, but honestly I would prefer just remove it and make the method really simple.\nExample of lists with which the method doesn't work properly:\nlist_1 = ['admin/js/vendor/jquery/jquery.js', 'admin/js/jquery.init.js', 'admin/js/core.js', 'admin/js/admin/RelatedObjectLookups.js', 'admin/js/actions.js', 'admin/js/urlify.js', 'admin/js/prepopulate.js', 'admin/js/vendor/xregexp/xregexp.js']\nlist_2 = ['\n​\nhttps://maps.googleapis.com/maps/api/js?libraries=places&key=\n', 'mapwidgets/js/jquery_class.js', 'mapwidgets/js/django_mw_base.js', 'mapwidgets/js/mw_google_point_field.js', 'admin/js/vendor/jquery/jquery.js', 'admin/js/jquery.init.js', 'admin/js/inlines.js']\nI can easily make a patch without the warning check. Also can check the order, but it's gonna be very different way from what's there now.\nI set serverity to blocker since it's totally breaks possibility to use Django with many other libraries",
+      "issue_closed_at": "2017-12-01T08:02:03",
+      "base_commit": "e50add6ca1605dcc06c8c5a5770342779a4d5124",
+      "changes": [
+        {
+          "file": "django/contrib/admin/helpers.py",
+          "type": "function",
+          "name": "non_form_errors",
+          "class_name": "InlineAdminFormSet",
+          "code": "def non_form_errors(self):\n        return self.formset.non_form_errors"
+        }
+      ]
+    },
+    {
+      "pr_number": 7097,
+      "pr_title": "Fixed #27068 -- Unified form field initial data retrieval.",
+      "pr_body": "https://code.djangoproject.com/ticket/27068\n",
+      "issue_id": 27068,
+      "issue_title": "Acquire form's initial data more consistently",
+      "issue_body": "In\nBoundField\n, sometimes initial data\n​\nhandles callables\n. While other times,\n​\nit doesn't\n. This can lead to a theoretical bug when the initial data is a callable, but the field is disabled.\nOther times, the initial callable is handled, but microseconds are\n​\nnot chopped\nleading to theoretical false positives that data has changed.\nInitial data should be handled more consistently across all cases.\nMarking as a bug due to the theoretical edge cases that can produce unexpected results. Noticed these inconsistencies while working on\n#27037\n.",
+      "issue_closed_at": "2016-08-18T19:51:32",
+      "base_commit": "13857b45ca54a519a58361238442af84262c0d23",
+      "changes": [
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "value",
+          "class_name": "BoundField",
+          "code": "def value(self):\n        \"\"\"\n        Returns the value for this BoundField, using the initial value if\n        the form is not bound or the data otherwise.\n        \"\"\"\n        if not self.form.is_bound:\n            data = self.initial\n        else:\n            data = self.field.bound_data(\n                self.data, self.form.initial.get(self.name, self.field.initial)\n            )\n        return self.field.prepare_value(data)"
+        },
+        {
+          "file": "django/forms/boundfield.py",
+          "type": "function",
+          "name": "id_for_label",
+          "class_name": "BoundField",
+          "code": "def id_for_label(self):\n        \"\"\"\n        Wrapper around the field widget's `id_for_label` method.\n        Useful, for example, for focusing on this field regardless of whether\n        it has a single widget or a MultiWidget.\n        \"\"\"\n        widget = self.field.widget\n        id_ = widget.attrs.get('id') or self.auto_id\n        return widget.id_for_label(id_)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "_clean_fields",
+          "class_name": "BaseForm",
+          "code": "def _clean_fields(self):\n        for name, field in self.fields.items():\n            # value_from_datadict() gets the data from the data dictionaries.\n            # Each widget type knows how to retrieve its own data, because some\n            # widgets split data over several HTML fields.\n            if field.disabled:\n                value = self.initial.get(name, field.initial)\n            else:\n                value = field.widget.value_from_datadict(self.data, self.files, self.add_prefix(name))\n            try:\n                if isinstance(field, FileField):\n                    initial = self.initial.get(name, field.initial)\n                    value = field.clean(value, initial)\n                else:\n                    value = field.clean(value)\n                self.cleaned_data[name] = value\n                if hasattr(self, 'clean_%s' % name):\n                    value = getattr(self, 'clean_%s' % name)()\n                    self.cleaned_data[name] = value\n            except ValidationError as e:\n                self.add_error(name, e)"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "changed_data",
+          "class_name": "BaseForm",
+          "code": "def changed_data(self):\n        data = []\n        for name, field in self.fields.items():\n            prefixed_name = self.add_prefix(name)\n            data_value = field.widget.value_from_datadict(self.data, self.files, prefixed_name)\n            if not field.show_hidden_initial:\n                initial_value = self.initial.get(name, field.initial)\n                if callable(initial_value):\n                    initial_value = initial_value()\n            else:\n                initial_prefixed_name = self.add_initial_prefix(name)\n                hidden_widget = field.hidden_widget()\n                try:\n                    initial_value = field.to_python(hidden_widget.value_from_datadict(\n                        self.data, self.files, initial_prefixed_name))\n                except ValidationError:\n                    # Always assume data has changed if validation fails.\n                    data.append(name)\n                    continue\n            if field.has_changed(initial_value, data_value):\n                data.append(name)\n        return data"
+        },
+        {
+          "file": "django/forms/forms.py",
+          "type": "function",
+          "name": "visible_fields",
+          "class_name": "BaseForm",
+          "code": "def visible_fields(self):\n        \"\"\"\n        Returns a list of BoundField objects that aren't hidden fields.\n        The opposite of the hidden_fields() method.\n        \"\"\"\n        return [field for field in self if not field.is_hidden]"
+        }
+      ]
+    },
+    {
+      "pr_number": 6774,
+      "pr_title": "Fixed #26171 -- Made MySQL create an index on ForeignKeys with db_contraint=False.",
+      "pr_body": "Refactor \"Prevented unneeded index creation on MySQL-InnoDB\" (2ceb10f)\nto avoid setting db_index = False. Check db_constraint=True before\nskipping the index creation, fixes #26171.\n",
+      "issue_id": 26171,
+      "issue_title": "ForeignKey with db_constraint=False doesn't generate an index on MySQL",
+      "issue_body": "I have a model that does not want to use a constraint on a foreign key, but still use a database index:\nclass Category(models.Model):\n    text = models.CharField(max_length=3)\n\nclass Message(models.Model):\n    cat = models.ForeignKey(Category, db_constraint=False)\n\nclass IndexMessage(models.Model):\n    cat = models.ForeignKey(Category, db_constraint=False, db_index=True)\n\nclass StrongMessage(models.Model):\n    cat = models.ForeignKey(Category)\nThe SQLite backend generates an index on the FK column for both models:\n$ python manage.py sqlmigrate boohoo 0001_initial\nBEGIN;\n--\n-- Create model Category\n--\nCREATE TABLE \"boohoo_category\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"text\" varchar(3) NOT NULL);\n--\n-- Create model IndexMessage\n--\nCREATE TABLE \"boohoo_indexmessage\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL);\n--\n-- Create model Message\n--\nCREATE TABLE \"boohoo_message\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL);\n--\n-- Create model StrongMessage\n--\nCREATE TABLE \"boohoo_strongmessage\" (\"id\" integer NOT NULL PRIMARY KEY AUTOINCREMENT, \"cat_id\" integer NOT NULL REFERENCES \"boohoo_category\" (\"id\"));\nCREATE INDEX \"boohoo_indexmessage_05e7bb57\" ON \"boohoo_indexmessage\" (\"cat_id\");\nCREATE INDEX \"boohoo_message_05e7bb57\" ON \"boohoo_message\" (\"cat_id\");\nCREATE INDEX \"boohoo_strongmessage_05e7bb57\" ON \"boohoo_strongmessage\" (\"cat_id\");\n\nCOMMIT;\nWith the MySQL backend, this does not create an index on the FK:\n$ python manage.py sqlmigrate boohoo 0001_initial\nBEGIN;\n--\n-- Create model Category\n--\nCREATE TABLE `boohoo_category` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `text` varchar(3) NOT NULL);\n--\n-- Create model IndexMessage\n--\nCREATE TABLE `boohoo_indexmessage` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\n--\n-- Create model Message\n--\nCREATE TABLE `boohoo_message` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\n--\n-- Create model StrongMessage\n--\nCREATE TABLE `boohoo_strongmessage` (`id` integer AUTO_INCREMENT NOT NULL PRIMARY KEY, `cat_id` integer NOT NULL);\nALTER TABLE `boohoo_strongmessage` ADD CONSTRAINT `boohoo_strongmessage_cat_id_c843b68a_fk_boohoo_category_id` FOREIGN KEY (`cat_id`) REFERENCES `boohoo_category` (`id`);\n\nCOMMIT;\nI would think that specifying db_constraint=false would only leave out the constraint, and not also the index; Especially with <field>.db_index still set to true. Adding db_index=True does not help, probably because that is the default setting on the FK field object.\nThis also applies to earlier django versions.\nA simple workaround is to use\nindex_together = (('cat', ), )\non the models.\nI'm inclined to blame this on django.db.backends.mysql.schema.DatabaseSchemaEditor#_model_indexes_sql,\nwhich may need an extra check for db_constraint being used. This fixes my problem (but changes current django behavior):\n--- django/db/backends/mysql/schema.py.orig     2016-02-03 12:01:10.000000000 +0100\n+++ django/db/backends/mysql/schema.py  2016-02-03 12:00:19.000000000 +0100\n@@ -64,7 +64,7 @@\n         )\n         if storage == \"InnoDB\":\n             for field in model._meta.local_fields:\n-                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\":\n+                if field.db_index and not field.unique and field.get_internal_type() == \"ForeignKey\" and field.db_constraint:\n                     # Temporary setting db_index to False (in memory) to disable\n                     # index creation for FKs (index automatically created by MySQL)\n                     field.db_index = False",
+      "issue_closed_at": "2016-06-28T07:19:11",
+      "base_commit": "5fe1c92250017110430c7c2153cfd8776e4c7064",
+      "changes": [
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/base/schema.py",
+          "type": "function",
+          "name": "_model_indexes_sql",
+          "class_name": "BaseDatabaseSchemaEditor",
+          "code": "def _model_indexes_sql(self, model):\n        \"\"\"\n        Return all index SQL statements (field indexes, index_together) for the\n        specified model, as a list.\n        \"\"\"\n        if not model._meta.managed or model._meta.proxy or model._meta.swapped:\n            return []\n        output = []\n        for field in model._meta.local_fields:\n            if field.db_index and not field.unique:\n                output.append(self._create_index_sql(model, [field], suffix=\"\"))\n\n        for field_names in model._meta.index_together:\n            fields = [model._meta.get_field(field) for field in field_names]\n            output.append(self._create_index_sql(model, fields, suffix=\"_idx\"))\n        return output"
+        },
+        {
+          "file": "django/db/backends/mysql/schema.py",
+          "type": "function",
+          "name": "add_field",
+          "class_name": "DatabaseSchemaEditor",
+          "code": "def add_field(self, model, field):\n        super(DatabaseSchemaEditor, self).add_field(model, field)\n\n        # Simulate the effect of a one-off default.\n        # field.default may be unhashable, so a set isn't used for \"in\" check.\n        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):\n            effective_default = self.effective_default(field)\n            self.execute('UPDATE %(table)s SET %(column)s = %%s' % {\n                'table': self.quote_name(model._meta.db_table),\n                'column': self.quote_name(field.column),\n            }, [effective_default])"
+        }
+      ]
+    },
+    {
+      "pr_number": 8229,
+      "pr_title": "Fixed #27969 -- Fixed models.Field.formfield() setting 'disabled' for fields with choices.",
+      "pr_body": "models.Field.formfield() allow 'disabled' keyword argument for fields with choices",
+      "issue_id": 27969,
+      "issue_title": "models.Field.formfield() should allow the 'disabled' kwarg for fields with choices",
+      "issue_body": "When calling the\n​\nformfield()\nmethod for a modelfield with choices, the\n​\ndisabled\nkeyword argument is not applied to the returned form field.",
+      "issue_closed_at": "2017-03-23T12:56:38",
+      "base_commit": "075f13e44f203ee04f0c3abffc7d7a86c672cfe8",
+      "changes": [
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "formfield",
+          "class_name": "UUIDField",
+          "code": "def formfield(self, **kwargs):\n        defaults = {\n            'form_class': forms.UUIDField,\n        }\n        defaults.update(kwargs)\n        return super().formfield(**defaults)"
+        }
+      ]
+    },
+    {
+      "pr_number": 9406,
+      "pr_title": "Fixed #28871 -- Fixed initialization of autocomplete widgets in \"Add another\" inlines.",
+      "pr_body": "https://code.djangoproject.com/ticket/28871",
+      "issue_id": 28871,
+      "issue_title": "Autocomplete select for new lines in inline model do not open",
+      "issue_body": "When a model has an Inline model, autocomplete select does not show for new rows.\nSelect box is is replaced with Select2 style, but clicking it does not show the select list.\nmodel.py\nclass\nItem\n(\nmodels\n.\nModel\n):\nname\n=\nmodels\n.\nCharField\n(\nmax_length\n=\n100\n)\nclass\nCategory\n(\nmodels\n.\nModel\n):\nname\n=\nmodels\n.\nCharField\n(\nmax_length\n=\n100\n)\ndef\n__str__\n(\nself\n):\nreturn\nself\n.\nname\nclass\nLineItem\n(\nmodels\n.\nModel\n):\nitem\n=\nmodels\n.\nForeignKey\n(\n'Item'\n,\non_delete\n=\nmodels\n.\nCASCADE\n)\ncategory\n=\nmodels\n.\nForeignKey\n(\n'Category'\n,\non_delete\n=\nmodels\n.\nCASCADE\n)\nadmin.py\nclass\nLineItemInline\n(\nadmin\n.\nTabularInline\n):\nmodel\n=\nLineItem\nextra\n=\n1\nautocomplete_fields\n=\n(\n'category'\n,)\n@admin\n.\nregister\n(\nItem\n)\nclass\nItemAdmin\n(\nadmin\n.\nModelAdmin\n):\nlist_display\n=\n(\n'name'\n,)\nsearch_fields\n=\n(\n'name'\n,)\ninlines\n=\n[\nLineItemInline\n]\n@admin\n.\nregister\n(\nCategory\n)\nclass\nCategoryAdmin\n(\nadmin\n.\nModelAdmin\n):\nlist_display\n=\n(\n'name'\n,)\nsearch_fields\n=\n(\n'name'\n,)\nGithub repo\nWith demo and instructions on how to reproduce\n​\nhttps://github.com/gotling/bug-django2-autocomplete",
+      "issue_closed_at": "2017-12-01T21:42:03",
+      "base_commit": "095c1aaa898bed40568009db836aa8434f1b983d",
+      "changes": [
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "formfield_for_foreignkey",
+          "class_name": "BaseModelAdmin",
+          "code": "def formfield_for_foreignkey(self, db_field, request, **kwargs):\n        \"\"\"\n        Get a form Field for a ForeignKey.\n        \"\"\"\n        db = kwargs.get('using')\n\n        if db_field.name in self.get_autocomplete_fields(request):\n            kwargs['widget'] = AutocompleteSelect(db_field.remote_field, using=db)\n        elif db_field.name in self.raw_id_fields:\n            kwargs['widget'] = widgets.ForeignKeyRawIdWidget(db_field.remote_field, self.admin_site, using=db)\n        elif db_field.name in self.radio_fields:\n            kwargs['widget'] = widgets.AdminRadioSelect(attrs={\n                'class': get_ul_class(self.radio_fields[db_field.name]),\n            })\n            kwargs['empty_label'] = _('None') if db_field.blank else None\n\n        if 'queryset' not in kwargs:\n            queryset = self.get_field_queryset(db, db_field, request)\n            if queryset is not None:\n                kwargs['queryset'] = queryset\n\n        return db_field.formfield(**kwargs)"
+        },
+        {
+          "file": "django/contrib/admin/options.py",
+          "type": "function",
+          "name": "formfield_for_manytomany",
+          "class_name": "BaseModelAdmin",
+          "code": "def formfield_for_manytomany(self, db_field, request, **kwargs):\n        \"\"\"\n        Get a form Field for a ManyToManyField.\n        \"\"\"\n        # If it uses an intermediary model that isn't auto created, don't show\n        # a field in admin.\n        if not db_field.remote_field.through._meta.auto_created:\n            return None\n        db = kwargs.get('using')\n\n        autocomplete_fields = self.get_autocomplete_fields(request)\n        if db_field.name in autocomplete_fields:\n            kwargs['widget'] = AutocompleteSelectMultiple(db_field.remote_field, using=db)\n        elif db_field.name in self.raw_id_fields:\n            kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.remote_field, self.admin_site, using=db)\n        elif db_field.name in list(self.filter_vertical) + list(self.filter_horizontal):\n            kwargs['widget'] = widgets.FilteredSelectMultiple(\n                db_field.verbose_name,\n                db_field.name in self.filter_vertical\n            )\n\n        if 'queryset' not in kwargs:\n            queryset = self.get_field_queryset(db, db_field, request)\n            if queryset is not None:\n                kwargs['queryset'] = queryset\n\n        form_field = db_field.formfield(**kwargs)\n        if (isinstance(form_field.widget, SelectMultiple) and\n                not isinstance(form_field.widget, (CheckboxSelectMultiple, AutocompleteSelectMultiple))):\n            msg = _('Hold down \"Control\", or \"Command\" on a Mac, to select more than one.')\n            help_text = form_field.help_text\n            form_field.help_text = format_lazy('{} {}', help_text, msg) if help_text else msg\n        return form_field"
+        },
+        {
+          "file": "django/contrib/admin/widgets.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "AutocompleteMixin",
+          "code": "def __init__(self, rel, attrs=None, choices=(), using=None):\n        self.rel = rel\n        self.db = using\n        self.choices = choices\n        if attrs is not None:\n            self.attrs = attrs.copy()\n        else:\n            self.attrs = {}"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,144 @@
+{
+  "instance_id": "django__django-11620",
+  "repo": "django/django",
+  "created_at": "2019-08-02T13:56:08Z",
+  "problem_statement": "When DEBUG is True, raising Http404 in a path converter's to_python method does not result in a technical response\nDescription\n\t\nThis is the response I get (plain text): \nA server error occurred. Please contact the administrator.\nI understand a ValueError should be raised which tells the URL resolver \"this path does not match, try next one\" but Http404 is what came to my mind intuitively and the error message was not very helpful.\nOne could also make a point that raising a Http404 should be valid way to tell the resolver \"this is indeed the right path but the current parameter value does not match anything so stop what you are doing and let the handler return the 404 page (including a helpful error message when DEBUG is True instead of the default 'Django tried these URL patterns')\".\nThis would prove useful for example to implement a path converter that uses get_object_or_404.\n",
+  "patch": "diff --git a/django/views/debug.py b/django/views/debug.py\n--- a/django/views/debug.py\n+++ b/django/views/debug.py\n@@ -5,10 +5,10 @@\n from pathlib import Path\n \n from django.conf import settings\n-from django.http import HttpResponse, HttpResponseNotFound\n+from django.http import Http404, HttpResponse, HttpResponseNotFound\n from django.template import Context, Engine, TemplateDoesNotExist\n from django.template.defaultfilters import pprint\n-from django.urls import Resolver404, resolve\n+from django.urls import resolve\n from django.utils import timezone\n from django.utils.datastructures import MultiValueDict\n from django.utils.encoding import force_str\n@@ -483,7 +483,7 @@ def technical_404_response(request, exception):\n     caller = ''\n     try:\n         resolver_match = resolve(request.path)\n-    except Resolver404:\n+    except Http404:\n         pass\n     else:\n         obj = resolver_match.func\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 10027,
+      "pr_title": "Fixed #24384 -- Allowed compilemessages to continue running after nonfatal errors.",
+      "pr_body": "",
+      "issue_id": 24384,
+      "issue_title": "compilemessages shouldn't return with exit code 0 when it fails",
+      "issue_body": "",
+      "issue_closed_at": "2018-06-13T14:27:08",
+      "base_commit": "b30f9b131c9489b9d9f21c311ecb46d0aea91381",
+      "changes": [
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "handle",
+          "class_name": "Command",
+          "code": "def handle(self, **options):\n        locale = options['locale']\n        exclude = options['exclude']\n        self.verbosity = options['verbosity']\n        if options['fuzzy']:\n            self.program_options = self.program_options + ['-f']\n\n        if find_command(self.program) is None:\n            raise CommandError(\"Can't find %s. Make sure you have GNU gettext \"\n                               \"tools 0.15 or newer installed.\" % self.program)\n\n        basedirs = [os.path.join('conf', 'locale'), 'locale']\n        if os.environ.get('DJANGO_SETTINGS_MODULE'):\n            from django.conf import settings\n            basedirs.extend(settings.LOCALE_PATHS)\n\n        # Walk entire tree, looking for locale directories\n        for dirpath, dirnames, filenames in os.walk('.', topdown=True):\n            for dirname in dirnames:\n                if dirname == 'locale':\n                    basedirs.append(os.path.join(dirpath, dirname))\n\n        # Gather existing directories.\n        basedirs = set(map(os.path.abspath, filter(os.path.isdir, basedirs)))\n\n        if not basedirs:\n            raise CommandError(\"This script should be run from the Django Git \"\n                               \"checkout or your project or app tree, or with \"\n                               \"the settings module specified.\")\n\n        # Build locale list\n        all_locales = []\n        for basedir in basedirs:\n            locale_dirs = filter(os.path.isdir, glob.glob('%s/*' % basedir))\n            all_locales.extend(map(os.path.basename, locale_dirs))\n\n        # Account for excluded locales\n        locales = locale or all_locales\n        locales = set(locales).difference(exclude)\n\n        for basedir in basedirs:\n            if locales:\n                dirs = [os.path.join(basedir, l, 'LC_MESSAGES') for l in locales]\n            else:\n                dirs = [basedir]\n            locations = []\n            for ldir in dirs:\n                for dirpath, dirnames, filenames in os.walk(ldir):\n                    locations.extend((dirpath, f) for f in filenames if f.endswith('.po'))\n            if locations:\n                self.compile_messages(locations)"
+        },
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "handle",
+          "class_name": "Command",
+          "code": "def handle(self, **options):\n        locale = options['locale']\n        exclude = options['exclude']\n        self.verbosity = options['verbosity']\n        if options['fuzzy']:\n            self.program_options = self.program_options + ['-f']\n\n        if find_command(self.program) is None:\n            raise CommandError(\"Can't find %s. Make sure you have GNU gettext \"\n                               \"tools 0.15 or newer installed.\" % self.program)\n\n        basedirs = [os.path.join('conf', 'locale'), 'locale']\n        if os.environ.get('DJANGO_SETTINGS_MODULE'):\n            from django.conf import settings\n            basedirs.extend(settings.LOCALE_PATHS)\n\n        # Walk entire tree, looking for locale directories\n        for dirpath, dirnames, filenames in os.walk('.', topdown=True):\n            for dirname in dirnames:\n                if dirname == 'locale':\n                    basedirs.append(os.path.join(dirpath, dirname))\n\n        # Gather existing directories.\n        basedirs = set(map(os.path.abspath, filter(os.path.isdir, basedirs)))\n\n        if not basedirs:\n            raise CommandError(\"This script should be run from the Django Git \"\n                               \"checkout or your project or app tree, or with \"\n                               \"the settings module specified.\")\n\n        # Build locale list\n        all_locales = []\n        for basedir in basedirs:\n            locale_dirs = filter(os.path.isdir, glob.glob('%s/*' % basedir))\n            all_locales.extend(map(os.path.basename, locale_dirs))\n\n        # Account for excluded locales\n        locales = locale or all_locales\n        locales = set(locales).difference(exclude)\n\n        for basedir in basedirs:\n            if locales:\n                dirs = [os.path.join(basedir, l, 'LC_MESSAGES') for l in locales]\n            else:\n                dirs = [basedir]\n            locations = []\n            for ldir in dirs:\n                for dirpath, dirnames, filenames in os.walk(ldir):\n                    locations.extend((dirpath, f) for f in filenames if f.endswith('.po'))\n            if locations:\n                self.compile_messages(locations)"
+        },
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "compile_messages",
+          "class_name": "Command",
+          "code": "def compile_messages(self, locations):\n        \"\"\"\n        Locations is a list of tuples: [(directory, file), ...]\n        \"\"\"\n        for i, (dirpath, f) in enumerate(locations):\n            if self.verbosity > 0:\n                self.stdout.write('processing file %s in %s\\n' % (f, dirpath))\n            po_path = os.path.join(dirpath, f)\n            if has_bom(po_path):\n                raise CommandError(\"The %s file has a BOM (Byte Order Mark). \"\n                                   \"Django only supports .po files encoded in \"\n                                   \"UTF-8 and without any BOM.\" % po_path)\n            base_path = os.path.splitext(po_path)[0]\n\n            # Check writability on first location\n            if i == 0 and not is_writable(base_path + '.mo'):\n                self.stderr.write(\"The po files under %s are in a seemingly not writable location. \"\n                                  \"mo files will not be updated/created.\" % dirpath)\n                return\n\n            args = [self.program] + self.program_options + [\n                '-o', base_path + '.mo', base_path + '.po'\n            ]\n            output, errors, status = popen_wrapper(args)\n            if status:\n                if errors:\n                    msg = \"Execution of %s failed: %s\" % (self.program, errors)\n                else:\n                    msg = \"Execution of %s failed\" % self.program\n                raise CommandError(msg)"
+        },
+        {
+          "file": "django/core/management/commands/compilemessages.py",
+          "type": "function",
+          "name": "compile_messages",
+          "class_name": "Command",
+          "code": "def compile_messages(self, locations):\n        \"\"\"\n        Locations is a list of tuples: [(directory, file), ...]\n        \"\"\"\n        for i, (dirpath, f) in enumerate(locations):\n            if self.verbosity > 0:\n                self.stdout.write('processing file %s in %s\\n' % (f, dirpath))\n            po_path = os.path.join(dirpath, f)\n            if has_bom(po_path):\n                raise CommandError(\"The %s file has a BOM (Byte Order Mark). \"\n                                   \"Django only supports .po files encoded in \"\n                                   \"UTF-8 and without any BOM.\" % po_path)\n            base_path = os.path.splitext(po_path)[0]\n\n            # Check writability on first location\n            if i == 0 and not is_writable(base_path + '.mo'):\n                self.stderr.write(\"The po files under %s are in a seemingly not writable location. \"\n                                  \"mo files will not be updated/created.\" % dirpath)\n                return\n\n            args = [self.program] + self.program_options + [\n                '-o', base_path + '.mo', base_path + '.po'\n            ]\n            output, errors, status = popen_wrapper(args)\n            if status:\n                if errors:\n                    msg = \"Execution of %s failed: %s\" % (self.program, errors)\n                else:\n                    msg = \"Execution of %s failed\" % self.program\n                raise CommandError(msg)"
+        }
+      ]
+    },
+    {
+      "pr_number": 3989,
+      "pr_title": "Fixed #24220 - Allowed lazy objects for success_url",
+      "pr_body": "See https://code.djangoproject.com/ticket/24220 for more info\n",
+      "issue_id": 24220,
+      "issue_title": "get_success_url raises an exception when success_url is lazy object",
+      "issue_body": "",
+      "issue_closed_at": "2015-01-26T11:40:17",
+      "base_commit": "ea0ea7859a224225950a4df7c23eb3a7d823ddcd",
+      "changes": [
+        {
+          "file": "django/views/generic/edit.py",
+          "type": "function",
+          "name": "get_success_url",
+          "class_name": "DeletionMixin",
+          "code": "def get_success_url(self):\n        if self.success_url:\n            if PERCENT_PLACEHOLDER_REGEX.search(self.success_url):\n                warnings.warn(\n                    \"%()s placeholder style in success_url is deprecated. \"\n                    \"Please replace them by the {} Python format syntax.\",\n                    RemovedInDjango20Warning, stacklevel=2\n                )\n                return self.success_url % self.object.__dict__\n            else:\n                return self.success_url.format(**self.object.__dict__)\n        else:\n            raise ImproperlyConfigured(\n                \"No URL to redirect to. Provide a success_url.\")"
+        },
+        {
+          "file": "django/views/generic/edit.py",
+          "type": "function",
+          "name": "post",
+          "class_name": "DeletionMixin",
+          "code": "def post(self, request, *args, **kwargs):\n        return self.delete(request, *args, **kwargs)"
+        }
+      ]
+    },
+    {
+      "pr_number": 11169,
+      "pr_title": "Fixed #30318 --  Added check for importability of arguments of custom error handler views.",
+      "pr_body": "\u2026mported\r\n\r\nThanks to Jon on Stack Overflow for reporting the issue.",
+      "issue_id": 30318,
+      "issue_title": "Add new system check message when custom error handler 'path.to.view' cannot be imported",
+      "issue_body": "",
+      "issue_closed_at": "2019-04-25T04:38:58",
+      "base_commit": "fc9566d42daf28cdaa25a5db1b5ade253ceb064f",
+      "changes": [
+        {
+          "file": "django/urls/resolvers.py",
+          "type": "line",
+          "name": "line 15",
+          "code": "from django.conf import settings\nfrom django.core.checks import Error, Warning\nfrom django.core.checks.urls import check_resolver\nfrom django.core.exceptions import ImproperlyConfigured\nfrom django.utils.datastructures import MultiValueDict\nfrom django.utils.functional import cached_property\nfrom django.utils.http import RFC3986_SUBDELIMS, escape_leading_slashes"
+        },
+        {
+          "file": "django/urls/resolvers.py",
+          "type": "function",
+          "name": "_check_custom_error_handlers",
+          "class_name": "URLResolver",
+          "code": "def _check_custom_error_handlers(self):\n        messages = []\n        # All handlers take (request, exception) arguments except handler500\n        # which takes (request).\n        for status_code, num_parameters in [(400, 2), (403, 2), (404, 2), (500, 1)]:\n            handler, param_dict = self.resolve_error_handler(status_code)\n            signature = inspect.signature(handler)\n            args = [None] * num_parameters\n            try:\n                signature.bind(*args)\n            except TypeError:\n                msg = (\n                    \"The custom handler{status_code} view '{path}' does not \"\n                    \"take the correct number of arguments ({args}).\"\n                ).format(\n                    status_code=status_code,\n                    path=handler.__module__ + '.' + handler.__qualname__,\n                    args='request, exception' if num_parameters == 2 else 'request',\n                )\n                messages.append(Error(msg, id='urls.E007'))\n        return messages"
+        }
+      ]
+    },
+    {
+      "pr_number": 8396,
+      "pr_title": "Fixed #28116 -- Used error code filtering in PostgreSQL test database creation.",
+      "pr_body": "Ticket [28116](https://code.djangoproject.com/ticket/28116).",
+      "issue_id": 28116,
+      "issue_title": "Filtering PostgreSQL exception based on message is too brittle",
+      "issue_body": "",
+      "issue_closed_at": "2017-04-24T23:01:44",
+      "base_commit": "8ef35468b660e1c25af67a8299202b8bc108679f",
+      "changes": [
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "line",
+          "name": "line 1",
+          "code": "import sys\n\nfrom django.db.backends.base.creation import BaseDatabaseCreation\n\n"
+        },
+        {
+          "file": "django/db/backends/postgresql/creation.py",
+          "type": "function",
+          "name": "_execute_create_test_db",
+          "class_name": "DatabaseCreation",
+          "code": "def _execute_create_test_db(self, cursor, parameters, keepdb=False):\n        try:\n            super()._execute_create_test_db(cursor, parameters, keepdb)\n        except Exception as e:\n            exc_msg = 'database %s already exists' % parameters['dbname']\n            if exc_msg not in str(e):\n                # All errors except \"database already exists\" cancel tests\n                sys.stderr.write('Got an error creating the test database: %s\\n' % e)\n                sys.exit(2)\n            elif not keepdb:\n                # If the database should be kept, ignore \"database already\n                # exists\".\n                raise e"
+        }
+      ]
+    },
+    {
+      "pr_number": 7471,
+      "pr_title": "Fixed #26812 -- Check only path with APPEND_SLASH enabled",
+      "pr_body": "",
+      "issue_id": 26812,
+      "issue_title": "APPEND_SLASH doesn't work with URLs that have query strings",
+      "issue_body": "",
+      "issue_closed_at": "2016-11-06T03:38:42",
+      "base_commit": "b741fe397aa567dd43d3e9dbd9fb5ecca6eab412",
+      "changes": [
+        {
+          "file": "django/middleware/common.py",
+          "type": "function",
+          "name": "should_redirect_with_slash",
+          "class_name": "CommonMiddleware",
+          "code": "def should_redirect_with_slash(self, request):\n        \"\"\"\n        Return True if settings.APPEND_SLASH is True and appending a slash to\n        the request path turns an invalid path into a valid one.\n        \"\"\"\n        if settings.APPEND_SLASH and not request.get_full_path().endswith('/'):\n            urlconf = getattr(request, 'urlconf', None)\n            return (\n                not is_valid_path(request.path_info, urlconf) and\n                is_valid_path('%s/' % request.path_info, urlconf)\n            )\n        return False"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,172 @@
+{
+  "instance_id": "django__django-15388",
+  "repo": "django/django",
+  "created_at": "2022-02-02T17:09:51Z",
+  "problem_statement": "Dev Server fails to restart after adding BASE_DIR to TEMPLATES[0]['DIRS'] in settings\nDescription\n\t\nRepro steps:\n$ pip install -U django\n$ django-admin startproject <name>\nOpen settings.py, copy the BASE_DIR variable from line 16 and paste it into the empty DIRS list on line 57\n$ ./manage.py runserver\nBack in your IDE, save a file and watch the dev server *NOT* restart.\nBack in settings.py, remove BASE_DIR from the templates DIRS list. Manually CTRL-C your dev server (as it won't restart on its own when you save), restart the dev server. Now return to your settings.py file, re-save it, and notice the development server once again detects changes and restarts.\nThis bug prevents the dev server from restarting no matter where you make changes - it is not just scoped to edits to settings.py.\n",
+  "patch": "diff --git a/django/template/autoreload.py b/django/template/autoreload.py\n--- a/django/template/autoreload.py\n+++ b/django/template/autoreload.py\n@@ -48,6 +48,8 @@ def watch_for_template_changes(sender, **kwargs):\n \n @receiver(file_changed, dispatch_uid='template_loaders_file_changed')\n def template_changed(sender, file_path, **kwargs):\n+    if file_path.suffix == '.py':\n+        return\n     for template_dir in get_template_directories():\n         if template_dir in file_path.parents:\n             reset_loaders()\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 11263,
+      "pr_title": "Fixed #30361 -- Increased the default timeout of watchman client to 5 seconds and made it customizable.",
+      "pr_body": "",
+      "issue_id": 30361,
+      "issue_title": "Watchman timing out when loading server",
+      "issue_body": "",
+      "issue_closed_at": "2019-04-26T06:35:55",
+      "base_commit": "efeceba589974b95b35b2e25df86498c96315518",
+      "changes": [
+        {
+          "file": "django/utils/autoreload.py",
+          "type": "class",
+          "name": "WatchmanReloader",
+          "code": "class WatchmanReloader(BaseReloader):\n    def __init__(self):\n        self.roots = defaultdict(set)\n        self.processed_request = threading.Event()\n        super().__init__()\n\n    @cached_property\n    def client(self):\n        return pywatchman.client()\n\n    def _watch_root(self, root):\n        # In practice this shouldn't occur, however, it's possible that a\n        # directory that doesn't exist yet is being watched. If it's outside of\n        # sys.path then this will end up a new root. How to handle this isn't\n        # clear: Not adding the root will likely break when subscribing to the\n        # changes, however, as this is currently an internal API,  no files\n        # will be being watched outside of sys.path. Fixing this by checking\n        # inside watch_glob() and watch_dir() is expensive, instead this could\n        # could fall back to the StatReloader if this case is detected? For\n        # now, watching its parent, if possible, is sufficient.\n        if not root.exists():\n            if not root.parent.exists():\n                logger.warning('Unable to watch root dir %s as neither it or its parent exist.', root)\n                return\n            root = root.parent\n        result = self.client.query('watch-project', str(root.absolute()))\n        if 'warning' in result:\n            logger.warning('Watchman warning: %s', result['warning'])\n        logger.debug('Watchman watch-project result: %s', result)\n        return result['watch'], result.get('relative_path')\n\n    @functools.lru_cache()\n    def _get_clock(self, root):\n        return self.client.query('clock', root)['clock']\n\n    def _subscribe(self, directory, name, expression):\n        root, rel_path = self._watch_root(directory)\n        query = {\n            'expression': expression,\n            'fields': ['name'],\n            'since': self._get_clock(root),\n            'dedup_results': True,\n        }\n        if rel_path:\n            query['relative_root'] = rel_path\n        logger.debug('Issuing watchman subscription %s, for root %s. Query: %s', name, root, query)\n        self.client.query('subscribe', root, name, query)\n\n    def _subscribe_dir(self, directory, filenames):\n        if not directory.exists():\n            if not directory.parent.exists():\n                logger.warning('Unable to watch directory %s as neither it or its parent exist.', directory)\n                return\n            prefix = 'files-parent-%s' % directory.name\n            filenames = ['%s/%s' % (directory.name, filename) for filename in filenames]\n            directory = directory.parent\n            expression = ['name', filenames, 'wholename']\n        else:\n            prefix = 'files'\n            expression = ['name', filenames]\n        self._subscribe(directory, '%s:%s' % (prefix, directory), expression)\n\n    def _watch_glob(self, directory, patterns):\n        \"\"\"\n        Watch a directory with a specific glob. If the directory doesn't yet\n        exist, attempt to watch the parent directory and amend the patterns to\n        include this. It's important this method isn't called more than one per\n        directory when updating all subscriptions. Subsequent calls will\n        overwrite the named subscription, so it must include all possible glob\n        expressions.\n        \"\"\"\n        prefix = 'glob'\n        if not directory.exists():\n            if not directory.parent.exists():\n                logger.warning('Unable to watch directory %s as neither it or its parent exist.', directory)\n                return\n            prefix = 'glob-parent-%s' % directory.name\n            patterns = ['%s/%s' % (directory.name, pattern) for pattern in patterns]\n            directory = directory.parent\n\n        expression = ['anyof']\n        for pattern in patterns:\n            expression.append(['match', pattern, 'wholename'])\n        self._subscribe(directory, '%s:%s' % (prefix, directory), expression)\n\n    def watched_roots(self, watched_files):\n        extra_directories = self.directory_globs.keys()\n        watched_file_dirs = [f.parent for f in watched_files]\n        sys_paths = list(sys_path_directories())\n        return frozenset((*extra_directories, *watched_file_dirs, *sys_paths))\n\n    def _update_watches(self):\n        watched_files = list(self.watched_files(include_globs=False))\n        found_roots = common_roots(self.watched_roots(watched_files))\n        logger.debug('Watching %s files', len(watched_files))\n        logger.debug('Found common roots: %s', found_roots)\n        # Setup initial roots for performance, shortest roots first.\n        for root in sorted(found_roots):\n            self._watch_root(root)\n        for directory, patterns in self.directory_globs.items():\n            self._watch_glob(directory, patterns)\n        # Group sorted watched_files by their parent directory.\n        sorted_files = sorted(watched_files, key=lambda p: p.parent)\n        for directory, group in itertools.groupby(sorted_files, key=lambda p: p.parent):\n            # These paths need to be relative to the parent directory.\n            self._subscribe_dir(directory, [str(p.relative_to(directory)) for p in group])\n\n    def update_watches(self):\n        try:\n            self._update_watches()\n        except Exception as ex:\n            # If the service is still available, raise the original exception.\n            if self.check_server_status(ex):\n                raise\n\n    def _check_subscription(self, sub):\n        subscription = self.client.getSubscription(sub)\n        if not subscription:\n            return\n        logger.debug('Watchman subscription %s has results.', sub)\n        for result in subscription:\n            # When using watch-project, it's not simple to get the relative\n            # directory without storing some specific state. Store the full\n            # path to the directory in the subscription name, prefixed by its\n            # type (glob, files).\n            root_directory = Path(result['subscription'].split(':', 1)[1])\n            logger.debug('Found root directory %s', root_directory)\n            for file in result.get('files', []):\n                self.notify_file_changed(root_directory / file)\n\n    def request_processed(self, **kwargs):\n        logger.debug('Request processed. Setting update_watches event.')\n        self.processed_request.set()\n\n    def tick(self):\n        request_finished.connect(self.request_processed)\n        self.update_watches()\n        while True:\n            if self.processed_request.is_set():\n                self.update_watches()\n                self.processed_request.clear()\n            try:\n                self.client.receive()\n            except pywatchman.WatchmanError as ex:\n                self.check_server_status(ex)\n            else:\n                for sub in list(self.client.subs.keys()):\n                    self._check_subscription(sub)\n            yield\n\n    def stop(self):\n        self.client.close()\n        super().stop()\n\n    def check_server_status(self, inner_ex=None):\n        \"\"\"Return True if the server is available.\"\"\"\n        try:\n            self.client.query('version')\n        except Exception:\n            raise WatchmanUnavailable(str(inner_ex)) from inner_ex\n        return True\n\n    @classmethod\n    def check_availability(cls):\n        if not pywatchman:\n            raise WatchmanUnavailable('pywatchman not installed.')\n        client = pywatchman.client(timeout=0.01)\n        try:\n            result = client.capabilityCheck()\n        except Exception:\n            # The service is down?\n            raise WatchmanUnavailable('Cannot connect to the watchman service.')\n        version = get_version_tuple(result['version'])\n        # Watchman 4.9 includes multiple improvements to watching project\n        # directories as well as case insensitive filesystems.\n        logger.debug('Watchman version %s', version)\n        if version < (4, 9):\n            raise WatchmanUnavailable('Watchman 4.9 or later is required.')"
+        },
+        {
+          "file": "django/utils/autoreload.py",
+          "type": "function",
+          "name": "check_server_status",
+          "class_name": "WatchmanReloader",
+          "code": "def check_server_status(self, inner_ex=None):\n        \"\"\"Return True if the server is available.\"\"\"\n        try:\n            self.client.query('version')\n        except Exception:\n            raise WatchmanUnavailable(str(inner_ex)) from inner_ex\n        return True"
+        }
+      ]
+    },
+    {
+      "pr_number": 11543,
+      "pr_title": "Fixed #30619 -- Made runserver --nothreading use single threaded WSGIServer.",
+      "pr_body": "Ticket: [#30619](https://code.djangoproject.com/ticket/30619)\r\n\r\nClient: Chrome 75.0.3770.100/Firefox 67.0.4 on macOS 10.14.5.\r\nServer: macOS 10.14.5., Python 3.7.3, Django 2.2.3\r\n\r\nRunning web application with single-threaded wsgi server may stop responding.\r\n\r\nThis is because Web browser uses multiple connection, and all of them has Connection: keep-alive header by default.\r\n\r\nWhen the first request is finished, wsgi server continue to read the socket first request used because the connection is keep-alive.\r\n\r\nSo, the second connection is kept waiting without accepted by wsgi server, until the fist connection is closed. But the first connection will not be closed by browser for very long time.\r\n\r\n\r\n",
+      "issue_id": 30619,
+      "issue_title": "runserver fails to close connection if --nothreading specified.",
+      "issue_body": "",
+      "issue_closed_at": "2019-07-10T06:57:10",
+      "base_commit": "00d4e6f8b587dcea147c51ece253dc54c461a11d",
+      "changes": [
+        {
+          "file": "django/core/servers/basehttp.py",
+          "type": "function",
+          "name": "cleanup_headers",
+          "class_name": "ServerHandler",
+          "code": "def cleanup_headers(self):\n        super().cleanup_headers()\n        # HTTP/1.1 requires support for persistent connections. Send 'close' if\n        # the content length is unknown to prevent clients from reusing the\n        # connection.\n        if 'Content-Length' not in self.headers:\n            self.headers['Connection'] = 'close'\n        # Mark the connection for closing if it's set as such above or if the\n        # application sent the header.\n        if self.headers.get('Connection') == 'close':\n            self.request_handler.close_connection = True"
+        }
+      ]
+    },
+    {
+      "pr_number": 9964,
+      "pr_title": "Fixed #29413 -- Prevented evaluation of QuerySet.get_or_create()/update_or_create() defaults unless needed.",
+      "pr_body": "https://code.djangoproject.com/ticket/29413",
+      "issue_id": 29413,
+      "issue_title": "QuerySet.get_or_create()/update_or_create() shouldn't evaluate lazy defaults unless they are needed",
+      "issue_body": "",
+      "issue_closed_at": "2018-07-16T21:09:12",
+      "base_commit": "4d48ddd8f93800a80330ec1dee7b7d4afe6ea95a",
+      "changes": [
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "get_or_create",
+          "class_name": "QuerySet",
+          "code": "def get_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, creating one if necessary.\n        Return a tuple of (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        # The get() needs to be targeted at the write database in order\n        # to avoid potential transaction consistency problems.\n        self._for_write = True\n        try:\n            return self.get(**lookup), False\n        except self.model.DoesNotExist:\n            return self._create_object_from_params(lookup, params)"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "update_or_create",
+          "class_name": "QuerySet",
+          "code": "def update_or_create(self, defaults=None, **kwargs):\n        \"\"\"\n        Look up an object with the given kwargs, updating one with defaults\n        if it exists, otherwise create a new one.\n        Return a tuple (object, created), where created is a boolean\n        specifying whether an object was created.\n        \"\"\"\n        defaults = defaults or {}\n        lookup, params = self._extract_model_params(defaults, **kwargs)\n        self._for_write = True\n        with transaction.atomic(using=self.db):\n            try:\n                obj = self.select_for_update().get(**lookup)\n            except self.model.DoesNotExist:\n                obj, created = self._create_object_from_params(lookup, params)\n                if created:\n                    return obj, created\n            for k, v in defaults.items():\n                setattr(obj, k, v() if callable(v) else v)\n            obj.save(using=self.db)\n        return obj, False"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_create_object_from_params",
+          "class_name": "QuerySet",
+          "code": "def _create_object_from_params(self, lookup, params):\n        \"\"\"\n        Try to create an object using passed params. Used by get_or_create()\n        and update_or_create().\n        \"\"\"\n        try:\n            with transaction.atomic(using=self.db):\n                params = {k: v() if callable(v) else v for k, v in params.items()}\n                obj = self.create(**params)\n            return obj, True\n        except IntegrityError as e:\n            try:\n                return self.get(**lookup), False\n            except self.model.DoesNotExist:\n                pass\n            raise e"
+        },
+        {
+          "file": "django/db/models/query.py",
+          "type": "function",
+          "name": "_extract_model_params",
+          "class_name": "QuerySet",
+          "code": "def _extract_model_params(self, defaults, **kwargs):\n        \"\"\"\n        Prepare `lookup` (kwargs that are valid model attributes), `params`\n        (for creating a model instance) based on given kwargs; for use by\n        get_or_create() and update_or_create().\n        \"\"\"\n        defaults = defaults or {}\n        lookup = kwargs.copy()\n        for f in self.model._meta.fields:\n            if f.attname in lookup:\n                lookup[f.name] = lookup.pop(f.attname)\n        params = {k: v for k, v in kwargs.items() if LOOKUP_SEP not in k}\n        params.update(defaults)\n        property_names = self.model._meta._property_names\n        invalid_params = []\n        for param in params:\n            try:\n                self.model._meta.get_field(param)\n            except exceptions.FieldDoesNotExist:\n                # It's okay to use a model's property if it has a setter.\n                if not (param in property_names and getattr(self.model, param).fset):\n                    invalid_params.append(param)\n        if invalid_params:\n            raise exceptions.FieldError(\n                \"Invalid field name(s) for model %s: '%s'.\" % (\n                    self.model._meta.object_name,\n                    \"', '\".join(sorted(invalid_params)),\n                ))\n        return lookup, params"
+        }
+      ]
+    },
+    {
+      "pr_number": 14717,
+      "pr_title": "Fixed #32966 -- Fixed TimeField.check() crash for timezone-aware times in default when USE_TZ = True.",
+      "pr_body": "https://code.djangoproject.com/ticket/32966",
+      "issue_id": 32966,
+      "issue_title": "Time-related _check_fix_default_value() methods can be optimized / simplified and have a bug",
+      "issue_body": "",
+      "issue_closed_at": "2021-07-30T03:52:24",
+      "base_commit": "40d3cec22dff8d242384fab02e446932c92ae220",
+      "changes": [
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "class",
+          "name": "CommaSeparatedIntegerField",
+          "code": "class CommaSeparatedIntegerField(CharField):\n    default_validators = [validators.validate_comma_separated_integer_list]\n    description = _(\"Comma-separated integers\")\n    system_check_removed_details = {\n        'msg': (\n            'CommaSeparatedIntegerField is removed except for support in '\n            'historical migrations.'\n        ),\n        'hint': (\n            'Use CharField(validators=[validate_comma_separated_integer_list]) '\n            'instead.'\n        ),\n        'id': 'fields.E901',\n    }"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_mutually_exclusive_options",
+          "class_name": "DateTimeCheckMixin",
+          "code": "def _check_mutually_exclusive_options(self):\n        # auto_now, auto_now_add, and default are mutually exclusive\n        # options. The use of more than one of these options together\n        # will trigger an Error\n        mutually_exclusive_options = [self.auto_now_add, self.auto_now, self.has_default()]\n        enabled_options = [option not in (None, False) for option in mutually_exclusive_options].count(True)\n        if enabled_options > 1:\n            return [\n                checks.Error(\n                    \"The options auto_now, auto_now_add, and default \"\n                    \"are mutually exclusive. Only one of these options \"\n                    \"may be present.\",\n                    obj=self,\n                    id='fields.E160',\n                )\n            ]\n        else:\n            return []"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_fix_default_value",
+          "class_name": "TimeField",
+          "code": "def _check_fix_default_value(self):\n        \"\"\"\n        Warn that using an actual date or datetime value is probably wrong;\n        it's only evaluated on server startup.\n        \"\"\"\n        if not self.has_default():\n            return []\n\n        now = timezone.now()\n        if not timezone.is_naive(now):\n            now = timezone.make_naive(now, timezone.utc)\n        value = self.default\n        if isinstance(value, datetime.datetime):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc)\n        elif isinstance(value, datetime.time):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            value = datetime.datetime.combine(now.date(), value)\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc).time()\n        else:\n            # No explicit time / datetime value -- no checks necessary\n            return []\n        if lower <= value <= upper:\n            return [\n                checks.Warning(\n                    'Fixed default value provided.',\n                    hint='It seems you set a fixed date / time / datetime '\n                         'value as default for this field. This may not be '\n                         'what you want. If you want to have the current date '\n                         'as default, use `django.utils.timezone.now`',\n                    obj=self,\n                    id='fields.W161',\n                )\n            ]\n\n        return []"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_fix_default_value",
+          "class_name": "TimeField",
+          "code": "def _check_fix_default_value(self):\n        \"\"\"\n        Warn that using an actual date or datetime value is probably wrong;\n        it's only evaluated on server startup.\n        \"\"\"\n        if not self.has_default():\n            return []\n\n        now = timezone.now()\n        if not timezone.is_naive(now):\n            now = timezone.make_naive(now, timezone.utc)\n        value = self.default\n        if isinstance(value, datetime.datetime):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc)\n        elif isinstance(value, datetime.time):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            value = datetime.datetime.combine(now.date(), value)\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc).time()\n        else:\n            # No explicit time / datetime value -- no checks necessary\n            return []\n        if lower <= value <= upper:\n            return [\n                checks.Warning(\n                    'Fixed default value provided.',\n                    hint='It seems you set a fixed date / time / datetime '\n                         'value as default for this field. This may not be '\n                         'what you want. If you want to have the current date '\n                         'as default, use `django.utils.timezone.now`',\n                    obj=self,\n                    id='fields.W161',\n                )\n            ]\n\n        return []"
+        },
+        {
+          "file": "django/db/models/fields/__init__.py",
+          "type": "function",
+          "name": "_check_fix_default_value",
+          "class_name": "TimeField",
+          "code": "def _check_fix_default_value(self):\n        \"\"\"\n        Warn that using an actual date or datetime value is probably wrong;\n        it's only evaluated on server startup.\n        \"\"\"\n        if not self.has_default():\n            return []\n\n        now = timezone.now()\n        if not timezone.is_naive(now):\n            now = timezone.make_naive(now, timezone.utc)\n        value = self.default\n        if isinstance(value, datetime.datetime):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc)\n        elif isinstance(value, datetime.time):\n            second_offset = datetime.timedelta(seconds=10)\n            lower = now - second_offset\n            upper = now + second_offset\n            value = datetime.datetime.combine(now.date(), value)\n            if timezone.is_aware(value):\n                value = timezone.make_naive(value, timezone.utc).time()\n        else:\n            # No explicit time / datetime value -- no checks necessary\n            return []\n        if lower <= value <= upper:\n            return [\n                checks.Warning(\n                    'Fixed default value provided.',\n                    hint='It seems you set a fixed date / time / datetime '\n                         'value as default for this field. This may not be '\n                         'what you want. If you want to have the current date '\n                         'as default, use `django.utils.timezone.now`',\n                    obj=self,\n                    id='fields.W161',\n                )\n            ]\n\n        return []"
+        }
+      ]
+    },
+    {
+      "pr_number": 11170,
+      "pr_title": "Fixed #30324 -- Forced utf-8 encoding when loading debug templates.",
+      "pr_body": "Refs #28007 and #29654.\r\n\r\nRegression in ea542a9c7239b5b665797b7c809f1aceb0b412cf and 50b8493581fea3d7137dd8db33bac7008868d23a.",
+      "issue_id": 30324,
+      "issue_title": "UnicodeDecodeError when loading debug templates.",
+      "issue_body": "",
+      "issue_closed_at": "2019-04-05T09:35:37",
+      "base_commit": "9012033138fa41b573d3e4e3f0dfa8b94a4719c6",
+      "changes": [
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "get_traceback_data",
+          "class_name": "ExceptionReporter",
+          "code": "def get_traceback_data(self):\n        \"\"\"Return a dictionary containing traceback information.\"\"\"\n        if self.exc_type and issubclass(self.exc_type, TemplateDoesNotExist):\n            self.template_does_not_exist = True\n            self.postmortem = self.exc_value.chain or [self.exc_value]\n\n        frames = self.get_traceback_frames()\n        for i, frame in enumerate(frames):\n            if 'vars' in frame:\n                frame_vars = []\n                for k, v in frame['vars']:\n                    v = pprint(v)\n                    # Trim large blobs of data\n                    if len(v) > 4096:\n                        v = '%s\u2026 <trimmed %d bytes string>' % (v[0:4096], len(v))\n                    frame_vars.append((k, v))\n                frame['vars'] = frame_vars\n            frames[i] = frame\n\n        unicode_hint = ''\n        if self.exc_type and issubclass(self.exc_type, UnicodeError):\n            start = getattr(self.exc_value, 'start', None)\n            end = getattr(self.exc_value, 'end', None)\n            if start is not None and end is not None:\n                unicode_str = self.exc_value.args[1]\n                unicode_hint = force_str(\n                    unicode_str[max(start - 5, 0):min(end + 5, len(unicode_str))],\n                    'ascii', errors='replace'\n                )\n        from django import get_version\n\n        if self.request is None:\n            user_str = None\n        else:\n            try:\n                user_str = str(self.request.user)\n            except Exception:\n                # request.user may raise OperationalError if the database is\n                # unavailable, for example.\n                user_str = '[unable to retrieve the current user]'\n\n        c = {\n            'is_email': self.is_email,\n            'unicode_hint': unicode_hint,\n            'frames': frames,\n            'request': self.request,\n            'user_str': user_str,\n            'filtered_POST_items': list(self.filter.get_post_parameters(self.request).items()),\n            'settings': get_safe_settings(),\n            'sys_executable': sys.executable,\n            'sys_version_info': '%d.%d.%d' % sys.version_info[0:3],\n            'server_time': timezone.now(),\n            'django_version_info': get_version(),\n            'sys_path': sys.path,\n            'template_info': self.template_info,\n            'template_does_not_exist': self.template_does_not_exist,\n            'postmortem': self.postmortem,\n        }\n        if self.request is not None:\n            c['request_GET_items'] = self.request.GET.items()\n            c['request_FILES_items'] = self.request.FILES.items()\n            c['request_COOKIES_items'] = self.request.COOKIES.items()\n        # Check whether exception info is available\n        if self.exc_type:\n            c['exception_type'] = self.exc_type.__name__\n        if self.exc_value:\n            c['exception_value'] = str(self.exc_value)\n        if frames:\n            c['lastframe'] = frames[-1]\n        return c"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "technical_404_response",
+          "class_name": null,
+          "code": "def technical_404_response(request, exception):\n    \"\"\"Create a technical 404 error response. `exception` is the Http404.\"\"\"\n    try:\n        error_url = exception.args[0]['path']\n    except (IndexError, TypeError, KeyError):\n        error_url = request.path_info[1:]  # Trim leading slash\n\n    try:\n        tried = exception.args[0]['tried']\n    except (IndexError, TypeError, KeyError):\n        tried = []\n    else:\n        if (not tried or (                  # empty URLconf\n            request.path == '/' and\n            len(tried) == 1 and             # default URLconf\n            len(tried[0]) == 1 and\n            getattr(tried[0][0], 'app_name', '') == getattr(tried[0][0], 'namespace', '') == 'admin'\n        )):\n            return default_urlconf(request)\n\n    urlconf = getattr(request, 'urlconf', settings.ROOT_URLCONF)\n    if isinstance(urlconf, types.ModuleType):\n        urlconf = urlconf.__name__\n\n    caller = ''\n    try:\n        resolver_match = resolve(request.path)\n    except Resolver404:\n        pass\n    else:\n        obj = resolver_match.func\n\n        if hasattr(obj, '__name__'):\n            caller = obj.__name__\n        elif hasattr(obj, '__class__') and hasattr(obj.__class__, '__name__'):\n            caller = obj.__class__.__name__\n\n        if hasattr(obj, '__module__'):\n            module = obj.__module__\n            caller = '%s.%s' % (module, caller)\n\n    with Path(CURRENT_DIR, 'templates', 'technical_404.html').open() as fh:\n        t = DEBUG_ENGINE.from_string(fh.read())\n    c = Context({\n        'urlconf': urlconf,\n        'root_urlconf': settings.ROOT_URLCONF,\n        'request_path': error_url,\n        'urlpatterns': tried,\n        'reason': str(exception),\n        'request': request,\n        'settings': get_safe_settings(),\n        'raising_view_name': caller,\n    })\n    return HttpResponseNotFound(t.render(c), content_type='text/html')"
+        },
+        {
+          "file": "django/views/debug.py",
+          "type": "function",
+          "name": "technical_404_response",
+          "class_name": null,
+          "code": "def technical_404_response(request, exception):\n    \"\"\"Create a technical 404 error response. `exception` is the Http404.\"\"\"\n    try:\n        error_url = exception.args[0]['path']\n    except (IndexError, TypeError, KeyError):\n        error_url = request.path_info[1:]  # Trim leading slash\n\n    try:\n        tried = exception.args[0]['tried']\n    except (IndexError, TypeError, KeyError):\n        tried = []\n    else:\n        if (not tried or (                  # empty URLconf\n            request.path == '/' and\n            len(tried) == 1 and             # default URLconf\n            len(tried[0]) == 1 and\n            getattr(tried[0][0], 'app_name', '') == getattr(tried[0][0], 'namespace', '') == 'admin'\n        )):\n            return default_urlconf(request)\n\n    urlconf = getattr(request, 'urlconf', settings.ROOT_URLCONF)\n    if isinstance(urlconf, types.ModuleType):\n        urlconf = urlconf.__name__\n\n    caller = ''\n    try:\n        resolver_match = resolve(request.path)\n    except Resolver404:\n        pass\n    else:\n        obj = resolver_match.func\n\n        if hasattr(obj, '__name__'):\n            caller = obj.__name__\n        elif hasattr(obj, '__class__') and hasattr(obj.__class__, '__name__'):\n            caller = obj.__class__.__name__\n\n        if hasattr(obj, '__module__'):\n            module = obj.__module__\n            caller = '%s.%s' % (module, caller)\n\n    with Path(CURRENT_DIR, 'templates', 'technical_404.html').open() as fh:\n        t = DEBUG_ENGINE.from_string(fh.read())\n    c = Context({\n        'urlconf': urlconf,\n        'root_urlconf': settings.ROOT_URLCONF,\n        'request_path': error_url,\n        'urlpatterns': tried,\n        'reason': str(exception),\n        'request': request,\n        'settings': get_safe_settings(),\n        'raising_view_name': caller,\n    })\n    return HttpResponseNotFound(t.render(c), content_type='text/html')"
+        }
+      ]
+    }
+  ]
+}

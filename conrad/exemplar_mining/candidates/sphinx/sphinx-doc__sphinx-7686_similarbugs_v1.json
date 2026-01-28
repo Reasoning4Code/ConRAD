@@ -1,0 +1,172 @@
+{
+  "instance_id": "sphinx-doc__sphinx-7686",
+  "repo": "sphinx-doc/sphinx",
+  "created_at": "2020-05-17T14:09:10Z",
+  "problem_statement": "autosummary: The members variable for module template contains imported members\n**Describe the bug**\r\nautosummary: The members variable for module template contains imported members even if autosummary_imported_members is False.\r\n\r\n**To Reproduce**\r\n\r\n```\r\n# _templates/autosummary/module.rst\r\n{{ fullname | escape | underline }}\r\n\r\n.. automodule:: {{ fullname }}\r\n\r\n   .. autosummary::\r\n   {% for item in members %}\r\n      {{ item }}\r\n   {%- endfor %}\r\n\r\n```\r\n```\r\n# example.py\r\nimport os\r\n```\r\n```\r\n# index.rst\r\n.. autosummary::\r\n   :toctree: generated\r\n\r\n   example\r\n```\r\n```\r\n# conf.py\r\nautosummary_generate = True\r\nautosummary_imported_members = False\r\n```\r\n\r\nAs a result, I got following output:\r\n```\r\n# generated/example.rst\r\nexample\r\n=======\r\n\r\n.. automodule:: example\r\n\r\n   .. autosummary::\r\n\r\n      __builtins__\r\n      __cached__\r\n      __doc__\r\n      __file__\r\n      __loader__\r\n      __name__\r\n      __package__\r\n      __spec__\r\n      os\r\n```\r\n\r\n**Expected behavior**\r\nThe template variable `members` should not contain imported members when `autosummary_imported_members` is False.\r\n\r\n**Your project**\r\nNo\r\n\r\n**Screenshots**\r\nNo\r\n\r\n**Environment info**\r\n- OS: Mac\r\n- Python version: 3.8.2\r\n- Sphinx version: 3.1.0dev\r\n- Sphinx extensions:  sphinx.ext.autosummary\r\n- Extra tools: No\r\n\r\n**Additional context**\r\nNo\r\n\n",
+  "patch": "diff --git a/sphinx/ext/autosummary/generate.py b/sphinx/ext/autosummary/generate.py\n--- a/sphinx/ext/autosummary/generate.py\n+++ b/sphinx/ext/autosummary/generate.py\n@@ -18,6 +18,7 @@\n \"\"\"\n \n import argparse\n+import inspect\n import locale\n import os\n import pkgutil\n@@ -176,6 +177,56 @@ def render(self, template_name: str, context: Dict) -> str:\n # -- Generating output ---------------------------------------------------------\n \n \n+class ModuleScanner:\n+    def __init__(self, app: Any, obj: Any) -> None:\n+        self.app = app\n+        self.object = obj\n+\n+    def get_object_type(self, name: str, value: Any) -> str:\n+        return get_documenter(self.app, value, self.object).objtype\n+\n+    def is_skipped(self, name: str, value: Any, objtype: str) -> bool:\n+        try:\n+            return self.app.emit_firstresult('autodoc-skip-member', objtype,\n+                                             name, value, False, {})\n+        except Exception as exc:\n+            logger.warning(__('autosummary: failed to determine %r to be documented, '\n+                              'the following exception was raised:\\n%s'),\n+                           name, exc, type='autosummary')\n+            return False\n+\n+    def scan(self, imported_members: bool) -> List[str]:\n+        members = []\n+        for name in dir(self.object):\n+            try:\n+                value = safe_getattr(self.object, name)\n+            except AttributeError:\n+                value = None\n+\n+            objtype = self.get_object_type(name, value)\n+            if self.is_skipped(name, value, objtype):\n+                continue\n+\n+            try:\n+                if inspect.ismodule(value):\n+                    imported = True\n+                elif safe_getattr(value, '__module__') != self.object.__name__:\n+                    imported = True\n+                else:\n+                    imported = False\n+            except AttributeError:\n+                imported = False\n+\n+            if imported_members:\n+                # list all members up\n+                members.append(name)\n+            elif imported is False:\n+                # list not-imported members up\n+                members.append(name)\n+\n+        return members\n+\n+\n def generate_autosummary_content(name: str, obj: Any, parent: Any,\n                                  template: AutosummaryRenderer, template_name: str,\n                                  imported_members: bool, app: Any,\n@@ -246,7 +297,8 @@ def get_modules(obj: Any) -> Tuple[List[str], List[str]]:\n     ns.update(context)\n \n     if doc.objtype == 'module':\n-        ns['members'] = dir(obj)\n+        scanner = ModuleScanner(app, obj)\n+        ns['members'] = scanner.scan(imported_members)\n         ns['functions'], ns['all_functions'] = \\\n             get_members(obj, {'function'}, imported=imported_members)\n         ns['classes'], ns['all_classes'] = \\\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 4634,
+      "pr_title": "Fix #4630: Have order on msgids in sphinx.pot deterministic",
+      "pr_body": "ref. #4630 \r\n\r\n### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- Have order on msgids in sphinx.pot deterministic\r\n\r\n### Detail\r\n- Have order on msgids in sphinx.pot deterministic\r\n",
+      "issue_id": 4630,
+      "issue_title": "Order on msgids included in sphinx.pot is not deterministic",
+      "issue_body": "Subject: Order on msgids in sphinx.pot has difference even if its content has no essential changes\r\n\r\n### Problem\r\n- When .pot files are managed with VCS (such as Git), difference without essential changes bother project manager.\r\n\r\n#### Procedure to reproduce the problem\r\n```\r\ngit clone https://github.com/python/cpython\r\ncd cpython/Doc\r\nmake build ALLSPHINXOPTS=\"-E -b gettext -D gettext_compact=0 -d build/.doctrees . locales/pot\"\r\n```\r\n\r\n#### Error logs / results\r\n- https://github.com/python/python-docs-ja/commit/e23b4d3b310353073f1ba60b08160d8da09425db#diff-45573348f1c20fa58a6bb5ae4fbeb851\r\n\r\n#### Expected results\r\nTreated as \"No difference\".\r\nMore concretely, msgids in sphinx.pot have deterministic order.\r\n\r\n### Reproducible project / your project\r\n- https://github.com/python/cpython (.pot files are genereted from this project)\r\n\r\n### Environment info\r\n- OS: Linux/Travis CI\r\n- Python version: 3.6.3\r\n- Sphinx version: 1.7.0\r\n\r\n",
+      "issue_closed_at": "2018-02-19T01:49:03Z",
+      "base_commit": "8e73cbca5206e11b62838a90e9f935e7906e8b85",
+      "changes": [
+        {
+          "file": "sphinx/builders/gettext.py",
+          "type": "line",
+          "name": "line 12",
+          "code": "from __future__ import unicode_literals\n\nfrom codecs import open\nfrom collections import defaultdict\nfrom datetime import datetime, tzinfo, timedelta\nfrom os import path, walk, getenv\nfrom time import time"
+        },
+        {
+          "file": "sphinx/builders/gettext.py",
+          "type": "function",
+          "name": "__init__",
+          "class_name": "LocalTimeZone",
+          "code": "def __init__(self, *args, **kw):\n        # type: (Any, Any) -> None\n        super(LocalTimeZone, self).__init__(*args, **kw)  # type: ignore\n        self.tzdelta = tzdelta"
+        },
+        {
+          "file": "sphinx/builders/gettext.py",
+          "type": "function",
+          "name": "_collect_templates",
+          "class_name": "MessageCatalogBuilder",
+          "code": "def _collect_templates(self):\n        # type: () -> Set[unicode]\n        template_files = set()\n        for template_path in self.config.templates_path:\n            tmpl_abs_path = path.join(self.app.srcdir, template_path)\n            for dirpath, dirs, files in walk(tmpl_abs_path):\n                for fn in files:\n                    if fn.endswith('.html'):\n                        filename = canon_path(path.join(dirpath, fn))\n                        template_files.add(filename)\n        return template_files"
+        }
+      ]
+    },
+    {
+      "pr_number": 5521,
+      "pr_title": "Fix #5493: gettext: crashed with broken template",
+      "pr_body": "### Feature or Bugfix\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #5493 \r\n",
+      "issue_id": 5493,
+      "issue_title": "Encountered unknown tag 'end'",
+      "issue_body": "### Problem\r\nFile \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 59, in fail\r\n    raise exc(msg, lineno, self.name, self.filename)\r\njinja2.exceptions.TemplateSyntaxError: Encountered unknown tag 'end'. Jinja was looking for the following tags: 'endfor' or 'else'. The innermost block that needs to be closed is 'for'.\r\n\r\n#### Procedure to reproduce the problem\r\n```\r\nmake gettext\r\n```\r\n\r\n#### Error logs / results\r\n```\r\n# Sphinx version: 1.8.1\r\n# Python version: 3.6.0 (CPython)\r\n# Docutils version: 0.14 \r\n# Jinja2 version: 2.10\r\n# Last messages:\r\n#   \u8bfb\u53d6\u6a21\u677f\u2026\u2026[  4%] /Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/alabaster/donate.html\r\n#   \r\n#   \u8bfb\u53d6\u6a21\u677f\u2026\u2026[  6%] /Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/alabaster/layout.html\r\n#   \r\n#   \u8bfb\u53d6\u6a21\u677f\u2026\u2026[  8%] /Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/alabaster/navigation.html\r\n#   \r\n#   \u8bfb\u53d6\u6a21\u677f\u2026\u2026[ 10%] /Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/alabaster/relations.html\r\n#   \r\n#   \u8bfb\u53d6\u6a21\u677f\u2026\u2026[ 13%] /Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/matplotlib/backends/web_backend/all_figures.html\r\n#   \r\n# Loaded extensions:\r\n#   sphinx.ext.mathjax (1.8.1) from /Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/sphinx/ext/mathjax.py\r\n#   alabaster (0.7.11) from /Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/alabaster/__init__.py\r\nTraceback (most recent call last):\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/sphinx/cmd/build.py\", line 304, in build_main\r\n    app.build(args.force_all, filenames)\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/sphinx/application.py\", line 341, in build\r\n    self.builder.build_update()\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/sphinx/builders/__init__.py\", line 347, in build_update\r\n    len(to_build))\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/sphinx/builders/gettext.py\", line 258, in build\r\n    self._extract_from_template()\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/sphinx/builders/gettext.py\", line 252, in _extract_from_template\r\n    for line, meth, msg in extract_translations(context):\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/ext.py\", line 214, in _extract\r\n    source = self.environment.parse(source)\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/environment.py\", line 493, in parse\r\n    self.handle_exception(exc_info, source_hint=source)\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/environment.py\", line 780, in handle_exception\r\n    reraise(exc_type, exc_value, tb)\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/_compat.py\", line 37, in reraise\r\n    raise value.with_traceback(tb)\r\n  File \"<unknown>\", line 31, in template\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/environment.py\", line 497, in _parse\r\n    return Parser(self, source, name, encode_filename(filename)).parse()\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 901, in parse\r\n    result = nodes.Template(self.subparse(), lineno=1)\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 883, in subparse\r\n    rv = self.parse_statement()\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 130, in parse_statement\r\n    return getattr(self, 'parse_' + self.stream.current.value)()\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 199, in parse_for\r\n    body = self.parse_statements(('name:endfor', 'name:else'))\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 165, in parse_statements\r\n    result = self.subparse(end_tokens)\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 883, in subparse\r\n    rv = self.parse_statement()\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 144, in parse_statement\r\n    self.fail_unknown_tag(token.value, token.lineno)\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 97, in fail_unknown_tag\r\n    return self._fail_ut_eof(name, self._end_token_stack, lineno)\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 90, in _fail_ut_eof\r\n    self.fail(' '.join(message), lineno)\r\n  File \"/Library/Frameworks/Python.framework/Versions/3.6/lib/python3.6/site-packages/jinja2/parser.py\", line 59, in fail\r\n    raise exc(msg, lineno, self.name, self.filename)\r\njinja2.exceptions.TemplateSyntaxError: Encountered unknown tag 'end'. Jinja was looking for the following tags: 'endfor' or 'else'. The innermost block that needs to be closed is 'for'.\r\n```\r\n\r\n### Environment info\r\n- OS: Mac\r\n- Python version: 3.6.0 (CPython)\r\n- Sphinx version: 1.8.1\r\n",
+      "issue_closed_at": "2018-10-12T13:38:02Z",
+      "base_commit": "551ce9e759e6fc28d1631a12401955dcb15679ba",
+      "changes": [
+        {
+          "file": "sphinx/builders/gettext.py",
+          "type": "line",
+          "name": "line 22",
+          "code": "\nfrom sphinx.builders import Builder\nfrom sphinx.domains.python import pairindextypes\nfrom sphinx.locale import __\nfrom sphinx.util import split_index_msg, logging, status_iterator\nfrom sphinx.util.console import bold  # type: ignore"
+        },
+        {
+          "file": "sphinx/builders/gettext.py",
+          "type": "function",
+          "name": "_extract_from_template",
+          "class_name": "MessageCatalogBuilder",
+          "code": "def _extract_from_template(self):\n        # type: () -> None\n        files = list(self._collect_templates())\n        files.sort()\n        logger.info(bold(__('building [%s]: ') % self.name), nonl=1)\n        logger.info(__('targets for %d template files'), len(files))\n\n        extract_translations = self.templates.environment.extract_translations\n\n        for template in status_iterator(files, __('reading templates... '), \"purple\",  # type: ignore  # NOQA\n                                        len(files), self.app.verbosity):\n            with open(template, 'r', encoding='utf-8') as f:  # type: ignore\n                context = f.read()\n            for line, meth, msg in extract_translations(context):\n                origin = MsgOrigin(template, line)\n                self.catalogs['sphinx'].add(msg, origin)"
+        }
+      ]
+    },
+    {
+      "pr_number": 2299,
+      "pr_title": "Fix #2298: automodule fails to document a class attribute.",
+      "pr_body": "This pull request adds a test case for bug #2298 (commit de356149cd) and a fix (commit c44608234d).\n\nI didn't create a new test module but extended test_ext_viewcode, because the sphinx dev guide recommends it for performance reasons. The test fails until the second commit get applied.\n\nMy fix is not the only possible fix, but a fairly simple one. It surely needs to be reviewed. Especially I'm not completely sure about its impact on extension classes written in C.\n",
+      "issue_id": 2298,
+      "issue_title": "automodule fails to document a class attribute",
+      "issue_body": "The directive automodule:: fails to document a class attribute under the following conditions:\n\nModule mod1 defines a class C:\n\n``` python\nclass C(object):\n    class_attr = 42\n    \"\"\"This is the class attribute class_attr\"\"\"\n```\n\nModule mod2 imports C from mod1:\n\n``` python\nfrom mod1 import C\n__all__ = ('C',)  # required to trigger the bug\n```\n\nNow document module mod2 using automodule:\n\n```\n.. automodule:: mod2\n   :members:\n```\n\nThe resulting documentation won't contain the doc string for the class attribute class_attr.\n\nThe bug is caused by a call of  class_documenter.generate() with the optional arguments\n`check_module=False` and `real_modname=\"mod2\"`. This causes the analyser to look for the source of class C in mod2 instead of mod1. As a consequence it doesn't find the doc-string of class_attr and fails to document it.\n\nI'll create a pull request with a test case and a fix.\n",
+      "issue_closed_at": "2017-11-11T16:53:43Z",
+      "base_commit": "bdc230b1ccc189989789f82a55023f369410309d",
+      "changes": [
+        {
+          "file": "sphinx/ext/autodoc.py",
+          "type": "function",
+          "name": "document_members",
+          "class_name": "AttributeDocumenter",
+          "code": "def document_members(self, all_members=False):\n        pass"
+        }
+      ]
+    },
+    {
+      "pr_number": 6226,
+      "pr_title": "C++, fix parsing of full xrefs.",
+      "pr_body": "If a full xref has a short xref as prefix, e.g., ``T f()``, parsing would fail.\r\n\r\n### Relates\r\n- Fixes #6208\r\n\r\n",
+      "issue_id": 6208,
+      "issue_title": "Cross-referencing a function that returns a pointer with :cpp:func: causes error \"Invalid definition: Expected end of definition\"",
+      "issue_body": "**Describe the bug**\r\nWhile using the :cpp:func: directive to cross-reference a C++ function that returns a pointer, you will receivean error that the * character in the reference is \"unparseable\". This makes it impossible to cross-reference a function with a pointer return value\r\n\r\n**To Reproduce**\r\nSteps to reproduce the behavior:\r\n\r\nSource (C++): \r\n```\r\nclass Foo\r\n{\r\n    public:\r\n        Foo* Bar();\r\n}   \r\n```\r\nSphinx (reStructuredText):\r\n```\r\n:cpp:func:`Foo* Foo::Bar()`\r\n```\r\n\r\nResult:\r\n```\r\nWARNING: Unpareseable C++ cross-reference: 'Foo*'\r\nInvalid definition: Expected end of definition. [error at 4]\r\n   Foo*\r\n   ---^\r\n```\r\n\r\n**Expected behavior**\r\nThe expected behavior is to output a properly cross-referenced link to the Foo* Foo::Bar() function.\r\n\r\n**Your project**\r\nN/A\r\n\r\n**Screenshots**\r\nN/A\r\n\r\n**Environment info**\r\n- OS: [e.g. Unix/Linux/Mac/Win/other with version]\r\n- Python version: 3.7.0\r\n- Sphinx version: 2.0.0+\r\n- Sphinx extensions:  breathe\r\n- Extra tools: N/A",
+      "issue_closed_at": "2019-04-04T16:57:06Z",
+      "base_commit": "8925358eca5fb640543d8c531427f5e50063c782",
+      "changes": [
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "function",
+          "name": "parse_xref_object",
+          "class_name": "DefinitionParser",
+          "code": "def parse_xref_object(self):\n        # type: () -> Tuple[Any, bool]\n        pos = self.pos\n        try:\n            templatePrefix = self._parse_template_declaration_prefix(objectType=\"xref\")\n            name = self._parse_nested_name()\n            # if there are '()' left, just skip them\n            self.skip_ws()\n            self.skip_string('()')\n            templatePrefix = self._check_template_consistency(name, templatePrefix,\n                                                              fullSpecShorthand=True)\n            res1 = ASTNamespace(name, templatePrefix)\n            res1.objectType = 'xref'  # type: ignore\n            return res1, True\n        except DefinitionError as e1:\n            try:\n                self.pos = pos\n                res2 = self.parse_declaration('function', 'function')\n                # if there are '()' left, just skip them\n                self.skip_ws()\n                self.skip_string('()')\n                return res2, False\n            except DefinitionError as e2:\n                errs = []\n                errs.append((e1, \"If shorthand ref\"))\n                errs.append((e2, \"If full function ref\"))\n                msg = \"Error in cross-reference.\"\n                raise self._make_multi_error(errs, msg)"
+        },
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "function",
+          "name": "parse_xref_object",
+          "class_name": "DefinitionParser",
+          "code": "def parse_xref_object(self):\n        # type: () -> Tuple[Any, bool]\n        pos = self.pos\n        try:\n            templatePrefix = self._parse_template_declaration_prefix(objectType=\"xref\")\n            name = self._parse_nested_name()\n            # if there are '()' left, just skip them\n            self.skip_ws()\n            self.skip_string('()')\n            templatePrefix = self._check_template_consistency(name, templatePrefix,\n                                                              fullSpecShorthand=True)\n            res1 = ASTNamespace(name, templatePrefix)\n            res1.objectType = 'xref'  # type: ignore\n            return res1, True\n        except DefinitionError as e1:\n            try:\n                self.pos = pos\n                res2 = self.parse_declaration('function', 'function')\n                # if there are '()' left, just skip them\n                self.skip_ws()\n                self.skip_string('()')\n                return res2, False\n            except DefinitionError as e2:\n                errs = []\n                errs.append((e1, \"If shorthand ref\"))\n                errs.append((e2, \"If full function ref\"))\n                msg = \"Error in cross-reference.\"\n                raise self._make_multi_error(errs, msg)"
+        },
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "function",
+          "name": "warn",
+          "class_name": "Warner",
+          "code": "def warn(self, msg):\n                if emitWarnings:\n                    logger.warning(msg, location=node)"
+        },
+        {
+          "file": "sphinx/domains/cpp.py",
+          "type": "function",
+          "name": "findWarning",
+          "class_name": null,
+          "code": "def findWarning(e):  # as arg to stop flake8 from complaining\n                if typ != 'any' and typ != 'func':\n                    return target, e\n                # hax on top of the paren hax to try to get correct errors\n                parser2 = DefinitionParser(target[:-2], warner, env.config)\n                try:\n                    parser2.parse_xref_object()\n                    parser2.assert_end()\n                except DefinitionError as e2:\n                    return target[:-2], e2\n                # strange, that we don't get the error now, use the original\n                return target, e"
+        }
+      ]
+    },
+    {
+      "pr_number": 7515,
+      "pr_title": "Close #2044: autodoc: Suppress default value for instance attributes",
+      "pr_body": "### Feature or Bugfix\r\n- Feature\r\n- Bugfix\r\n\r\n### Purpose\r\n- refs: #2044 \r\n- This also fixes uninitialized global variables.",
+      "issue_id": 2044,
+      "issue_title": "None by by default for instance attributes?",
+      "issue_body": "When I'm included docstrings for instance attributes in the `__init__` of a class then using autoclass, I always end up with\n\n```\nattr = None\n    Documentation of attr\n```\n\ndue to this line\n\nhttps://github.com/sphinx-doc/sphinx/blob/add4c2467d9f98cadadff51593ca1727b4a81ca1/sphinx/ext/autodoc.py#L1465\n\nIs there a use case for documenting the `= None`. Can it just always be suppressed? There's no way right now to pass a `annotation` option to autoclass AFAICT.\n",
+      "issue_closed_at": "2020-04-23T12:57:37Z",
+      "base_commit": "12cb90c3fa5451e2c99100d8ce1d4d0a8bb7f527",
+      "changes": [
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "identity",
+          "class_name": null,
+          "code": "def identity(x: Any) -> Any:\n    return x"
+        },
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "add_directive_header",
+          "class_name": "PropertyDocumenter",
+          "code": "def add_directive_header(self, sig: str) -> None:\n        super().add_directive_header(sig)\n        sourcename = self.get_sourcename()\n        if inspect.isabstractmethod(self.object):\n            self.add_line('   :abstractmethod:', sourcename)\n        self.add_line('   :property:', sourcename)"
+        },
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "import_object",
+          "class_name": "SlotsAttributeDocumenter",
+          "code": "def import_object(self) -> Any:\n        \"\"\"Never import anything.\"\"\"\n        # disguise as an attribute\n        self.objtype = 'attribute'\n        self._datadescriptor = True\n\n        with mock(self.env.config.autodoc_mock_imports):\n            try:\n                ret = import_object(self.modname, self.objpath[:-1], 'class',\n                                    attrgetter=self.get_attr,\n                                    warningiserror=self.env.config.autodoc_warningiserror)\n                self.module, _, _, self.parent = ret\n                return True\n            except ImportError as exc:\n                logger.warning(exc.args[0], type='autodoc', subtype='import_object')\n                self.env.note_reread()\n                return False"
+        },
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "add_directive_header",
+          "class_name": "PropertyDocumenter",
+          "code": "def add_directive_header(self, sig: str) -> None:\n        super().add_directive_header(sig)\n        sourcename = self.get_sourcename()\n        if inspect.isabstractmethod(self.object):\n            self.add_line('   :abstractmethod:', sourcename)\n        self.add_line('   :property:', sourcename)"
+        },
+        {
+          "file": "sphinx/ext/autodoc/__init__.py",
+          "type": "function",
+          "name": "import_object",
+          "class_name": "SlotsAttributeDocumenter",
+          "code": "def import_object(self) -> Any:\n        \"\"\"Never import anything.\"\"\"\n        # disguise as an attribute\n        self.objtype = 'attribute'\n        self._datadescriptor = True\n\n        with mock(self.env.config.autodoc_mock_imports):\n            try:\n                ret = import_object(self.modname, self.objpath[:-1], 'class',\n                                    attrgetter=self.get_attr,\n                                    warningiserror=self.env.config.autodoc_warningiserror)\n                self.module, _, _, self.parent = ret\n                return True\n            except ImportError as exc:\n                logger.warning(exc.args[0], type='autodoc', subtype='import_object')\n                self.env.note_reread()\n                return False"
+        }
+      ]
+    }
+  ]
+}

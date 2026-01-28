@@ -1,0 +1,132 @@
+{
+  "instance_id": "sympy__sympy-15308",
+  "repo": "sympy/sympy",
+  "created_at": "2018-09-28T16:42:11Z",
+  "problem_statement": "LaTeX printing for Matrix Expression\n```py\r\n>>> A = MatrixSymbol(\"A\", n, n)\r\n>>> latex(trace(A**2))\r\n'Trace(A**2)'\r\n```\r\n\r\nThe bad part is not only is Trace not recognized, but whatever printer is being used doesn't fallback to the LaTeX printer for the inner expression (it should be `A^2`). \n",
+  "patch": "diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py\n--- a/sympy/printing/latex.py\n+++ b/sympy/printing/latex.py\n@@ -289,6 +289,10 @@ def _do_exponent(self, expr, exp):\n         else:\n             return expr\n \n+    def _print_Basic(self, expr):\n+        l = [self._print(o) for o in expr.args]\n+        return self._deal_with_super_sub(expr.__class__.__name__) + r\"\\left(%s\\right)\" % \", \".join(l)\n+\n     def _print_bool(self, e):\n         return r\"\\mathrm{%s}\" % e\n \n@@ -1462,6 +1466,10 @@ def _print_Transpose(self, expr):\n         else:\n             return \"%s^T\" % self._print(mat)\n \n+    def _print_Trace(self, expr):\n+        mat = expr.arg\n+        return r\"\\mathrm{tr}\\left (%s \\right )\" % self._print(mat)\n+\n     def _print_Adjoint(self, expr):\n         mat = expr.arg\n         from sympy.matrices import MatrixSymbol\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 13564,
+      "pr_title": "Resolves RecursionError in latex representation",
+      "pr_body": "fixes #13559. It was due to factor of `1/1`  \r\n```python\r\nexpr = parse_expr('5/1', evaluate=False)\r\nexpr.args\r\n```\r\nit gives `(5 , 1/1)` , which was not handled properly in latex conversion . So everytime an expression was divided by 1 , it resulted in RecursionError",
+      "issue_id": 13559,
+      "issue_title": "LaTeX representation raises RecursionError",
+      "issue_body": "LaTeX representation of an expression that has division by 1 causes `RecursionError`. SymPy version: 1.1.1.\r\n\r\nCode to reproduce the bug:\r\n```python\r\nfrom sympy import latex\r\nfrom sympy.parsing.sympy_parser import parse_expr\r\n\r\nexpr = parse_expr('2/1', evaluate=False)\r\nlatex(expr)\r\n```\r\nOutput:\r\n```\r\n...\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/printer.py in _print(self, expr, *args, **kwargs)\r\n    255                 printmethod = '_print_' + cls.__name__\r\n    256                 if hasattr(self, printmethod):\r\n--> 257                     return getattr(self, printmethod)(expr, *args, **kwargs)\r\n    258             # Unknown object, fall back to the emptyPrinter.\r\n    259             return self.emptyPrinter(expr)\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/latex.py in _print_Pow(self, expr)\r\n    466         elif expr.exp.is_Rational and expr.exp.is_negative and expr.base.is_commutative:\r\n    467             # Things like 1/x\r\n--> 468             return self._print_Mul(expr)\r\n    469         else:\r\n    470             if expr.base.is_Function:\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/latex.py in _print_Mul(self, expr)\r\n    396             # use the original expression here, since fraction() may have\r\n    397             # altered it when producing numer and denom\r\n--> 398             tex += convert(expr)\r\n    399         else:\r\n    400             snumer = convert(numer)\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/latex.py in convert(expr)\r\n    366         def convert(expr):\r\n    367             if not expr.is_Mul:\r\n--> 368                 return str(self._print(expr))\r\n    369             else:\r\n    370                 _tex = last_term_tex = \"\"\r\n\r\n... last 4 frames repeated, from the frame below ...\r\n\r\n~/.virtualenvs/sympy/lib/python3.5/site-packages/sympy/printing/printer.py in _print(self, expr, *args, **kwargs)\r\n    255                 printmethod = '_print_' + cls.__name__\r\n    256                 if hasattr(self, printmethod):\r\n--> 257                     return getattr(self, printmethod)(expr, *args, **kwargs)\r\n    258             # Unknown object, fall back to the emptyPrinter.\r\n    259             return self.emptyPrinter(expr)\r\n\r\nRecursionError: maximum recursion depth exceeded in comparison\r\n```\r\n",
+      "issue_closed_at": "2017-11-09T16:49:04Z",
+      "base_commit": "36d9c850c642bec047e2cbad0a07c48f4fc7c779",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Gradient",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Gradient(self, expr):\n        func = expr._expr\n        return r\"\\nabla\\cdot %s\" % self.parenthesize(func, PRECEDENCE['Mul'])"
+        },
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "convert",
+          "class_name": "LatexPrinter",
+          "code": "def convert(expr):\n            if not expr.is_Mul:\n                return str(self._print(expr))\n            else:\n                _tex = last_term_tex = \"\"\n\n                if self.order not in ('old', 'none'):\n                    args = expr.as_ordered_factors()\n                else:\n                    args = expr.args\n\n                for i, term in enumerate(args):\n                    term_tex = self._print(term)\n\n                    if self._needs_mul_brackets(term, first=(i == 0),\n                                                last=(i == len(args) - 1)):\n                        term_tex = r\"\\left(%s\\right)\" % term_tex\n\n                    if _between_two_numbers_p[0].search(last_term_tex) and \\\n                            _between_two_numbers_p[1].match(term_tex):\n                        # between two numbers\n                        _tex += numbersep\n                    elif _tex:\n                        _tex += separator\n\n                    _tex += term_tex\n                    last_term_tex = term_tex\n                return _tex"
+        }
+      ]
+    },
+    {
+      "pr_number": 9084,
+      "pr_title": "ignore Symbol names that are already latex; suppress some unicode warnings",
+      "pr_body": "fixes #2934 \ncloses #9048 as replacement\ncloses #9082 as replacement\n",
+      "issue_id": 2934,
+      "issue_title": "incorrect behavior in the latex output",
+      "issue_body": "I am trying to define the representation of a symbol as a latex fraction\n\nIf denominator and numerator of the fraction do not have subscripts, the representation is  correct\n\n   In [1]: print sympy.latex(sympy.Symbol(r'\\frac{a}{b}'))\n   \\frac{a}{b}\n\nBut when you add subscripts the sympy representation breaks down\n\n   In [4]: print sympy.latex(sympy.Symbol(r'\\frac{a_1}{b_1}'))\n   \\frac{a_{1}{b 1}}\n",
+      "issue_closed_at": "2015-03-02T18:34:50Z",
+      "base_commit": "0844595e819e5ea6b161162781df14efd9e81b63",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Symbol",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Symbol(self, expr):\n        if expr in self._settings['symbol_names']:\n            return self._settings['symbol_names'][expr]\n\n        return self._deal_with_super_sub(expr.name)"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty_symbology.py",
+          "type": "function",
+          "name": "pretty_use_unicode",
+          "class_name": null,
+          "code": "def pretty_use_unicode(flag=None):\n    \"\"\"Set whether pretty-printer should use unicode by default\"\"\"\n    global _use_unicode\n    global unicode_warnings\n    if flag is None:\n        return _use_unicode\n\n    if flag and unicode_warnings:\n        # print warnings (if any) on first unicode usage\n        warnings.warn(unicode_warnings)\n        unicode_warnings = ''\n\n    use_unicode_prev = _use_unicode\n    _use_unicode = flag\n    return use_unicode_prev"
+        }
+      ]
+    },
+    {
+      "pr_number": 10889,
+      "pr_title": "Fixed bug in Latex printing",
+      "pr_body": "This should fix #10821; the Latex _print_Mul function was inserting a negative sign at the beginning of a negative expression without worrying about parenthesis.\n",
+      "issue_id": 10821,
+      "issue_title": "latex bug for commutator output",
+      "issue_body": "There is a latex bug in the output of the function sympy.physics.quantum.commutator.doit that gives incorrect result if there is overall negative sign involved. For example, the following code does not give the correct expression for the latex output.\n\n``` python\nfrom sympy.physics.quantum import Commutator, Operator\nimport sympy\nA = Operator('A')\nB = Operator('B')\ncomm = Commutator(B, A)\nprint comm.doit()\nsympy.latex(comm.doit())\n```\n",
+      "issue_closed_at": "2016-03-23T20:40:37Z",
+      "base_commit": "f7a8dbec25b04767a3a6996c11a03781184d45d7",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_Float",
+          "class_name": "LatexPrinter",
+          "code": "def _print_Float(self, expr):\n        # Based off of that in StrPrinter\n        dps = prec_to_dps(expr._prec)\n        str_real = mlib.to_str(expr._mpf_, dps, strip_zeros=True)\n\n        # Must always have a mul symbol (as 2.5 10^{20} just looks odd)\n        # thus we use the number separator\n        separator = self._settings['mul_symbol_latex_numbers']\n\n        if 'e' in str_real:\n            (mant, exp) = str_real.split('e')\n\n            if exp[0] == '+':\n                exp = exp[1:]\n\n            return r\"%s%s10^{%s}\" % (mant, separator, exp)\n        elif str_real == \"+inf\":\n            return r\"\\infty\"\n        elif str_real == \"-inf\":\n            return r\"- \\infty\"\n        else:\n            return str_real"
+        },
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "convert",
+          "class_name": "LatexPrinter",
+          "code": "def convert(expr):\n            if not expr.is_Mul:\n                return str(self._print(expr))\n            else:\n                _tex = last_term_tex = \"\"\n\n                if self.order not in ('old', 'none'):\n                    args = expr.as_ordered_factors()\n                else:\n                    args = expr.args\n\n                for i, term in enumerate(args):\n                    term_tex = self._print(term)\n\n                    if self._needs_mul_brackets(term, first=(i == 0),\n                                                last=(i == len(args) - 1)):\n                        term_tex = r\"\\left(%s\\right)\" % term_tex\n\n                    if re.search(\"[0-9][} ]*$\", last_term_tex) and \\\n                            re.match(\"[{ ]*[-+0-9]\", term_tex):\n                        # between two numbers\n                        _tex += numbersep\n                    elif _tex:\n                        _tex += separator\n\n                    _tex += term_tex\n                    last_term_tex = term_tex\n                return _tex"
+        }
+      ]
+    },
+    {
+      "pr_number": 14817,
+      "pr_title": "pretty :  used `as_coeff_mmul` instead of .args inside _print_MatAdd",
+      "pr_body": "Fixes #14814 \r\n\r\n#### Brief description of what is fixed or changed\r\n\r\n\r\n#### Other comments\r\n",
+      "issue_id": 14814,
+      "issue_title": "Error pretty printing MatAdd",
+      "issue_body": "```py\r\n>>> pprint(MatrixSymbol('x', n, n) + MatrixSymbol('y*', n, n))\r\nTraceback (most recent call last):\r\n  File \"./sympy/core/sympify.py\", line 368, in sympify\r\n    expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)\r\n  File \"./sympy/parsing/sympy_parser.py\", line 950, in parse_expr\r\n    return eval_expr(code, local_dict, global_dict)\r\n  File \"./sympy/parsing/sympy_parser.py\", line 863, in eval_expr\r\n    code, global_dict, local_dict)  # take local objects in preference\r\n  File \"<string>\", line 1\r\n    Symbol ('y' )*\r\n                 ^\r\nSyntaxError: unexpected EOF while parsing\r\n\r\nDuring handling of the above exception, another exception occurred:\r\n\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"./sympy/printing/pretty/pretty.py\", line 2371, in pretty_print\r\n    use_unicode_sqrt_char=use_unicode_sqrt_char))\r\n  File \"./sympy/printing/pretty/pretty.py\", line 2331, in pretty\r\n    return pp.doprint(expr)\r\n  File \"./sympy/printing/pretty/pretty.py\", line 62, in doprint\r\n    return self._print(expr).render(**self._settings)\r\n  File \"./sympy/printing/printer.py\", line 274, in _print\r\n    return getattr(self, printmethod)(expr, *args, **kwargs)\r\n  File \"./sympy/printing/pretty/pretty.py\", line 828, in _print_MatAdd\r\n    if S(item.args[0]).is_negative:\r\n  File \"./sympy/core/sympify.py\", line 370, in sympify\r\n    raise SympifyError('could not parse %r' % a, exc)\r\nsympy.core.sympify.SympifyError: Sympify of expression 'could not parse 'y*'' failed, because of exception being raised:\r\nSyntaxError: unexpected EOF while parsing (<string>, line 1)\r\n```\r\n\r\nThe code shouldn't be using sympify to handle string arguments from MatrixSymbol.\r\n\r\nI don't even understand what the code is doing. Why does it omit the `+` when the first argument is negative? This seems to assume that the arguments of MatAdd have a certain form, and that they will always print a certain way if they are negative. ",
+      "issue_closed_at": "2018-06-21T18:19:14Z",
+      "base_commit": "0dbdc0ea83d339936da175f8c3a97d0d6bafb9f8",
+      "changes": [
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_MatAdd",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_MatAdd(self, expr):\n        s = None\n        for item in expr.args:\n            pform = self._print(item)\n            if s is None:\n                s = pform     # First element\n            else:\n                if S(item.args[0]).is_negative:\n                    s = prettyForm(*stringPict.next(s, ' '))\n                    pform = self._print(item)\n                else:\n                    s = prettyForm(*stringPict.next(s, ' + '))\n                s = prettyForm(*stringPict.next(s, pform))\n\n        return s"
+        }
+      ]
+    },
+    {
+      "pr_number": 11384,
+      "pr_title": "Update formal power series printing",
+      "pr_body": "fixes #11102 \nping @asmeurer \n",
+      "issue_id": 11102,
+      "issue_title": "fps should print as a formal power series",
+      "issue_body": "When I first used `fps`, I didn't realize it really was a formal power series as it claims to be, because it prints like a normal series (same as `series`)\n\n```\nIn [21]: fps(sin(x))\nOut[21]:\n     3     5\n    x     x     \u239b 6\u239e\nx - \u2500\u2500 + \u2500\u2500\u2500 + O\u239dx \u23a0\n    6    120\n```\n\nBut if you look at the string form, you see\n\n```\nIn [22]: print(fps(sin(x)))\nFormalPowerSeries(sin(x), x, 0, 1, (SeqFormula(Piecewise(((-1/4)**(_k/2 - 1/2)/(RisingFactorial(3/2, _k/2 - 1/2)*factorial(_k/2 - 1/2)), Eq(Mod(_k, 2), 1)), (0, True)), (_k, 2, oo)), SeqFormula(x**_k, (_k, 0, oo)), x))\n```\n\nThat is, it really does represent it as the formula `Sum((-1)**n/factorial(2*n + 1)*x**n, (n, 0, oo))` (albiet, not simplified). It out to print it like this, so you can see that that's what it's working with.\n\nSide question: if you enter something it can't compute, it just returns the function\n\n```\nIn [25]: fps(tan(x))\nOut[25]: tan(x)\n```\n\nIs that intentional? It seems like it ought to raise an exception in that case. \n\n@leosartaj \n",
+      "issue_closed_at": "2016-07-14T22:47:58Z",
+      "base_commit": "496e776108957d8c049cbef49522cef4c1955e2f",
+      "changes": [
+        {
+          "file": "sympy/printing/latex.py",
+          "type": "function",
+          "name": "_print_FourierSeries",
+          "class_name": "LatexPrinter",
+          "code": "def _print_FourierSeries(self, s):\n        return self._print_Add(s.truncate()) + self._print(' + \\ldots')"
+        },
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_FourierSeries",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_FourierSeries(self, s):\n        if self._use_unicode:\n            dots = u(\"\\N{HORIZONTAL ELLIPSIS}\")\n        else:\n            dots = '...'\n        return self._print_Add(s.truncate()) + self._print(dots)"
+        }
+      ]
+    }
+  ]
+}

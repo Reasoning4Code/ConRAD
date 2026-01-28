@@ -1,0 +1,125 @@
+{
+  "instance_id": "sympy__sympy-16281",
+  "repo": "sympy/sympy",
+  "created_at": "2019-03-16T19:37:33Z",
+  "problem_statement": "Product pretty print could be improved\nThis is what the pretty printing for `Product` looks like:\r\n\r\n```\r\n>>> pprint(Product(1, (n, 1, oo)))\r\n  \u221e\r\n\u252c\u2500\u2500\u2500\u252c\r\n\u2502   \u2502 1\r\n\u2502   \u2502\r\nn = 1\r\n>>> pprint(Product(1/n, (n, 1, oo)))\r\n   \u221e\r\n\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u252c\r\n\u2502      \u2502 1\r\n\u2502      \u2502 \u2500\r\n\u2502      \u2502 n\r\n\u2502      \u2502\r\n n = 1\r\n>>> pprint(Product(1/n**2, (n, 1, oo)))\r\n    \u221e\r\n\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\r\n\u2502        \u2502 1\r\n\u2502        \u2502 \u2500\u2500\r\n\u2502        \u2502  2\r\n\u2502        \u2502 n\r\n\u2502        \u2502\r\n  n = 1\r\n>>> pprint(Product(1, (n, 1, oo)), use_unicode=False)\r\n  oo\r\n_____\r\n|   | 1\r\n|   |\r\nn = 1\r\n>>> pprint(Product(1/n, (n, 1, oo)), use_unicode=False)\r\n   oo\r\n________\r\n|      | 1\r\n|      | -\r\n|      | n\r\n|      |\r\n n = 1\r\n>>> pprint(Product(1/n**2, (n, 1, oo)), use_unicode=False)\r\n    oo\r\n__________\r\n|        | 1\r\n|        | --\r\n|        |  2\r\n|        | n\r\n|        |\r\n  n = 1\r\n```\r\n\r\n(if those don't look good in your browser copy paste them into the terminal)\r\n\r\nThis could be improved:\r\n\r\n- Why is there always an empty line at the bottom of the \u220f? Keeping everything below the horizontal line is good, but the bottom looks asymmetric, and it makes the \u220f bigger than it needs to be.\r\n\r\n- The \u220f is too fat IMO. \r\n\r\n- It might look better if we extended the top bar. I'm unsure about this. \r\n\r\nCompare this\r\n\r\n```\r\n    \u221e\r\n\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u252c\u2500\r\n \u2502     \u2502  1\r\n \u2502     \u2502  \u2500\u2500\r\n \u2502     \u2502   2\r\n \u2502     \u2502  n\r\n  n = 1\r\n```\r\n\r\nThat's still almost twice as wide as the equivalent Sum, but if you make it much skinnier it starts to look bad.\r\n\r\n```\r\n  \u221e\r\n ____\r\n \u2572\r\n  \u2572   1\r\n   \u2572  \u2500\u2500\r\n   \u2571   2\r\n  \u2571   n\r\n \u2571\r\n \u203e\u203e\u203e\u203e\r\nn = 1\r\n```\n",
+  "patch": "diff --git a/sympy/printing/pretty/pretty.py b/sympy/printing/pretty/pretty.py\n--- a/sympy/printing/pretty/pretty.py\n+++ b/sympy/printing/pretty/pretty.py\n@@ -491,10 +491,9 @@ def _print_Product(self, expr):\n \n         for lim in expr.limits:\n             width = (func_height + 2) * 5 // 3 - 2\n-            sign_lines = []\n-            sign_lines.append(corner_chr + (horizontal_chr*width) + corner_chr)\n-            for i in range(func_height + 1):\n-                sign_lines.append(vertical_chr + (' '*width) + vertical_chr)\n+            sign_lines = [horizontal_chr + corner_chr + (horizontal_chr * (width-2)) + corner_chr + horizontal_chr]\n+            for _ in range(func_height + 1):\n+                sign_lines.append(' ' + vertical_chr + (' ' * (width-2)) + vertical_chr + ' ')\n \n             pretty_sign = stringPict('')\n             pretty_sign = prettyForm(*pretty_sign.stack(*sign_lines))\n",
+  "similar_bug_items": [
+    {
+      "pr_number": 15849,
+      "pr_title": "Fixed vector derivatives printing ",
+      "pr_body": "<!-- Your title above should be a short description of what\r\nwas changed. Do not include the issue number in the title. -->\r\n\r\n#### References to other Issues or PRs\r\n<!-- If this pull request fixes an issue, write \"Fixes #NNNN\" in that exact\r\nformat, e.g. \"Fixes #1234\". See\r\nhttps://github.com/blog/1506-closing-issues-via-pull-requests . Please also\r\nwrite a comment on that issue linking back to this pull request once it is\r\nopen. -->\r\nFixes #10173\r\n\r\n#### Brief description of what is fixed or changed\r\nFixed the fourth-order printing issue.\r\n\r\nThis has been attempted in #10283 and #15022 but no unit tests were added. It wasn't clear which one of these I should base it on, but as seen, the current PR deals with higher order derivatives as well. And fixes some unused/redundant imports.\r\n\r\n#### Other comments\r\nI choose to keep two separate `if`-clauses to make the comments stand alone, while the newly added `if dot_i >= 5:` could easily have been added with the previous `if`.\r\n\r\nThe result looks different in different renders, see https://github.com/sympy/sympy/issues/14425#issuecomment-457834386 Hence, it may look a bit \"ugly\" in certain circumstances.\r\n\r\n#### Release Notes\r\n\r\n<!-- Write the release notes for this release below. See\r\nhttps://github.com/sympy/sympy/wiki/Writing-Release-Notes for more information\r\non how to write release notes. The bot will check your release notes\r\nautomatically to see if they are formatted correctly. -->\r\n\r\n<!-- BEGIN RELEASE NOTES -->\r\n* physics.vector\r\n   * printing of arbitrary order vector derivatives is fixed\r\n<!-- END RELEASE NOTES -->\r\n",
+      "issue_id": 10173,
+      "issue_title": "mechanics_printing module does not display 4th derivatives correctly ",
+      "issue_body": "When I run the following code snippet in an IPython notebook, the 1st, 2nd, and 3rd derivatives display correctly, but the 4th derivative does not. The 4th derivative simply displays as p, rather than as \\ddddot{p}.\n\n```\n%pylab inline\n\nimport sympy.physics.mechanics.functions\n\nsympy.physics.mechanics.functions.mechanics_printing(use_latex=\"mathjax\", latex_mode=\"equation\")\n\nt = sympy.Symbol(\"t\")\np = sympy.Symbol(\"p\")(t)\n\np, p.diff(t), p.diff(t).diff(t), p.diff(t).diff(t).diff(t), p.diff(t).diff(t).diff(t).diff(t)\n```\n\nAt first glance, this behavior seems to be caused by the `_print_Derivative` function in sympy/sympy/physics/vector/printing.py not handling 4th derivatives. I'll try hacking this function locally to support 4th derivatives and report back if this works around the issue.\n\nIdeally, mechanics_printing should gracefully fall back to Leibniz notation in the case of high-order derivatives, rather than printing them incorrectly.\n",
+      "issue_closed_at": "2019-01-29T15:53:05Z",
+      "base_commit": "1e999fc5159b830a9872b86675bc5f3692a9c1be",
+      "changes": [
+        {
+          "file": "sympy/physics/vector/printing.py",
+          "type": "function",
+          "name": "_print_Derivative",
+          "class_name": "VectorPrettyPrinter",
+          "code": "def _print_Derivative(self, deriv):\n        from sympy.physics.vector.functions import dynamicsymbols\n        # XXX use U('PARTIAL DIFFERENTIAL') here ?\n        t = dynamicsymbols._t\n        dot_i = 0\n        can_break = True\n        syms = list(reversed(deriv.variables))\n        x = None\n\n        while len(syms) > 0:\n            if syms[-1] == t:\n                syms.pop()\n                dot_i += 1\n            else:\n                return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n\n        if not (isinstance(type(deriv.expr), UndefinedFunction)\n                and (deriv.expr.args == (t,))):\n                return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n        else:\n            pform = self._print_Function(deriv.expr)\n        # the following condition would happen with some sort of non-standard\n        # dynamic symbol I guess, so we'll just print the SymPy way\n        if len(pform.picture) > 1:\n            return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n\n        dots = {0 : u\"\",\n                1 : u\"\\N{COMBINING DOT ABOVE}\",\n                2 : u\"\\N{COMBINING DIAERESIS}\",\n                3 : u\"\\N{COMBINING THREE DOTS ABOVE}\",\n                4 : u\"\\N{COMBINING FOUR DOTS ABOVE}\"}\n\n        d = pform.__dict__\n        pic = d['picture'][0]\n        uni = d['unicode']\n        lp = len(pic) // 2 + 1\n        lu = len(uni) // 2 + 1\n        pic_split = [pic[:lp], pic[lp:]]\n        uni_split = [uni[:lu], uni[lu:]]\n\n        d['picture'] = [pic_split[0] + dots[dot_i] + pic_split[1]]\n        d['unicode'] =  uni_split[0] + dots[dot_i] + uni_split[1]\n\n        return pform"
+        },
+        {
+          "file": "sympy/physics/vector/printing.py",
+          "type": "function",
+          "name": "_print_Derivative",
+          "class_name": "VectorPrettyPrinter",
+          "code": "def _print_Derivative(self, deriv):\n        from sympy.physics.vector.functions import dynamicsymbols\n        # XXX use U('PARTIAL DIFFERENTIAL') here ?\n        t = dynamicsymbols._t\n        dot_i = 0\n        can_break = True\n        syms = list(reversed(deriv.variables))\n        x = None\n\n        while len(syms) > 0:\n            if syms[-1] == t:\n                syms.pop()\n                dot_i += 1\n            else:\n                return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n\n        if not (isinstance(type(deriv.expr), UndefinedFunction)\n                and (deriv.expr.args == (t,))):\n                return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n        else:\n            pform = self._print_Function(deriv.expr)\n        # the following condition would happen with some sort of non-standard\n        # dynamic symbol I guess, so we'll just print the SymPy way\n        if len(pform.picture) > 1:\n            return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n\n        dots = {0 : u\"\",\n                1 : u\"\\N{COMBINING DOT ABOVE}\",\n                2 : u\"\\N{COMBINING DIAERESIS}\",\n                3 : u\"\\N{COMBINING THREE DOTS ABOVE}\",\n                4 : u\"\\N{COMBINING FOUR DOTS ABOVE}\"}\n\n        d = pform.__dict__\n        pic = d['picture'][0]\n        uni = d['unicode']\n        lp = len(pic) // 2 + 1\n        lu = len(uni) // 2 + 1\n        pic_split = [pic[:lp], pic[lp:]]\n        uni_split = [uni[:lu], uni[lu:]]\n\n        d['picture'] = [pic_split[0] + dots[dot_i] + pic_split[1]]\n        d['unicode'] =  uni_split[0] + dots[dot_i] + uni_split[1]\n\n        return pform"
+        },
+        {
+          "file": "sympy/physics/vector/printing.py",
+          "type": "function",
+          "name": "_print_Derivative",
+          "class_name": "VectorPrettyPrinter",
+          "code": "def _print_Derivative(self, deriv):\n        from sympy.physics.vector.functions import dynamicsymbols\n        # XXX use U('PARTIAL DIFFERENTIAL') here ?\n        t = dynamicsymbols._t\n        dot_i = 0\n        can_break = True\n        syms = list(reversed(deriv.variables))\n        x = None\n\n        while len(syms) > 0:\n            if syms[-1] == t:\n                syms.pop()\n                dot_i += 1\n            else:\n                return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n\n        if not (isinstance(type(deriv.expr), UndefinedFunction)\n                and (deriv.expr.args == (t,))):\n                return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n        else:\n            pform = self._print_Function(deriv.expr)\n        # the following condition would happen with some sort of non-standard\n        # dynamic symbol I guess, so we'll just print the SymPy way\n        if len(pform.picture) > 1:\n            return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n\n        dots = {0 : u\"\",\n                1 : u\"\\N{COMBINING DOT ABOVE}\",\n                2 : u\"\\N{COMBINING DIAERESIS}\",\n                3 : u\"\\N{COMBINING THREE DOTS ABOVE}\",\n                4 : u\"\\N{COMBINING FOUR DOTS ABOVE}\"}\n\n        d = pform.__dict__\n        pic = d['picture'][0]\n        uni = d['unicode']\n        lp = len(pic) // 2 + 1\n        lu = len(uni) // 2 + 1\n        pic_split = [pic[:lp], pic[lp:]]\n        uni_split = [uni[:lu], uni[lu:]]\n\n        d['picture'] = [pic_split[0] + dots[dot_i] + pic_split[1]]\n        d['unicode'] =  uni_split[0] + dots[dot_i] + uni_split[1]\n\n        return pform"
+        },
+        {
+          "file": "sympy/physics/vector/printing.py",
+          "type": "function",
+          "name": "_print_Derivative",
+          "class_name": "VectorPrettyPrinter",
+          "code": "def _print_Derivative(self, deriv):\n        from sympy.physics.vector.functions import dynamicsymbols\n        # XXX use U('PARTIAL DIFFERENTIAL') here ?\n        t = dynamicsymbols._t\n        dot_i = 0\n        can_break = True\n        syms = list(reversed(deriv.variables))\n        x = None\n\n        while len(syms) > 0:\n            if syms[-1] == t:\n                syms.pop()\n                dot_i += 1\n            else:\n                return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n\n        if not (isinstance(type(deriv.expr), UndefinedFunction)\n                and (deriv.expr.args == (t,))):\n                return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n        else:\n            pform = self._print_Function(deriv.expr)\n        # the following condition would happen with some sort of non-standard\n        # dynamic symbol I guess, so we'll just print the SymPy way\n        if len(pform.picture) > 1:\n            return super(VectorPrettyPrinter, self)._print_Derivative(deriv)\n\n        dots = {0 : u\"\",\n                1 : u\"\\N{COMBINING DOT ABOVE}\",\n                2 : u\"\\N{COMBINING DIAERESIS}\",\n                3 : u\"\\N{COMBINING THREE DOTS ABOVE}\",\n                4 : u\"\\N{COMBINING FOUR DOTS ABOVE}\"}\n\n        d = pform.__dict__\n        pic = d['picture'][0]\n        uni = d['unicode']\n        lp = len(pic) // 2 + 1\n        lu = len(uni) // 2 + 1\n        pic_split = [pic[:lp], pic[lp:]]\n        uni_split = [uni[:lu], uni[lu:]]\n\n        d['picture'] = [pic_split[0] + dots[dot_i] + pic_split[1]]\n        d['unicode'] =  uni_split[0] + dots[dot_i] + uni_split[1]\n\n        return pform"
+        }
+      ]
+    },
+    {
+      "pr_number": 13437,
+      "pr_title": "Fix bell(n) for n=oo, and negative/non-integer 'n'",
+      "pr_body": "This PR uses commits of #9198 (maintaining ownership to original author). And tries to address the requested changes on PR #9198 .\r\nFixes #9184",
+      "issue_id": 9184,
+      "issue_title": "bell(n).limit(n, oo) should be oo rather than bell(oo)",
+      "issue_body": "`bell(n).limit(n,oo)` should take the value infinity, but the current output is `bell(oo)`. As the Bell numbers represent the number of partitions of a set, it seems natural that `bell(oo)` should be able to be evaluated rather than be returned unevaluated. This issue is also in line with the recent fixes to the corresponding limit for the Fibonacci numbers and Lucas numbers.\n\n```\nfrom sympy import *\nn = symbols('n')\nbell(n).limit(n,oo)\n\nOutput:\nbell(oo)\n```\n\nI'm new to Sympy, so I'd appreciate the opportunity to fix this bug myself if that's alright.\n",
+      "issue_closed_at": "2017-10-13T04:35:13Z",
+      "base_commit": "674afc619d7f5c519b6a5393a8b0532a131e57e0",
+      "changes": [
+        {
+          "file": "sympy/functions/combinatorial/numbers.py",
+          "type": "function",
+          "name": "_bell_incomplete_poly",
+          "class_name": "bell",
+          "code": "def _bell_incomplete_poly(n, k, symbols):\n        r\"\"\"\n        The second kind of Bell polynomials (incomplete Bell polynomials).\n\n        Calculated by recurrence formula:\n\n        .. math:: B_{n,k}(x_1, x_2, \\dotsc, x_{n-k+1}) =\n                \\sum_{m=1}^{n-k+1}\n                \\x_m \\binom{n-1}{m-1} B_{n-m,k-1}(x_1, x_2, \\dotsc, x_{n-m-k})\n\n        where\n            B_{0,0} = 1;\n            B_{n,0} = 0; for n>=1\n            B_{0,k} = 0; for k>=1\n\n        \"\"\"\n        if (n == 0) and (k == 0):\n            return S.One\n        elif (n == 0) or (k == 0):\n            return S.Zero\n        s = S.Zero\n        a = S.One\n        for m in range(1, n - k + 2):\n            s += a * bell._bell_incomplete_poly(\n                n - m, k - 1, symbols) * symbols[m - 1]\n            a = a * (n - m) / m\n        return expand_mul(s)"
+        }
+      ]
+    },
+    {
+      "pr_number": 8627,
+      "pr_title": "Bug Fix #8626",
+      "pr_body": "Let me know if a test case is needed\n",
+      "issue_id": 8626,
+      "issue_title": "bug in physics/mechanics/lagrange.py",
+      "issue_body": "When providing a `forcelist` with more than one force, not all terms are computed,\nthis comes from the fact that the iterator `flist = zip(*_f_list_parser(self.forcelist, N))` is consumed in the first iteration of the loop.\n\nI propose a following PR that fixes the bug, let me know if I need to also provide a test case.\n\nBest,\nGuillaume\n",
+      "issue_closed_at": "2015-01-06T16:57:16Z",
+      "base_commit": "65f7c8c2c9c1927eaa8520c4ce06864f93a20ad1",
+      "changes": [
+        {
+          "file": "sympy/physics/mechanics/lagrange.py",
+          "type": "function",
+          "name": "form_lagranges_equations",
+          "class_name": "LagrangesMethod",
+          "code": "def form_lagranges_equations(self):\n        \"\"\"Method to form Lagrange's equations of motion.\n\n        Returns a vector of equations of motion using Lagrange's equations of\n        the second kind.\n        \"\"\"\n\n        qds = self._qdots\n        qdd_zero = dict((i, 0) for i in self._qdoubledots)\n        n = len(self.q)\n\n        # Internally we represent the EOM as four terms:\n        # EOM = term1 - term2 - term3 - term4 = 0\n\n        # First term\n        self._term1 = self._L.jacobian(qds)\n        self._term1 = self._term1.diff(dynamicsymbols._t).T\n\n        # Second term\n        self._term2 = self._L.jacobian(self.q).T\n\n        # Third term\n        if self.coneqs:\n            coneqs = self.coneqs\n            m = len(coneqs)\n            # Creating the multipliers\n            self.lam_vec = Matrix(dynamicsymbols('lam1:' + str(m + 1)))\n            self.lam_coeffs = -coneqs.jacobian(qds)\n            self._term3 = self.lam_coeffs.T * self.lam_vec\n            # Extracting the coeffecients of the qdds from the diff coneqs\n            diffconeqs = coneqs.diff(dynamicsymbols._t)\n            self._m_cd = diffconeqs.jacobian(self._qdoubledots)\n            # The remaining terms i.e. the 'forcing' terms in diff coneqs\n            self._f_cd = -diffconeqs.subs(qdd_zero)\n        else:\n            self._term3 = zeros(n, 1)\n\n        # Fourth term\n        if self.forcelist:\n            N = self.inertial\n            self._term4 = zeros(n, 1)\n            flist = zip(*_f_list_parser(self.forcelist, N))\n            for i, qd in enumerate(qds):\n                for obj, force in self.forcelist:\n                    self._term4[i] = sum(v.diff(qd, N) & f for (v, f) in flist)\n        else:\n            self._term4 = zeros(n, 1)\n\n        # Form the dynamic mass and forcing matrices\n        without_lam = self._term1 - self._term2 - self._term4\n        self._m_d = without_lam.jacobian(self._qdoubledots)\n        self._f_d = -without_lam.subs(qdd_zero)\n\n        # Form the EOM\n        self.eom = without_lam - self._term3\n        return self.eom"
+        }
+      ]
+    },
+    {
+      "pr_number": 8223,
+      "pr_title": "Add _eval_simplify helper for AlgebraicNumber",
+      "pr_body": "fixes #4401\n",
+      "issue_id": 4401,
+      "issue_title": "Raising complex numbers to fractional powers",
+      "issue_body": "bc.. >>> simplify((3+4_I)__(Rational(3,2)))\n(3 + 4_I)**(3/2)\n\n> > > expand(_)\n> > > (3 + 4_I)_*(3/2)\n\nMathematica gives: 2 + 11 \\* I as the answer. Would be good if Sympy could do the same (so far as \nmathematics allows ;)\n\np. Original issue for \"#4401\":https://github.com/sympy/sympy/issues/4401: \"http://code.google.com/p/sympy/issues/detail?id=1302\":http://code.google.com/p/sympy/issues/detail?id=1302\n\np. Original author: \"https://code.google.com/u/111560553046880738986/\":https://code.google.com/u/111560553046880738986/\n\np. Original owner: \"https://code.google.com/u/111560553046880738986/\":https://code.google.com/u/111560553046880738986/\n",
+      "issue_closed_at": "2014-11-06T01:06:09Z",
+      "base_commit": "0cd829dc3e88d5b1f0fa76a73360f94d58926008",
+      "changes": [
+        {
+          "file": "sympy/core/numbers.py",
+          "type": "function",
+          "name": "to_algebraic_integer",
+          "class_name": "AlgebraicNumber",
+          "code": "def to_algebraic_integer(self):\n        \"\"\"Convert ``self`` to an algebraic integer. \"\"\"\n        f = self.minpoly\n\n        if f.LC() == 1:\n            return self\n\n        coeff = f.LC()**(f.degree() - 1)\n        poly = f.compose(C.Poly(f.gen/f.LC()))\n\n        minpoly = poly*coeff\n        root = f.LC()*self.root\n\n        return AlgebraicNumber((minpoly, root), self.coeffs())"
+        }
+      ]
+    },
+    {
+      "pr_number": 14817,
+      "pr_title": "pretty :  used `as_coeff_mmul` instead of .args inside _print_MatAdd",
+      "pr_body": "Fixes #14814 \r\n\r\n#### Brief description of what is fixed or changed\r\n\r\n\r\n#### Other comments\r\n",
+      "issue_id": 14814,
+      "issue_title": "Error pretty printing MatAdd",
+      "issue_body": "```py\r\n>>> pprint(MatrixSymbol('x', n, n) + MatrixSymbol('y*', n, n))\r\nTraceback (most recent call last):\r\n  File \"./sympy/core/sympify.py\", line 368, in sympify\r\n    expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)\r\n  File \"./sympy/parsing/sympy_parser.py\", line 950, in parse_expr\r\n    return eval_expr(code, local_dict, global_dict)\r\n  File \"./sympy/parsing/sympy_parser.py\", line 863, in eval_expr\r\n    code, global_dict, local_dict)  # take local objects in preference\r\n  File \"<string>\", line 1\r\n    Symbol ('y' )*\r\n                 ^\r\nSyntaxError: unexpected EOF while parsing\r\n\r\nDuring handling of the above exception, another exception occurred:\r\n\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \"./sympy/printing/pretty/pretty.py\", line 2371, in pretty_print\r\n    use_unicode_sqrt_char=use_unicode_sqrt_char))\r\n  File \"./sympy/printing/pretty/pretty.py\", line 2331, in pretty\r\n    return pp.doprint(expr)\r\n  File \"./sympy/printing/pretty/pretty.py\", line 62, in doprint\r\n    return self._print(expr).render(**self._settings)\r\n  File \"./sympy/printing/printer.py\", line 274, in _print\r\n    return getattr(self, printmethod)(expr, *args, **kwargs)\r\n  File \"./sympy/printing/pretty/pretty.py\", line 828, in _print_MatAdd\r\n    if S(item.args[0]).is_negative:\r\n  File \"./sympy/core/sympify.py\", line 370, in sympify\r\n    raise SympifyError('could not parse %r' % a, exc)\r\nsympy.core.sympify.SympifyError: Sympify of expression 'could not parse 'y*'' failed, because of exception being raised:\r\nSyntaxError: unexpected EOF while parsing (<string>, line 1)\r\n```\r\n\r\nThe code shouldn't be using sympify to handle string arguments from MatrixSymbol.\r\n\r\nI don't even understand what the code is doing. Why does it omit the `+` when the first argument is negative? This seems to assume that the arguments of MatAdd have a certain form, and that they will always print a certain way if they are negative. ",
+      "issue_closed_at": "2018-06-21T18:19:14Z",
+      "base_commit": "0dbdc0ea83d339936da175f8c3a97d0d6bafb9f8",
+      "changes": [
+        {
+          "file": "sympy/printing/pretty/pretty.py",
+          "type": "function",
+          "name": "_print_MatAdd",
+          "class_name": "PrettyPrinter",
+          "code": "def _print_MatAdd(self, expr):\n        s = None\n        for item in expr.args:\n            pform = self._print(item)\n            if s is None:\n                s = pform     # First element\n            else:\n                if S(item.args[0]).is_negative:\n                    s = prettyForm(*stringPict.next(s, ' '))\n                    pform = self._print(item)\n                else:\n                    s = prettyForm(*stringPict.next(s, ' + '))\n                s = prettyForm(*stringPict.next(s, pform))\n\n        return s"
+        }
+      ]
+    }
+  ]
+}
