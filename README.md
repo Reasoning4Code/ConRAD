@@ -3,7 +3,7 @@
 Repository-level automated program repair (APR) requires long-horizon reasoning over interdependent decisions. However, most LLM-based approaches reconstruct repair reasoning independently for each issue, failing to reuse successful patterns from prior repairs—even though real-world repositories contain many related issues with shared structure or constraints. Existing methods typically rely on forward exploration, which operates under outcome uncertainty, incurs substantial inference-time overhead, and can drift from the final correct patch. We propose Conditional Reasoning Distillation (_ConRAD_), which leverages in-repository resolved issues by reconstructing repair reasoning backward from verified patches and distilling outcome-consistent, stage-wise repair plans. Injected at inference time, these plans guide fault localization and patch generation, replacing open-ended exploration with constrained inference without fine-tuning or search. On SWE-Bench Lite, _ConRAD_ improves Pass@1 by 10.4\% (GPT-4o), 8.6\% (DeepSeek-V3), and 10.3\% (GPT-5), demonstrating a scalable inference-time alternative to forward exploration for long-horizon APR.
 
 
-[This repository provides a **lightweight, paper-aligned implementation** intended for *method transparency and understanding*, rather than full-scale benchmark reproduction.]
+[This repository provides an implementation of **_ConRAD_**.]
 
 
 
