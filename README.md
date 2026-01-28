@@ -5,7 +5,7 @@ Repository-level automated program repair (APR) requires long-horizon reasoning 
 
 [This repository provides a **lightweight, paper-aligned implementation** intended for *method transparency and understanding*, rather than full-scale benchmark reproduction.]
 
----
+
 
 ## ✨ Overview
 
