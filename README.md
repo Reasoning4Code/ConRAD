@@ -9,6 +9,11 @@ Repository-level automated program repair (APR) requires long-horizon reasoning 
 
 ## ✨ Overview
 
+<p align="center">
+  <img src="resource/Overview_ConRAD.png" alt="ConRAD Overview">
+</p>
+<p align="center"><em>Figure 1: ConRAD three-stage pipeline for backward reasoning distillation</em></p>
+
 ConRAD consists of three stages that directly correspond to the paper:
 
 1. **Repository-Level Exemplar Mining**  
@@ -27,8 +32,57 @@ ConRAD consists of three stages that directly correspond to the paper:
 conrad/
 ├── backward_distillation/   # Stage 3: outcome-conditioned reasoning distillation
 ├── exemplar_mining/         # Stage 1: in-repo retrieval + LLM ranking (Top-K → 1)
-├── guardian/                # Stage 2: Exemplar Guardian (compatibility filtering)
-Examples/                    # Minimal examples and demos
+├── guardian/                # Stage 2: Exemplar Guardian (transferability iltering)
+Examples/                    # Minimal reasoning examples
 .env.example                 # Environment variable template
 requirements.txt             # Python dependencies
 README.md
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Python 3.8+
+- API keys (OpenAI, GitHub Token, and optionally DeepSeek)
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/ChenglinLi21/ConRAD.git
+cd ConRAD
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Configure API keys:
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit .env and add your API keys
+# See API_SETUP.md for detailed instructions
+```
+
+### Running the Pipeline
+
+Execute the three-stage pipeline from the `conrad` directory:
+
+```bash
+cd conrad
+
+# Stage 1: Exemplar selection
+python exemplar_mining/exemplar_selecting.py
+
+# Stage 2: Exemplar validation
+python guardian/run_guardian.py
+
+# Stage 3: Reasoning distillation
+python backward_distillation/backward_distillation.py
+python backward_distillation/step_refine.py
+```
+
+For detailed API configuration instructions, see [API_SETUP.md](API_SETUP.md).
