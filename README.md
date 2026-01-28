@@ -38,6 +38,7 @@ Examples/                    # Minimal reasoning examples
 .env.example                 # Environment variable template
 requirements.txt             # Python dependencies
 README.md
+```
 
 ## 🚀 Quick Start
 
