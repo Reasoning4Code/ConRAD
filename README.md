@@ -39,12 +39,12 @@ README.md
 
 ---
 
-## Reproducibility Notes
-	•	Datasets
+## Repository Structure
+- Datasets
 Experiments in the paper use SWE-Bench Lite and in-repository historical issue–fix pairs.
 Due to data volume and licensing constraints, datasets are accessed externally and are not included in this repository.
-	•	LLM APIs
+- LLM APIs
 Reported results depend on proprietary LLMs (e.g., GPT-4o, GPT-5, DeepSeek-V3).
 Exact numerical reproduction requires access to the same models and configurations.
-	•	Scope
+- Scope
 This codebase focuses on faithful implementation and transparency of ConRAD’s core components rather than end-to-end benchmark reproduction.
