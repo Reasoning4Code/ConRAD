@@ -1,10 +1,6 @@
-# ConRAD
-From Patches to Plans: Reasoning Distillation for Repository-Level Program Repair
-# ConRAD: Conditional Reasoning Distillation for Repository-Level APR
 
-![Conference](https://img.shields.io/badge/Conference-ICML%202026-blue)
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)
-![License](https://img.shields.io/badge/License-Research%20Use-lightgrey)
+# From Patches to Plans: Reasoning Distillation for Repository-Level Program Repair
+
 
 **ConRAD** is a research framework for **repository-level automated program repair (APR)** that distills **outcome-conditioned, reusable repair plans** from *in-repository* resolved issues.
 
