@@ -12,7 +12,8 @@ Repository-level automated program repair (APR) requires long-horizon reasoning 
 <p align="center">
   <img src="resource/Overview_ConRAD.png" alt="ConRAD Overview">
 </p>
-<p align="center"><em>Figure 1: ConRAD three-stage pipeline for backward reasoning distillation</em></p>
+<p align="center"><em>Figure 1: ConRAD overview: Stage 1 retrieves in-repository exemplars and selects one via an LLM-based judge. Stage 2 filters candidates
+into Transferable, Non-transferable, Misleading. Stage 3 distills outcome-conditioned plans  from the exemplar’s ground-truth fix and injects them as in-context guidance during inference</em></p>
 
 ConRAD consists of three stages that directly correspond to the paper:
 
