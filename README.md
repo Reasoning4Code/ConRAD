@@ -20,7 +20,6 @@ ConRAD consists of three stages that directly correspond to the paper:
 3. **Backward Reasoning Distillation**  
    Reconstruct and refine outcome-conditioned, stage-wise repair plans from the verified fix.
 
----
 
 ## :file_folder: Repository Structure
 
