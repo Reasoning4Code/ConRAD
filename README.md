@@ -23,7 +23,7 @@ ConRAD consists of three stages that directly correspond to the paper:
 
 ---
 
-## Repository Structure
+## :file_folder: Repository Structure
 
 ```text
 conrad/
