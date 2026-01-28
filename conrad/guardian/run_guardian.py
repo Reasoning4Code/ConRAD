@@ -8,7 +8,11 @@ import json
 import glob
 from pathlib import Path
 from openai import OpenAI
-from conrad.guardian.guardian import judge_batch, judge_batch_with_reflection
+from dotenv import load_dotenv
+from guardian import judge_batch, judge_batch_with_reflection
+
+# Load environment variables from .env (if present)
+load_dotenv()
 
 def load_summaries_file(file_path):
     """Load summaries JSON file"""
@@ -167,7 +171,7 @@ def process_single_summaries_file(file_path, llm_func, output_dir):
     # Call judge
     try:
         # Build prompt first for saving
-        from conrad.guardian.guardian import build_batch_prompt
+        from guardian import build_batch_prompt
         prompt_data = build_batch_prompt(
             current_issue_summary=current_issue_summary,
             current_patch=current_patch,
@@ -230,7 +234,21 @@ def process_single_summaries_file(file_path, llm_func, output_dir):
             # Old format: xxx_summaries.json -> xxx_judged.json
             output_filename = filename.replace('_summaries.json', '_judged.json')
         
-        output_path = os.path.join(output_dir, output_filename)
+        # Determine save path based on judgment result
+        # Check if first candidate is Useful
+        first_candidate_decision = judgment_result['candidates'][0]['decision'] if judgment_result.get('candidates') else 'Not useful'
+        
+        if first_candidate_decision == 'Useful':
+            # Save to accept subdirectory
+            final_output_dir = os.path.join(output_dir, 'accept')
+        else:
+            # Save to discard subdirectory (includes Harmful and Not useful)
+            final_output_dir = os.path.join(output_dir, 'discard')
+        
+        # Create target directory
+        os.makedirs(final_output_dir, exist_ok=True)
+        
+        output_path = os.path.join(final_output_dir, output_filename)
         
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
@@ -364,10 +382,19 @@ def process_all_summaries(summaries_dir="summaries", output_dir="judgments", api
                     base_filename = os.path.splitext(filename)[0]
                     output_filename = base_filename.replace('_summaries', '_judged') + '.json'
                 
-                output_path = os.path.join(output_dir, output_filename)
+                # Check both possible locations (accept and discard subdirectories)
+                output_path_accept = os.path.join(output_dir, 'accept', output_filename)
+                output_path_discard = os.path.join(output_dir, 'discard', output_filename)
+                
+                # Try both paths
+                output_path = None
+                if os.path.exists(output_path_accept):
+                    output_path = output_path_accept
+                elif os.path.exists(output_path_discard):
+                    output_path = output_path_discard
                 
                 # Read judgment result file
-                if os.path.exists(output_path):
+                if output_path and os.path.exists(output_path):
                     with open(output_path, 'r', encoding='utf-8') as f:
                         judge_data = json.load(f)
                     
@@ -397,10 +424,14 @@ def process_all_summaries(summaries_dir="summaries", output_dir="judgments", api
 
 if __name__ == "__main__":
     # Configure instance IDs to process (if None, process all files)
-    # Example usage:
-    target_instance_ids = [
-        "astropy__astropy-6938"
-    ]
+    # Option 1: Specify instance IDs list
+    # target_instance_ids = [
+    #     "astropy__astropy-6938",
+    #     "django__django-10914"
+    # ]
+    
+    # Option 2: Set to None to process all files in the directory
+    target_instance_ids = None
     
     # ========== Model Selection ==========
     print("\n" + "="*60)
@@ -453,8 +484,12 @@ if __name__ == "__main__":
     if base_url:
         # DeepSeek recommends DEEPSEEK_API_KEY; can also use OPENAI_API_KEY for compatibility
         api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            print("INFO: DEEPSEEK_API_KEY or OPENAI_API_KEY not found in environment")
     else:
         api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            print("INFO: OPENAI_API_KEY not found in environment")
 
     if not api_key:
         api_key = input(api_key_prompt).strip()
@@ -476,8 +511,8 @@ if __name__ == "__main__":
     # Process summaries files
     # Use new result_llm_judge folder path
     process_all_summaries(
-        summaries_dir="../backward_distillation/result_llm_judge",
-        output_dir="judgement_test_discard_gpt5_5",
+        summaries_dir="output/result_llm_judge",
+        output_dir="output/guardian_results",
         api_key=api_key,
         instance_ids=target_instance_ids,  # Pass instance IDs list
         model_name=model_name,

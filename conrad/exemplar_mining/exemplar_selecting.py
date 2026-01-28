@@ -2,11 +2,20 @@ import json
 from datasets import load_dataset
 import os
 from openai import OpenAI
-from tqdm import tqdm  
+from tqdm import tqdm
+from dotenv import load_dotenv
 
-client = OpenAI(api_key="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")  # Or omit this line and use OPENAI_API_KEY environment variable
+# Load environment variables from .env (if present)
+load_dotenv()
 
-# openai.api_key = os.getenv("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")
+# Get API key from environment variable
+API_KEY = os.environ.get("OPENAI_API_KEY")
+if not API_KEY:
+    print("WARNING: OPENAI_API_KEY environment variable not set. Please set it in .env file or environment.")
+    import sys
+    sys.exit(1)
+
+client = OpenAI(api_key=API_KEY)
 
 
 prompt_template = """You are an expert debugging assistant with meta-reasoning abilities.   Your task is to help a novice developer identify the most useful past bug report to assist in locating and fixing the CURRENT bug.   
@@ -240,7 +249,7 @@ if __name__ == "__main__":
         # Get current bug report content
         current_bug = problem_statement
         # Read JSON file
-        with open(f"candidates/{repo}/{instance_id}_similarbugs_v1.json", "r", encoding="utf-8") as f:
+        with open(f"exemplar_mining/candidates/{repo}/{instance_id}_similarbugs_v1.json", "r", encoding="utf-8") as f:
             data = json.load(f)
         # Extract top 5 candidate bug information
         candidates = data.get("similar_bug_items", [])[:5]
@@ -309,7 +318,11 @@ if __name__ == "__main__":
 
             # print(output_data)
             # Save to new JSON file
-            output_file = f"llm_judge/result_llm_judge/{instance_id}_selected_similarbug.json"
+            output_file = f"output/result_llm_judge/{instance_id}_selected_similarbug.json"
+            
+            # Create output directory if it doesn't exist
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            
             with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(output_data, f, indent=4, ensure_ascii=False)
 

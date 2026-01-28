@@ -2,6 +2,7 @@ import openai
 import json
 from typing import List, Dict, Any, Union
 import os
+from dotenv import load_dotenv
 
 from get_repo_structure import (
     get_project_structure_from_scratch,
@@ -29,6 +30,9 @@ from test import (
 
 # API key should not be hard-coded. Read from environment for safe publishing.
 import sys
+
+# Load environment variables from .env (if present)
+load_dotenv()
 
 API_KEY = os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_KEY")
 if not API_KEY:
@@ -471,7 +475,7 @@ def write_json(data: Union[Dict, List, Any], file_path: str, indent: int = 2, en
 
 
 if __name__ == "__main__":
-    instance_txt_path = 'conrad/backward_distillation/gpt5_10.txt'
+    instance_txt_path = 'backward_distillation/gpt5_10.txt'
     instance_ids = []
     with open(instance_txt_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -490,7 +494,7 @@ if __name__ == "__main__":
         repo = repo_map[prefix]
         
 
-        with open(f"result_llm_judge/{instance_id}_selected_similarbug.json", "r", encoding='utf-8') as f:
+        with open(f"backward_distillation/result_llm_judge/{instance_id}_selected_similarbug.json", "r", encoding='utf-8') as f:
             data = json.load(f)
         
 
@@ -501,7 +505,11 @@ if __name__ == "__main__":
         pr_number = data["Selected_candidate"]["pr_number"]
         
 
-        tokens = ["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"]
+        # Use GitHub token from environment for API calls (do not hardcode tokens)
+        github_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if not github_token:
+            print("WARNING: GITHUB_TOKEN not set in environment. GitHub API calls may fail.")
+        tokens = [github_token] if github_token else []
         patch = get_diff_from_pr(repo=repo, pr_number=pr_number, tokens=tokens, max_retries=5)
         filepaths = extract_file_from_patch(patch)
         ground_functions_raw, found_related_locs = extract_function_from_patch(patch)
