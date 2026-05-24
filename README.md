@@ -88,3 +88,23 @@ python backward_distillation/step_refine.py
 ```
 
 For detailed API configuration instructions, see [API_SETUP.md](API_SETUP.md).
+
+## 📚 Citation
+
+If you find this work useful, please cite our paper:
+
+```bibtex
+@misc{li2026outcomeconditioned,
+      title={Outcome-Conditioned Reasoning Distillation for Resolving Software Issues},
+      author={Chenglin Li and Yisen Xu and Zehao Wang and Shin Hwei Tan and Tse-Hsun Chen},
+      year={2026},
+      eprint={2601.23257},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2601.23257}
+}
+```
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
