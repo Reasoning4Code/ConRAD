@@ -105,6 +105,18 @@ If you find this work useful, please cite our paper:
 }
 ```
 
+
+## 🙏 Acknowledgements
+
+This work builds upon and is grateful to the following projects:
+
+- [SWE-bench](https://github.com/princeton-nlp/SWE-bench) — benchmark for evaluating program repair on real-world GitHub issues.
+- [SWE-agent](https://github.com/princeton-nlp/SWE-agent) — agent framework for autonomous software engineering.
+- [Agentless](https://github.com/OpenAutoCoder/Agentless) — a simple, agentless approach to resolving software issues.
+
+We thank the authors for open-sourcing their work.
+
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
