@@ -33,7 +33,7 @@ ConRAD consists of three stages that directly correspond to the paper:
 conrad/
 ├── backward_distillation/   # Stage 3: outcome-conditioned reasoning distillation
 ├── exemplar_mining/         # Stage 1: in-repo retrieval + LLM ranking (Top-K → 1)
-├── guardian/                # Stage 2: Exemplar Guardian (transferability iltering)
+├── guardian/                # Stage 2: Exemplar Guardian (transferability filtering)
 Examples/                    # Minimal reasoning examples
 .env.example                 # Environment variable template
 requirements.txt             # Python dependencies
@@ -51,7 +51,7 @@ README.md
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/ChenglinLi21/ConRAD.git
+git clone https://github.com/Reasoning4Code/ConRAD.git
 cd ConRAD
 ```
 
