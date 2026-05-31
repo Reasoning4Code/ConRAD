@@ -94,14 +94,14 @@ For detailed API configuration instructions, see [API_SETUP.md](API_SETUP.md).
 If you find this work useful, please cite our paper:
 
 ```bibtex
-@misc{li2026outcomeconditioned,
-      title={Outcome-Conditioned Reasoning Distillation for Resolving Software Issues},
-      author={Chenglin Li and Yisen Xu and Zehao Wang and Shin Hwei Tan and Tse-Hsun Chen},
+@misc{li2026historicalpatchesrepairplans,
+      title={From Historical Patches to Repair Plans: Outcome-Conditioned Reasoning for Repository-Level Program Repair}, 
+      author={Chenglin Li and Yisen Xu and Zehao Wang and Shin Hwei Tan and Tse-Hsun and Chen},
       year={2026},
       eprint={2601.23257},
       archivePrefix={arXiv},
       primaryClass={cs.SE},
-      url={https://arxiv.org/abs/2601.23257}
+      url={https://arxiv.org/abs/2601.23257}, 
 }
 ```
 
